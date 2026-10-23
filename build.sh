@@ -1,13 +1,15 @@
 #!/bin/bash
 # Build PvZ2: Reflourished for iPhone, iPad and Mac from the Android release.
 #
-#   ./build.sh --apk <file|url> [--obb <file|url>] [--ios] [--mac] [--slim] [--out dir]
+#   ./build.sh --apk <file|url> [--obb <file|url>] [--ios] [--mac] [--slim] [--quick] [--out dir]
 #
 # Without --ios or --mac, both are built. --apk and --obb take a file, or a link
 # (direct, Google Drive or MEGA) that is downloaded first; without --obb the OBB
 # comes from the mod's own release. --slim makes the apps without the OBB inside
 # (about 110 MB for iPhone/iPad, 120 MB for the Mac): they download it themselves
-# on their first launch. APP_BUILD in the environment sets the build number.
+# on their first launch. --quick reuses the game's converted code from the last
+# build in the same --out and skips the disk image: the fast loop while working
+# on runtime/. APP_BUILD in the environment sets the build number.
 # The results land in out/ (or --out):
 #
 #   PvZ2-Reflourished.ipa          for iPhone and iPad (sign it with your sideloader)
@@ -19,7 +21,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUT="$ROOT/out"
-APK="" OBB="" CDN="" WANT_IOS=0 WANT_MAC=0 SLIM=0
+APK="" OBB="" CDN="" WANT_IOS=0 WANT_MAC=0 SLIM=0 QUICK=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -30,7 +32,8 @@ while [ $# -gt 0 ]; do
         --ios) WANT_IOS=1; shift ;;
         --mac) WANT_MAC=1; shift ;;
         --slim) SLIM=1; shift ;;
-        -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --quick) QUICK=1; shift ;;
+        -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (see ./build.sh --help)" >&2; exit 2 ;;
     esac
 done
@@ -117,9 +120,13 @@ if [ "$WANT_IOS" = 1 ]; then
         bash "$ROOT/runtime/scripts/build_angle_ios.sh"
     fi
 
-    step "converting the game's code for iOS"
-    HOOKS="$HOOKS" bash "$ROOT/converter/build-ios-dylibs.sh" "$LIBS" "$WORK/ios-dylibs"
-    python3 "$ROOT/converter/check-build.py" "$WORK/ios-dylibs"
+    if [ "$QUICK" = 1 ] && [ -f "$WORK/ios-dylibs/libPVZ2.dylib" ]; then
+        step "the game's code for iOS: reused from the last build (--quick)"
+    else
+        step "converting the game's code for iOS"
+        HOOKS="$HOOKS" bash "$ROOT/converter/build-ios-dylibs.sh" "$LIBS" "$WORK/ios-dylibs"
+        python3 "$ROOT/converter/check-build.py" "$WORK/ios-dylibs"
+    fi
 
     step "building the iOS app"
     IOS_OBB="$OBB"; [ "$SLIM" = 1 ] && IOS_OBB=none
@@ -139,9 +146,13 @@ if [ "$WANT_MAC" = 1 ]; then
         bash "$ROOT/scripts/fetch-angle-macos.sh" "$ANGLE_MAC"
     fi
 
-    step "converting the game's code for the Mac"
-    HOOKS="$HOOKS" GLES="$ANGLE_MAC/libGLESv2.dylib" \
-        bash "$ROOT/converter/build-macos-dylibs.sh" "$LIBS" "$WORK/macos-dylibs"
+    if [ "$QUICK" = 1 ] && [ -f "$WORK/macos-dylibs/libPVZ2.dylib" ]; then
+        step "the game's code for the Mac: reused from the last build (--quick)"
+    else
+        step "converting the game's code for the Mac"
+        HOOKS="$HOOKS" GLES="$ANGLE_MAC/libGLESv2.dylib" \
+            bash "$ROOT/converter/build-macos-dylibs.sh" "$LIBS" "$WORK/macos-dylibs"
+    fi
 
     step "building the Mac app"
     MAC_OBB="$OBB"; [ "$SLIM" = 1 ] && MAC_OBB=""
@@ -153,11 +164,14 @@ if [ "$WANT_MAC" = 1 ]; then
     rm -rf "$OUT/PvZ2 Reflourished.app"
     mv "$WORK/macos/PvZ2 Reflourished.app" "$OUT/"
 
-    step "packing the Mac app into a disk image"
-    bash "$ROOT/scripts/make-dmg.sh" "$OUT/PvZ2 Reflourished.app" "$OUT/PvZ2-Reflourished.dmg"
+    if [ "$QUICK" = 0 ]; then
+        step "packing the Mac app into a disk image"
+        bash "$ROOT/scripts/make-dmg.sh" "$OUT/PvZ2 Reflourished.app" "$OUT/PvZ2-Reflourished.dmg"
+    fi
 fi
 
 step "done"
 [ "$WANT_IOS" = 1 ] && echo "    $OUT/PvZ2-Reflourished.ipa"
-[ "$WANT_MAC" = 1 ] && echo "    $OUT/PvZ2 Reflourished.app" && echo "    $OUT/PvZ2-Reflourished.dmg"
+[ "$WANT_MAC" = 1 ] && echo "    $OUT/PvZ2 Reflourished.app"
+[ "$WANT_MAC" = 1 ] && [ "$QUICK" = 0 ] && echo "    $OUT/PvZ2-Reflourished.dmg"
 exit 0
