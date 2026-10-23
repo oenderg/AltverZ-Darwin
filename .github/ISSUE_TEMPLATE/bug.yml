@@ -1,0 +1,47 @@
+name: Bug report
+description: Something does not work, crashes, or looks wrong
+labels: [bug]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where
+      options: [iPhone, iPad, Mac]
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and OS version
+      placeholder: e.g. iPad Pro 13" M5, iPadOS 27.0.1 / MacBook Pro M3, macOS 27.0
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: "Mac: Settings > About. iPhone/iPad: the release you installed (or the AltStore/SideStore version)."
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: How you installed it
+      placeholder: e.g. AltStore source, Sideloadly, LiveContainer, the .dmg, built it myself
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: The log
+      description: |
+        Right after it happened (the app rewrites it on the next launch):
+        - iPhone/iPad: Files app > On My iPhone (or iPad) > PvZ2 Reflourished > pvz2.log
+        - Mac: ~/Library/Application Support/PvZ2 Reflourished/pvz2.log (Finder: Go > Go to Folder)
+        Attach the file, or paste the last ~100 lines.
+      render: text

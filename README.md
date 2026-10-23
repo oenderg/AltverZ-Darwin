@@ -87,6 +87,15 @@ touch and keyboard input, and the app's lifecycle.
 | `data/` | the mod's recorded hook table and the game version it matches |
 | `prebuilt/` | ANGLE for iOS (rebuild with `REBUILD_ANGLE=1 ./build.sh …`) |
 
+More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Contributing
+
+Fixes and improvements are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) has the build loop and what a
+good pull request shows; [docs/TESTING.md](docs/TESTING.md) how to test on a Mac without touching your
+own game; [docs/GAME-NOTES.md](docs/GAME-NOTES.md) what the game does that is not obvious. Coding
+agents start at [AGENTS.md](AGENTS.md). Found a bug? Open an issue with the app's log.
+
 ## Thanks
 
 The **PvZ2 Reflourished** team for the mod, **Husk** for the translation layer this
