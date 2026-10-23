@@ -16,7 +16,7 @@ on:
         options: [iPhone/iPad and Mac, iPhone/iPad, Mac]
         default: iPhone/iPad and Mac
       slim:
-        description: "Slim apps (about 110 MB; they download the game's data on the first launch)"
+        description: "Slim apps (about 60 MB to download; they download the game's data on the first launch)"
         type: boolean
         default: true
       release_tag:
@@ -85,7 +85,7 @@ jobs:
           body: |
             Built by run #${{ github.run_number }} from Reflourished 1.4.2.
             **iPhone / iPad:** install `PvZ2-Reflourished.ipa` with SideStore, AltStore, Sideloadly or LiveContainer.
-            **Mac:** open `PvZ2-Reflourished.dmg`, drag the app onto Applications, then right-click it and choose Open the first time.
+            **Mac:** open `PvZ2-Reflourished.dmg` and drag the app onto Applications. The first time, macOS refuses to open it (it is not notarized): click Done, then Open Anyway in System Settings > Privacy & Security.
           files: release/*
           fail_on_unmatched_files: true
 

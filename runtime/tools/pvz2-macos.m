@@ -948,9 +948,9 @@ static void *tapper(void *arg)
             continue;
         }
         if (!strncmp(tok, "mode:", 5)) {
-            /* The resize mode, switched while the game runs. The same thing the
-             * preferences' row does, and the way a test can do it without
-             * touching anything of the person's. */
+            /* The resize mode, switched while the game runs: the same thing the
+             * preferences' row does, so it is saved in the app's settings
+             * (a launch argument still wins over it on the next start). */
             NSString *mode = [NSString stringWithUTF8String:tok + 5];
             [[NSUserDefaults standardUserDefaults] setObject:mode forKey:kResizeMode];
             tl_log_line("macos: the tap script sets the resize mode to \"%s\"", tok + 5);

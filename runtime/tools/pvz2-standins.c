@@ -1,9 +1,9 @@
 /*
  * The four things the shared runtime still asks of the engine files PvZ2 does not
  * build (tools/regress/pvz2-sources.sh). Husk runs many engines; PvZ2 is a native
- * PopCap game and needs none of them, so its hosts leave those files out -- they stay
- * in the tree, so the fork keeps merging cleanly with upstream -- and this answers for
- * them the way they answer for PvZ2:
+ * PopCap game and needs none of them, so this repo does not carry those files
+ * (tools/regress/pvz2-sources.sh), and this answers for them the way they answer
+ * for PvZ2:
  *
  *   tl_cocos_audio_hook  the shared speaker output (husk-tl-jni-fmod.c defines it);
  *                        the audio code installs the real writer into it at start-up.

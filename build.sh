@@ -6,7 +6,7 @@
 # Without --ios or --mac, both are built. --apk and --obb take a file, or a link
 # (direct, Google Drive or MEGA) that is downloaded first; without --obb the OBB
 # comes from the mod's own release. --slim makes the apps without the OBB inside
-# (about 110 MB for iPhone/iPad, 120 MB for the Mac): they download it themselves
+# (the IPA is about 60 MB, the Mac disk image about 65 MB): they download it themselves
 # on their first launch. --quick reuses the game's converted code from the last
 # build in the same --out and skips the disk image: the fast loop while working
 # on runtime/. APP_BUILD in the environment sets the build number.

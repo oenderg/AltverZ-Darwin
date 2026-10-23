@@ -1,8 +1,8 @@
 # The runtime sources the PvZ2 hosts compile (sourced by build-macos-app.sh and
 # build-ios-app.sh; needs R, N and T set). Husk supports many engines and PvZ2 needs
-# none of them: their files are left out here, not deleted, so the fork keeps merging
-# cleanly with upstream. tools/pvz2-standins.c answers the four calls the shared code
-# still makes into them.
+# none of them: this repo does not carry their files, and the list below keeps them out
+# of the build if one is ever copied back from Husk (to diff or port a fix).
+# tools/pvz2-standins.c answers the four calls the shared code still makes into them.
 PVZ2_UNUSED="husk-tl-unity.c husk-tl-unity-app.c husk-tl-jni-ue4.c
     husk-tl-flutter.c husk-tl-flutter-codec.c husk-tl-flutter-plugins.c husk-tl-flutter-text.c
     husk-tl-godot.c husk-tl-jni-godot.c husk-tl-gamemaker.c
