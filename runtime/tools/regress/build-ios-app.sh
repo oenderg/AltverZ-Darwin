@@ -13,7 +13,6 @@ set -euo pipefail
 R="$(cd "$(dirname "$0")/../.." && pwd)"
 N="$R/src/translation-layer-next"
 T="$R/src/translation-layer"
-J="$R/src/ios-jit"
 ANGLE="$R/build/ios-arm64/sysroot/lib/libANGLE-shared.dylib"
 OUT="${1:-$R/build/pvz2-ios}"
 APP="$OUT/PvZ2.app"
@@ -27,16 +26,15 @@ rm -rf "$APP"
 mkdir -p "$APP/Frameworks"
 # Same source set as the macOS harness (tools/regress/build.sh), minus the app
 # glue the harness does not use, plus the iOS JIT helper.
-SRCS="$R/tools/pvz2-ios.m $J/husk-ios-jit.c $J/husk-brk.S"
-for f in "$N"/*.c "$N"/*.m; do case "$f" in *-unity-app.c) ;; *) SRCS="$SRCS $f";; esac; done
-SRCS="$SRCS $T/husk-tl-elf.c $T/husk-tl-zip.c $T/husk-tl-sound.c"
+. "$R/tools/regress/pvz2-sources.sh"
+SRCS="$R/tools/pvz2-ios.m $(pvz2_runtime_sources | tr '\n' ' ')"
 [ "${AOT_DYLIB_TEST:-0}" = 1 ] && SRCS="$SRCS -DAOT_DYLIB_TEST=1"
 
 echo "==> compiling for arm64-apple-ios$DEPLOY (this is the whole translation layer)"
 # -U: the console host asks the app glue which game is loaded; this host has none.
 xcrun --sdk iphoneos clang -target "arm64-apple-ios$DEPLOY" -O1 -g -fobjc-arc \
     -Wall -Wno-unused-function -Wno-deprecated-declarations \
-    -I"$T" -I"$N" -I"$J" \
+    -I"$T" -I"$N" \
     -Wl,-U,_husk_native_loaded_apk -Wl,-rpath,@executable_path/Frameworks \
     $SRCS \
     -framework UIKit -framework QuartzCore -framework Metal -framework Foundation \

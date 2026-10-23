@@ -15,10 +15,10 @@
  *
  * Writable state goes to Documents/data. Logs go to Documents/pvz2.log.
  *
- * Executable memory: from iOS 26 the Trusted Execution Monitor lets only an
- * attached debugger grant it, so the app prewarms one region through StikDebug at
- * launch (husk_ios_jit_*, the same call the full app makes). Without a debugger
- * the game cannot start and the log says so.
+ * Executable memory: none. The game's libraries come converted ahead of time into
+ * signed Mach-O libraries (Frameworks/libPVZ2.dylib and the rest), so nothing here
+ * makes memory executable or writes code; a build without them cannot run, and the
+ * log says so.
  *
  * Touches: one finger per touch, phases matching the driver (0 down, 1 move,
  * 3 up, 4 cancel). Landscape only, like the game.
@@ -43,7 +43,6 @@
 #include "husk-tl-pvz2.h"
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
-#include "husk-ios-jit.h"
 
 /* ===================== BEGIN AOT-DYLIB-LOADER TEST ============================
  * Delete everything from here to the END marker to revert. Nothing below changes
@@ -304,17 +303,11 @@ static int guest_orientation_for(UIInterfaceOrientation io)
 }
 static char g_apk[1024], g_data[1024], g_egl[1024];
 
-/* The translation layer asks Husk's own loader (husk-tl-load.c) for the region a
- * debugger granted. The minimal host does not compile that file -- it is QEMU's
- * ELF path -- so answer from the region this host prewarmed itself. The two
- * struct layouts are identical; only the symbol name matters to the linker. */
+/* The translation layer asks Husk's own loader (husk-tl-load.c) for the executable
+ * region a debugger granted. The converted libraries need none, so there is none. */
 typedef struct { uint8_t *rw_addr; uint8_t *rx_addr; size_t size; } host_dual_mapping;
-extern void *husk_ios_jit_get_mapping(void);
 host_dual_mapping *tl_find_stikdebug_prewarmed(void);
-host_dual_mapping *tl_find_stikdebug_prewarmed(void)
-{
-    return (host_dual_mapping *)husk_ios_jit_get_mapping();
-}
+host_dual_mapping *tl_find_stikdebug_prewarmed(void) { return NULL; }
 
 void tl_log_line(const char *fmt, ...)
 {
@@ -1332,8 +1325,7 @@ static NSDictionary *obb_info(void)
         tl_log_line("ios: JIT-free: converted guest libraries in %s", fw.UTF8String);
     } else {
         unsetenv("TL_AOT_DIR");
-        tl_log_line("ios: no converted guest libraries in %s; the guest ELF will be "
-                    "translated, which needs executable memory", fw.UTF8String);
+        tl_log_line("ios: no converted guest libraries in %s: this build cannot run the game", fw.UTF8String);
     }
 
     static unsigned char sigstack[65536];
@@ -1344,18 +1336,6 @@ static NSDictionary *obb_info(void)
     int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGTRAP, SIGABRT };
     for (unsigned i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++) sigaction(sigs[i], &sa, NULL);
 
-    /* Before anything can execute a brk: an unserviced trap then fails instead
-     * of killing the process. Then claim the region while the debugger is
-     * attached (it does not stay attached). JIT-free mode needs neither: there is no
-     * executable memory to claim, because nothing was mapped in order to make it. */
-    if (jit_free) {
-        tl_log_line("ios: no JIT arena needed; the guest's code is signed Mach-O already");
-        return YES;
-    }
-    husk_ios_jit_install_trap_handler();
-    bool jit = husk_ios_jit_prewarm(512u << 20);
-    tl_log_line("ios: JIT prewarm %s", jit ? "ok (512 MiB via the debugger)" : "FAILED -- needs StikDebug attached");
-    if (jit) husk_ios_jit_detach();
     return YES;
 }
 @end
