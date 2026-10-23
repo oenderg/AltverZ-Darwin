@@ -1,0 +1,17 @@
+{
+ "version": "1.4.2",
+ "obb_name": "main.675.com.ea.game.pvz2_rfl.obb",
+ "cdn_url": "https://reflourished.ducnguyen.org/cdn/1.4.2.main.tar",
+ "libs_sha256": {
+  "libPVZ2.so": "d3ceccfaba3b6949f5778860d011b4f16bffd26db151f5f06b4bef07a68b5d15",
+  "libRFLib.so": "2ba25f7c56e48e469fe1790f5a4a5e487e9c09f89c41d9f4058bf92eef460aea",
+  "libNimble.so": "43586263eaba06b7a4cfb5528bffaefdff2ee8dc21589958d16476a7b92d3ac7",
+  "libc++_shared.so": "38815e321b404e8363aba1c0a5a86649eed45ce31007740039dddb780ea1d653"
+ },
+ "apk_sha256": "10f4c63b7a09f2a961b0802cb3371f7074d5873cac6452a25fcd44e846bbd4ba",
+ "obb_sha256": "aa747ac0c55f8645cffdc2c93b1469a26ed9ada22a718da8eeb833fffa4c7148",
+ "obb_size": 1341358080,
+ "obb_urls": [
+  "https://github.com/lantern-fans/obbybackup/releases/download/1.4.2-R1/main.675.com.ea.game.pvz2_rfl.obb"
+ ]
+}

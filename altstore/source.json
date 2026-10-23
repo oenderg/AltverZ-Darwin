@@ -1,0 +1,47 @@
+{
+  "name": "PvZ2 Reflourished",
+  "identifier": "com.oenderg.reflourished",
+  "subtitle": "PvZ2: Reflourished for iPhone and iPad",
+  "description": "iPhone and iPad builds of PvZ2: Reflourished, straight from the project's GitHub releases: the Android mod converted ahead of time into native Apple code, with no jailbreak and no emulator.",
+  "iconURL": "https://github.com/oenderg/Reflourished-Darwin/releases/download/build/PvZ2-Reflourished-icon.png",
+  "website": "https://github.com/oenderg/Reflourished-Darwin",
+  "tintColor": "4CAF50",
+  "apps": [
+    {
+      "name": "PvZ2 Reflourished",
+      "bundleIdentifier": "com.reflourished.darwin",
+      "developerName": "oenderg",
+      "subtitle": "Plants vs. Zombies 2, Reflourished",
+      "localizedDescription": "PvZ2: Reflourished, the Plants vs. Zombies 2 mod, on iPhone and iPad. No jailbreak and no emulator: the game's Android code is converted ahead of time into ordinary, signed Apple code, so it runs full screen at your display's refresh rate, with sound, saves and the mod's own content built in. The app downloads the game's data (about 1.3 GB) on its first launch, so keep it open on Wi-Fi until the game starts.",
+      "developerWebsite": "https://github.com/oenderg/Reflourished-Darwin",
+      "iconURL": "https://github.com/oenderg/Reflourished-Darwin/releases/download/build/PvZ2-Reflourished-icon.png",
+      "tintColor": "4CAF50",
+      "category": "games",
+      "screenshots": [],
+      "versions": [],
+      "appPermissions": {
+        "entitlements": [
+          {
+            "name": "get-task-allow",
+            "description": "A development-signing flag that lets a debugger attach. The game does not need it to run."
+          },
+          {
+            "name": "dynamic-codesigning",
+            "description": "Not used: the game runs without generating code at run time. It is ignored on a stock device."
+          },
+          {
+            "name": "com.apple.developer.kernel.increased-memory-limit",
+            "description": "The game and its 1.3 GB of data like more memory than the default allowance. It works without it."
+          },
+          {
+            "name": "com.apple.developer.kernel.extended-virtual-addressing",
+            "description": "More address space for the game's large data. It works without it."
+          }
+        ],
+        "privacy": []
+      },
+      "news": []
+    }
+  ],
+  "news": []
+}

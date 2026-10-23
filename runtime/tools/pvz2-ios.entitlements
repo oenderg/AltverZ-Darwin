@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Lets StikDebug attach to this app as a debugger. Without it there is no
+	     executable memory on iOS 26+, so the game cannot start at all. -->
+	<key>get-task-allow</key>
+	<true/>
+	<!-- Honoured only on TrollStore/jailbroken devices; there the app can make
+	     its own executable memory and does not need the debugger. Harmless
+	     where it is ignored. -->
+	<key>dynamic-codesigning</key>
+	<true/>
+	<!-- A 38 MiB engine plus a 1.2 GB OBB wants more than the default allowance.
+	     The translation layer does not depend on either being honoured: it probes
+	     what it actually got. -->
+	<key>com.apple.developer.kernel.increased-memory-limit</key>
+	<true/>
+	<key>com.apple.developer.kernel.extended-virtual-addressing</key>
+	<true/>
+</dict>
+</plist>

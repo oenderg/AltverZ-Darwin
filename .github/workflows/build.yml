@@ -1,0 +1,108 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: "Link to the PvZ2 Reflourished 1.4.2 APK (direct, Google Drive or MEGA)"
+        required: true
+      obb_url:
+        description: "Link to the OBB (leave empty: the mod's own 1.4.2 OBB is used)"
+        required: false
+        default: ""
+      platforms:
+        description: "What to build"
+        type: choice
+        options: [iPhone/iPad and Mac, iPhone/iPad, Mac]
+        default: iPhone/iPad and Mac
+      slim:
+        description: "Slim apps (about 110 MB; they download the game's data on the first launch)"
+        type: boolean
+        default: true
+      release_tag:
+        description: "Tag of the release that will hold the builds"
+        required: false
+        default: "build"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /Users/runner/Library/Android /usr/local/share/dotnet || true
+          df -h /
+
+      - name: MEGA support
+        if: contains(github.event.inputs.apk_url, 'mega.') || contains(github.event.inputs.obb_url, 'mega.')
+        run: brew install megatools
+
+      - name: Newest Xcode
+        run: |
+          x="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$x"
+          xcodebuild -version
+
+      - name: Build
+        env:
+          APK_URL: ${{ github.event.inputs.apk_url }}
+          OBB_URL: ${{ github.event.inputs.obb_url }}
+          PLATFORMS: ${{ github.event.inputs.platforms }}
+          SLIM: ${{ github.event.inputs.slim }}
+          APP_BUILD: ${{ github.run_number }}
+        run: |
+          case "$PLATFORMS" in
+            "iPhone/iPad") which=--ios ;;
+            "Mac") which=--mac ;;
+            *) which="--ios --mac" ;;
+          esac
+          extra=""
+          [ "$SLIM" = true ] && extra="$extra --slim"
+          [ -n "$OBB_URL" ] && extra="$extra --obb $OBB_URL"
+          ./build.sh $which $extra --apk "$APK_URL" --out out
+
+      - name: Package
+        run: |
+          mkdir -p release
+          [ -f out/PvZ2-Reflourished.ipa ] && mv out/PvZ2-Reflourished.ipa release/
+          [ -f out/PvZ2-Reflourished.dmg ] && mv out/PvZ2-Reflourished.dmg release/
+          # the app's icon, from the APK it was built from, for the AltStore source
+          unzip -p out/.work/game.apk res/mipmap-xxxhdpi/pvz2_icon.png > release/PvZ2-Reflourished-icon.png || rm -f release/PvZ2-Reflourished-icon.png
+          ls -la release
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag }}
+          name: "PvZ2: Reflourished (${{ github.event.inputs.release_tag }})"
+          body: |
+            Built by run #${{ github.run_number }} from Reflourished 1.4.2.
+            **iPhone / iPad:** install `PvZ2-Reflourished.ipa` with SideStore, AltStore, Sideloadly or LiveContainer.
+            **Mac:** open `PvZ2-Reflourished.dmg`, drag the app onto Applications, then right-click it and choose Open the first time.
+          files: release/*
+          fail_on_unmatched_files: true
+
+      - name: Update the AltStore source
+        if: ${{ hashFiles('release/PvZ2-Reflourished.ipa') != '' }}
+        env:
+          TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          icon=""
+          [ -f release/PvZ2-Reflourished-icon.png ] && icon="--icon-url https://github.com/${{ github.repository }}/releases/download/$TAG/PvZ2-Reflourished-icon.png"
+          python3 scripts/update-altstore-source.py release/PvZ2-Reflourished.ipa --tag "$TAG" $icon \
+            --changelog "Built by run #${{ github.run_number }} from Reflourished 1.4.2."
+          python3 scripts/update-altstore-source.py --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add altstore/source.json
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(altstore): update the source for $TAG (run #${{ github.run_number }})"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"

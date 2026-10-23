@@ -1,0 +1,7 @@
+out/
+runtime/build/
+runtime/third_party/
+*.apk
+*.obb
+.DS_Store
+__pycache__/
