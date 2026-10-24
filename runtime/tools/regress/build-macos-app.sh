@@ -10,16 +10,23 @@
 #   GAME_APK       the game's APK
 #   GAME_OBB       the game's expansion file (the assets); leave it out for a slim app
 #   OBB_URLS, OBB_SHA256, OBB_SIZE   where a slim app downloads the expansion file from
+#   OBB_NAME       the expansion file's name (default: 1.4.2's, main.675.com.ea.game.pvz2_rfl.obb)
 #   APP_BUILD      override the build number (default: major*10000 + minor*100 + patch)
 # The app version comes from VERSION; the game version comes from data/game-1.4.2.json.
 #   GAME_CDN_TAR   the mod's CDN archive (1.4.2.main.tar)
 #   ANGLE_EGL      ANGLE's libEGL.dylib   (default: the copy inside Steam's CEF)
 #   ANGLE_GLES     ANGLE's libGLESv2.dylib
+#   SPARKLE_DIR    where Sparkle.framework is (scripts/fetch-sparkle.sh)
+#   SPARKLE_FEED_URL, SPARKLE_PUBLIC_KEY   the update feed and the key updates are signed
+#                  with (default: the repository's sparkle/appcast.xml and sparkle/public-key);
+#                  without a key the app has no updater
+#   DATA_FOLDER    another name for the data folder in Application Support (a test build's)
 #
 # The bundle is:
 #   Contents/MacOS/PvZ2                  the host (tools/pvz2-macos.m) and the driver
 #   Contents/Frameworks/*.dylib          the converted guest libraries and their .facts
 #   Contents/Frameworks/libEGL.dylib     ANGLE: the EGL the driver needs on a Mac
+#   Contents/Frameworks/Sparkle.framework  the updater
 #   Contents/Resources/AppIcon.icns      the app's icon (Reflourished's, from the APK)
 #   Contents/Game/pvz2.apk               the game's APK
 #   Contents/Game/obb/*.obb              the game's expansion file
@@ -36,6 +43,16 @@ T="$R/src/translation-layer"
 OUT="${1:-$R/build/pvz2-macos}"
 APP="$OUT/PvZ2 Reflourished.app"
 AOT_DYLIB_DIR="${AOT_DYLIB_DIR:-$R/build/macos-dylibs}"
+OBB_NAME="${OBB_NAME:-main.675.com.ea.game.pvz2_rfl.obb}"
+SPARKLE_DIR="${SPARKLE_DIR:-$R/build/sparkle}"
+SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/sparkle/appcast.xml}"
+if [ -z "${SPARKLE_PUBLIC_KEY:-}" ] && [ -f "$R/../sparkle/public-key" ]; then
+    SPARKLE_PUBLIC_KEY="$(tr -d ' \n' < "$R/../sparkle/public-key")"
+fi
+[ -d "$SPARKLE_DIR/Sparkle.framework" ] || {
+    echo "no Sparkle.framework in $SPARKLE_DIR -- run scripts/fetch-sparkle.sh" >&2
+    exit 1
+}
 
 # The guest's libraries, converted ahead of time. Without them the app has no JIT-free
 # route: it would translate the guest's ELF, which needs executable memory.
@@ -65,7 +82,7 @@ xcrun swiftc -c -parse-as-library -O -target arm64-apple-macos14.0 \
     "$R/tools/pvz2-macos-settings.swift" -o "$SWIFT_OBJ"
 SWIFT_LIB="$(dirname "$(xcrun -f swiftc)")/../lib/swift/macosx"
 clang -g -O1 -fobjc-arc -Wall -Wno-unused-function -Wno-deprecated-declarations \
-    -I"$T" -I"$N" \
+    -I"$T" -I"$N" -F"$SPARKLE_DIR" \
     "$SWIFT_OBJ" -L"$SWIFT_LIB" -L/usr/lib/swift -Wl,-rpath,/usr/lib/swift \
     -Wl,-U,_husk_native_loaded_apk \
     -Wl,-rpath,@executable_path/../Frameworks \
@@ -75,6 +92,7 @@ clang -g -O1 -fobjc-arc -Wall -Wno-unused-function -Wno-deprecated-declarations 
     -framework CoreGraphics -framework Security -framework QuartzCore -framework Metal \
     -framework IOSurface -framework ImageIO -framework WebKit -framework AppKit \
     -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework Accelerate \
+    -framework Sparkle \
     -o "$APP/Contents/MacOS/PvZ2"
 
 echo "==> the converted guest libraries"
@@ -98,6 +116,10 @@ for d in "$AOT_DYLIB_DIR"/*.facts; do
 done
 ls "$APP/Contents/Frameworks" | sed 's/^/    /'
 
+echo "==> Sparkle $(cat "$SPARKLE_DIR/VERSION" 2>/dev/null)"
+# ditto keeps the framework's symlinks and Sparkle's own signature on its helpers
+ditto "$SPARKLE_DIR/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
+
 echo "==> ANGLE"
 cp "$EGL" "$APP/Contents/Frameworks/libEGL.dylib"
 cp "$GLES" "$APP/Contents/Frameworks/libGLESv2.dylib"
@@ -116,8 +138,8 @@ if [ -n "${GAME_OBB:-}" ]; then
     # The expansion file is 1.2 GB. On APFS a clone is a copy that costs nothing until
     # it is written to, which is the difference between a bundle the user can copy and
     # one that takes a minute and a second gigabyte.
-    cp -c "$GAME_OBB" "$APP/Contents/Game/obb/main.675.com.ea.game.pvz2_rfl.obb" 2>/dev/null \
-        || cp "$GAME_OBB" "$APP/Contents/Game/obb/main.675.com.ea.game.pvz2_rfl.obb"
+    cp -c "$GAME_OBB" "$APP/Contents/Game/obb/$OBB_NAME" 2>/dev/null \
+        || cp "$GAME_OBB" "$APP/Contents/Game/obb/$OBB_NAME"
     echo "==> the game: $(du -h "$GAME_OBB" | cut -f1) obb"
 fi
 if [ -n "${GAME_CDN_TAR:-}" ]; then
@@ -162,6 +184,20 @@ if [ -n "${ICON_PNG:-}" ]; then
     echo "==> Reflourished's icon"
 fi
 
+# Updates: the feed, and the public half of the key every update is signed with.
+PB=/usr/libexec/PlistBuddy
+if [ -n "${SPARKLE_PUBLIC_KEY:-}" ]; then
+    $PB -c "Add :SUFeedURL string $SPARKLE_FEED_URL" "$APP/Contents/Info.plist"
+    $PB -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_KEY" "$APP/Contents/Info.plist"
+    $PB -c "Add :SUEnableAutomaticChecks bool true" "$APP/Contents/Info.plist"
+    echo "==> updates from $SPARKLE_FEED_URL"
+else
+    echo "==> no update key (sparkle/public-key): the app has no updater"
+fi
+if [ -n "${DATA_FOLDER:-}" ]; then
+    $PB -c "Add :PVZ2DataFolder string $DATA_FOLDER" "$APP/Contents/Info.plist"
+fi
+
 # Where the app downloads the expansion file from when it is not there (a slim app,
 # built without GAME_OBB): the links in order, and the size and sha256 it must have.
 if [ -n "${OBB_URLS:-}" ]; then
@@ -174,7 +210,7 @@ if [ -n "${OBB_URLS:-}" ]; then
     done
     $PB -c "Add :PVZ2ObbSHA256 string $OBB_SHA256" "$APP/Contents/Info.plist"
     $PB -c "Add :PVZ2ObbSize integer $OBB_SIZE" "$APP/Contents/Info.plist"
-    $PB -c "Add :PVZ2ObbName string main.675.com.ea.game.pvz2_rfl.obb" "$APP/Contents/Info.plist"
+    $PB -c "Add :PVZ2ObbName string $OBB_NAME" "$APP/Contents/Info.plist"
     echo "==> the expansion file is downloaded from $i link(s) when it is missing"
 fi
 

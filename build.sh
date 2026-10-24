@@ -111,6 +111,7 @@ fi
 OBB_URLS="$(python3 -c "import json,sys; print(' '.join(json.load(open(sys.argv[1]))['obb_urls']))" "$GAME")"
 OBB_SHA256="$(json 'd["obb_sha256"]')"
 OBB_SIZE="$(json 'd["obb_size"]')"
+OBB_NAME="$(json 'd["obb_name"]')"
 
 # ---------------------------------------------------------------- iPhone and iPad
 if [ "$WANT_IOS" = 1 ] || [ "$WANT_IOS_SIM" = 1 ]; then
@@ -155,7 +156,7 @@ if [ "$WANT_IOS" = 1 ] || [ "$WANT_IOS_SIM" = 1 ]; then
     if [ "$WANT_IOS" = 1 ]; then
         step "building the iOS app"
         GAME_APK="$APK" GAME_OBB="$IOS_OBB" GAME_CDN_TAR="$CDN" \
-        OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" \
+        OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" OBB_NAME="$OBB_NAME" \
         AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-io.github.oenderg.reflourished-darwin}" \
             bash "$ROOT/runtime/tools/regress/build-ios-ipa.sh" "$WORK/ios" | grep -E '^==>|^built|^ipa'
         [ -f "$WORK/ios/PvZ2.ipa" ] || { echo "the iOS build failed (see above)" >&2; exit 1; }
@@ -165,7 +166,7 @@ if [ "$WANT_IOS" = 1 ] || [ "$WANT_IOS_SIM" = 1 ]; then
     if [ "$WANT_IOS_SIM" = 1 ]; then
         step "building the iOS Simulator app"
         GAME_APK="$APK" GAME_OBB="$IOS_OBB" GAME_CDN_TAR="$CDN" \
-        OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" \
+        OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" OBB_NAME="$OBB_NAME" \
         AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-io.github.oenderg.reflourished-darwin}" \
         IOS_SIM=1 IOS_SIM_APP="$OUT/PvZ2-Reflourished-sim.app" \
             bash "$ROOT/runtime/tools/regress/build-ios-ipa.sh" "$WORK/ios-sim"
@@ -188,11 +189,17 @@ if [ "$WANT_MAC" = 1 ]; then
             bash "$ROOT/converter/build-macos-dylibs.sh" "$LIBS" "$WORK/macos-dylibs"
     fi
 
+    SPARKLE="$WORK/sparkle"
+    if [ "$(cat "$SPARKLE/VERSION" 2>/dev/null)" != "$(sed -n 's/^VERSION="\(.*\)"/\1/p' "$ROOT/scripts/fetch-sparkle.sh")" ]; then
+        step "Sparkle, the Mac app's updater"
+        bash "$ROOT/scripts/fetch-sparkle.sh" "$SPARKLE"
+    fi
+
     step "building the Mac app"
     MAC_OBB="$OBB"; [ "$SLIM" = 1 ] && MAC_OBB=""
     GAME_APK="$APK" GAME_OBB="$MAC_OBB" GAME_CDN_TAR="$CDN" AOT_DYLIB_DIR="$WORK/macos-dylibs" \
-    OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" \
-    ANGLE_EGL="$ANGLE_MAC/libEGL.dylib" ANGLE_GLES="$ANGLE_MAC/libGLESv2.dylib" \
+    OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" OBB_NAME="$OBB_NAME" \
+    ANGLE_EGL="$ANGLE_MAC/libEGL.dylib" ANGLE_GLES="$ANGLE_MAC/libGLESv2.dylib" SPARKLE_DIR="$SPARKLE" \
         bash "$ROOT/runtime/tools/regress/build-macos-app.sh" "$WORK/macos" | grep -E '^==>|^built'
     [ -d "$WORK/macos/PvZ2 Reflourished.app" ] || { echo "the Mac build failed (see above)" >&2; exit 1; }
     rm -rf "$OUT/PvZ2 Reflourished.app"

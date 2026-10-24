@@ -26,6 +26,7 @@
  */
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <Sparkle/Sparkle.h>
 #include <CommonCrypto/CommonDigest.h>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -33,6 +34,7 @@
 #include <signal.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <sys/clonefile.h>
 #include <sys/file.h>
 #include <sys/ucontext.h>
 #include <time.h>
@@ -330,7 +332,10 @@ static NSString *support_dir(void)
     NSArray *dirs = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,
                                                         NSUserDomainMask, YES);
     NSString *base = dirs.firstObject;
-    return [base stringByAppendingPathComponent:@"PvZ2 Reflourished"];
+    /* PVZ2DataFolder: a test build's own folder (an update test's relaunched app has
+     * no environment to point it elsewhere) */
+    NSString *name = NSBundle.mainBundle.infoDictionary[@"PVZ2DataFolder"];
+    return [base stringByAppendingPathComponent:name.length ? name : @"PvZ2 Reflourished"];
 }
 
 static void mkdirs(NSString *path)
@@ -405,6 +410,55 @@ static bool obb_download_needed(void)
     tl_log_line("macos: the OBB in the data folder is %lld bytes and this app wants %lld: it is downloaded again",
                 have, want);
     return true;
+}
+
+/* A new game version's OBB has a new name, and the old one is 1.3 GB that nothing
+ * reads any more: once the one this app wants is in place, the others go. */
+static void drop_other_obbs(NSString *keep)
+{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    for (NSString *name in [fm contentsOfDirectoryAtPath:obb_dir() error:nil]) {
+        if ([name isEqualToString:keep] || ![name.pathExtension.lowercaseString isEqualToString:@"obb"]) continue;
+        if ([fm removeItemAtPath:[obb_dir() stringByAppendingPathComponent:name] error:nil])
+            tl_log_line("macos: removed another version's OBB: %s", name.UTF8String);
+    }
+}
+
+/* A full app carries the OBB in its bundle. Its first launch clones it into the data
+ * folder, where a slim app keeps its own: on APFS a clone is instant and takes no
+ * space of its own, and it outlives the bundle -- so an update, which is always the
+ * slim app, keeps the game's data. Where no clone can be made (the app is on another
+ * volume, or still in its disk image), the game reads the bundle's copy as before. */
+static void adopt_bundled_obb(void)
+{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *dir = bundle_dir(@"Game/obb");
+    for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+        if (![name.pathExtension.lowercaseString isEqualToString:@"obb"]) continue;
+        NSString *from = [dir stringByAppendingPathComponent:name];
+        NSString *to = [obb_dir() stringByAppendingPathComponent:name];
+        long long size = [[fm attributesOfItemAtPath:from error:nil][NSFileSize] longLongValue];
+        NSDictionary *have = [fm attributesOfItemAtPath:to error:nil];
+        if (!have || [have[NSFileSize] longLongValue] != size) {
+            mkdirs(obb_dir());
+            NSString *part = [to stringByAppendingString:@".part"];
+            unlink(part.fileSystemRepresentation);
+            if (clonefile(from.fileSystemRepresentation, part.fileSystemRepresentation, 0) != 0) {
+                tl_log_line("macos: the bundled OBB cannot be cloned into the data folder (%s): "
+                            "the game reads it from the bundle", strerror(errno));
+                return;
+            }
+            if (rename(part.fileSystemRepresentation, to.fileSystemRepresentation) != 0) {
+                tl_log_line("macos: the cloned OBB cannot be put in place (%s)", strerror(errno));
+                unlink(part.fileSystemRepresentation);
+                return;
+            }
+            [[NSURL fileURLWithPath:to] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:nil];
+            tl_log_line("macos: cloned the bundled OBB into the data folder (%s)", name.UTF8String);
+        }
+        drop_other_obbs(name);
+        return;
+    }
 }
 
 @interface PVZ2ObbDownload : NSObject <NSURLSessionDownloadDelegate, NSWindowDelegate>
@@ -624,6 +678,7 @@ static bool obb_download_needed(void)
             /* 1.3 GB that can be downloaded again does not belong in a backup. */
             [[NSURL fileURLWithPath:final] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:nil];
             tl_log_line("macos: the OBB is downloaded and checked (%lld bytes)", have);
+            drop_other_obbs(name);
             [self finish];
         });
     });
@@ -2352,6 +2407,33 @@ static void *key_stroker(void *arg)
     return NULL;
 }
 
+/* ---------------------------------------------------------------- updates (Sparkle)
+ *
+ * The app updates itself from the release feed (Info.plist's SUFeedURL: the
+ * repository's sparkle/appcast.xml), and installs only an update signed with the key
+ * whose public half is SUPublicEDKey. Every update is the slim app: a full app's OBB
+ * is in the data folder by then (adopt_bundled_obb). Sparkle asks before it installs,
+ * and its "Install and Relaunch" quits the way Cmd-Q does, so the game saves. A build
+ * without the two keys has no updater, and a test launch does not start it (the
+ * checks keep their state in the app's defaults) unless TL_PVZ2_UPDATES=1. */
+static SPUStandardUpdaterController *g_updater;
+static bool updates_configured(void)
+{
+    NSDictionary *plist = NSBundle.mainBundle.infoDictionary;
+    return [plist[@"SUFeedURL"] length] && [plist[@"SUPublicEDKey"] length];
+}
+static void start_updater(void)
+{
+    if (g_updater || !updates_configured()) return;
+    const char *force = getenv("TL_PVZ2_UPDATES");
+    if (background_launch() && !(force && !strcmp(force, "1"))) return;
+    g_updater = [[SPUStandardUpdaterController alloc] initWithStartingUpdater:YES
+                                                              updaterDelegate:nil userDriverDelegate:nil];
+    tl_log_line("macos: updates from %s, automatic checks %s",
+                [NSBundle.mainBundle.infoDictionary[@"SUFeedURL"] UTF8String],
+                g_updater.updater.automaticallyChecksForUpdates ? "on" : "off");
+}
+
 @interface PVZ2Delegate : NSObject <NSApplicationDelegate, NSWindowDelegate>
 @property(strong) NSWindow *window;
 @property(strong) NSTimer *statsTimer;
@@ -2461,6 +2543,7 @@ static void *key_stroker(void *arg)
 }
 - (void)applicationDidFinishLaunching:(NSNotification *)notification
 {
+    start_updater();
     /* A slim app's first start: the game's data first, then the game. */
     if (!g_obb_download && obb_download_needed()) {
         tl_log_line("macos: the game's data (OBB) is not here yet: it is downloaded first");
@@ -2483,6 +2566,10 @@ static void *key_stroker(void *arg)
                                                       usingBlock:^(NSNotification *note) {
             (void)note;
             [g_view followDisplayScale];
+            /* the settings window's "Check for updates automatically" */
+            id checks = [[NSUserDefaults standardUserDefaults] objectForKey:@"SUEnableAutomaticChecks"];
+            if (g_updater && checks && [checks boolValue] != g_updater.updater.automaticallyChecksForUpdates)
+                g_updater.updater.automaticallyChecksForUpdates = [checks boolValue];
             bool now = adapt_mode();
             NSString *aspect = [[NSUserDefaults standardUserDefaults] stringForKey:kFixedAspect];
             if (now == was_adapt && (aspect == was_aspect || [aspect isEqualToString:was_aspect])) return;
@@ -2875,6 +2962,13 @@ static void *key_stroker(void *arg)
  * is told once, when the first reason comes, and it is told it is back when
  * the last reason is gone. */
 /* Cmd-, : the preferences. */
+/* App menu > Check for Updates…, and the settings window's Check Now */
+- (void)checkForUpdates:(id)sender { [g_updater checkForUpdates:sender]; }
+- (BOOL)validateMenuItem:(NSMenuItem *)item
+{
+    if (item.action == @selector(checkForUpdates:)) return g_updater.updater.canCheckForUpdates;
+    return YES;
+}
 - (void)showPreferences:(id)sender
 {
     (void)sender;
@@ -2994,6 +3088,7 @@ int main(int argc, char **argv)
         setvbuf(stderr, NULL, _IOLBF, 0);
 
         import_old_settings();
+        adopt_bundled_obb();
 
         /* The APK: in the bundle, or wherever the environment says. */
         NSString *apk = nil;
@@ -3050,6 +3145,10 @@ int main(int argc, char **argv)
         NSMenu *menu = [NSMenu new];
         NSMenuItem *item = [NSMenuItem new]; [menu addItem:item];
         NSMenu *appMenu = [NSMenu new];
+        if (updates_configured()) {
+            [appMenu addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""];
+            [appMenu addItem:[NSMenuItem separatorItem]];
+        }
         [appMenu addItemWithTitle:@"Settings…" action:@selector(showPreferences:) keyEquivalent:@","];
         [appMenu addItem:[NSMenuItem separatorItem]];
         [appMenu addItemWithTitle:@"Hide Reflourished" action:@selector(hide:) keyEquivalent:@"h"];

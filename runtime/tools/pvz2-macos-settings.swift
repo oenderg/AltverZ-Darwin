@@ -5,7 +5,7 @@
 //
 //   General   the window: Fixed (one shape) or Adapt, the shape, and what closing it does
 //   Keyboard  the key for each seed packet, the shovel and collecting (click a field, press a key)
-//   About     the version, and where the saves and the log are
+//   About     the version, updates, and where the saves and the log are
 //
 // The host opens it with [NSClassFromString(@"PVZ2Settings") show].
 
@@ -28,6 +28,8 @@ private enum Key {
     static let closeAction = "closeAction"
     static let confirmQuit = "confirmQuit"
     static let renderSharp = "renderSharp"
+    /// Sparkle's own key; the host hands a change to the updater
+    static let automaticChecks = "SUEnableAutomaticChecks"
 }
 
 /// A key's name, the way the host matches it (pvz2-macos.m, key_name): "Space",
@@ -504,14 +506,23 @@ private struct KeyRecorderField: View {
 // MARK: - About
 
 private struct AboutPane: View {
+    @AppStorage(Key.automaticChecks) private var automaticChecks = true
+
     /// Where the game keeps its saves, settings and log: the app's data folder,
     /// or the one a test set (TL_DATA) -- the host's own rule.
     private var dataFolder: URL {
         if let d = ProcessInfo.processInfo.environment["TL_DATA"], !d.isEmpty {
             return URL(fileURLWithPath: d)
         }
+        let name = Bundle.main.infoDictionary?["PVZ2DataFolder"] as? String ?? ""
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PvZ2 Reflourished")
+            .appendingPathComponent(name.isEmpty ? "PvZ2 Reflourished" : name)
+    }
+
+    /// A build with Sparkle's feed and key (the host's updates_configured)
+    private var hasUpdates: Bool {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return !(info["SUFeedURL"] as? String ?? "").isEmpty && !(info["SUPublicEDKey"] as? String ?? "").isEmpty
     }
 
     var body: some View {
@@ -524,6 +535,27 @@ private struct AboutPane: View {
                 Text("Plants vs. Zombies 2: Reflourished, running natively on this Mac: the game's own Android code, converted ahead of time, drawn through Metal.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+            }
+            if hasUpdates {
+                Section {
+                    LabeledContent("Check for updates automatically") {
+                        Toggle("", isOn: $automaticChecks)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                    }
+                    LabeledContent("New releases") {
+                        Button("Check Now") {
+                            NSApp.sendAction(Selector(("checkForUpdates:")), to: nil, from: nil)
+                        }
+                        .controlSize(.small)
+                    }
+                } header: {
+                    Text("Updates")
+                } footer: {
+                    Text("Once a day the app looks for a new release on GitHub, and asks before it installs one. Your saves and settings stay as they are.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Section("Files") {
                 LabeledContent {
