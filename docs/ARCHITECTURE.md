@@ -24,7 +24,10 @@ is signed like any other library. On the device nothing writes code.
 
 - keeps the code at the offsets the ELF put it, so every PC-relative branch and load still works;
   the data segment moves (Mach-O wants it page-aligned), so PC-relative references into data are
-  re-encoded, and the tool refuses a library where it cannot;
+  re-encoded, and the tool refuses a library where it cannot. The data blob has a segment of its own
+  (`__GUESTDATA`), with nothing in front of it, and the converted code references no imports through
+  the linker's table (`__got`): linkers differ in what they put first in `__DATA` (Xcode 26's put
+  `__got` there and broke the page alignment);
 - turns ELF relocations into assembler expressions, so `ld64` writes the rebase/bind information;
 - rewrites what Darwin forbids or lays out differently: thread-pointer reads (`mrs tpidr_el0`) point
   at a fake thread block, and uses of register x18 (reserved on Apple platforms) go through stubs;
