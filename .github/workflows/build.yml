@@ -113,7 +113,7 @@ jobs:
             - Mac: `${{ steps.metadata.outputs.prefix }}-Mac-Full.dmg`
 
             **iPhone / iPad:** install the IPA with SideStore, AltStore, Sideloadly or LiveContainer.
-            **Mac:** open the DMG and drag the app onto Applications. The first time, macOS refuses to open it (it is not notarized): click Done, then Open Anyway in System Settings > Privacy & Security.
+            **Mac:** open the DMG and drag the app onto Applications. The first time, macOS refuses to open it (it is not notarized): click Done, then Open Anyway in System Settings > Privacy & Security. After that the Mac app updates itself (PvZ2 Reflourished > Check for Updates…).
           files: release/*
           fail_on_unmatched_files: true
 
@@ -136,4 +136,29 @@ jobs:
           git add altstore/source.json
           git diff --cached --quiet && exit 0
           git commit -m "chore(altstore): update the source for $TAG"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"
+
+      - name: Update the Mac update feed
+        if: github.event.inputs.platforms != 'iPhone/iPad' && github.event.inputs.variants != 'Full'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          PREFIX: ${{ steps.metadata.outputs.prefix }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "no SPARKLE_PRIVATE_KEY secret: the Mac update feed is left as it is"
+            exit 0
+          fi
+          # Every update is the slim app, signed with the key whose public half the app carries.
+          dmg="release/$PREFIX-Mac.dmg"
+          sig="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | out/.work/sparkle/bin/sign_update --ed-key-file - -p "$dmg")"
+          python3 scripts/update-appcast.py "$dmg" --tag "$TAG" --ed-signature "$sig"
+          python3 scripts/update-appcast.py --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sparkle/appcast.xml
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(sparkle): update the Mac update feed for $TAG"
+          git pull --rebase origin "${{ github.event.repository.default_branch }}"
           git push origin "HEAD:${{ github.event.repository.default_branch }}"
