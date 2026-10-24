@@ -337,6 +337,16 @@ static void J_screen_size(tl_jcall *c)
     }
     c->ret = vi(0);
 }
+/* The screen's cutout (the iPhone's Dynamic Island and rounded corners), as
+ * the host measured it: left, right, top, bottom, in the surface's pixels. */
+static _Atomic int32_t g_safe[4];
+
+void tl_pvz2_set_safe_insets(int left, int right, int top, int bottom)
+{
+    atomic_store(&g_safe[0], left); atomic_store(&g_safe[1], right);
+    atomic_store(&g_safe[2], top); atomic_store(&g_safe[3], bottom);
+}
+
 static void J_safe_rect(tl_jcall *c)
 {
     jobj *a = c->args[0].l;
@@ -344,8 +354,28 @@ static void J_safe_rect(tl_jcall *c)
         /* Despite its name this is NOT an x/y/width/height rectangle.
          * AndroidSurfaceView returns left/right/top/bottom cutout insets,
          * all zero when there is no cutout. Returning screen dimensions
-         * here pushes MainMenu's controls outside the drawable area. */
-        memset(a->arr.data, 0, 4 * sizeof(int32_t));
+         * here pushes MainMenu's controls outside the drawable area.
+         *
+         * The game reads them in its own layout units, 600 to the surface's
+         * height (measured: 156 moved the map's buttons 208 px in on an
+         * 804 px tall surface), and Android hands it half the larger side
+         * inset in both [0] and [1]. The host's numbers are the pixels to
+         * keep clear, so they are converted here. A test can pretend to be
+         * a phone with TL_PVZ2_SAFE_INSETS=left,right,top,bottom (pixels).
+         * The game asks once, while it starts. */
+        int32_t *o = (int32_t *)a->arr.data;
+        int px[4] = { 0, 0, 0, 0 };
+        const char *env = getenv("TL_PVZ2_SAFE_INSETS");
+        if (!env || sscanf(env, "%d,%d,%d,%d", &px[0], &px[1], &px[2], &px[3]) != 4)
+            for (int i = 0; i < 4; i++) px[i] = atomic_load(&g_safe[i]);
+        for (int i = 0; i < 4; i++)
+            o[i] = P.h > 0 ? (int32_t)((px[i] * 600LL + P.h / 2) / P.h) : 0;
+        static atomic_int calls;
+        int n = atomic_fetch_add(&calls, 1);
+        if (n < 8 || (n & (n - 1)) == 0)
+            tl_log_line("pvz2: safe insets asked (%d): left %d right %d top %d bottom %d px "
+                        "of a %d px tall surface -> %d %d %d %d",
+                        n + 1, px[0], px[1], px[2], px[3], P.h, o[0], o[1], o[2], o[3]);
     }
     c->ret = vi(0);
 }

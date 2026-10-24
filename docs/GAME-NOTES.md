@@ -56,6 +56,13 @@ through a guard that turns a fault into a log line instead of a crash.
 - On macOS, Metal objects are autoreleased on the GL thread, which has no autorelease pool of its own:
   `husk-tl-egl-pool.m` drains one around every swap (without it, ~16 MB/h of growth).
 - After coming back from the background the game shows its own pause menu.
+- **The screen's cutout.** The game keeps its buttons clear of a camera hole or the Dynamic Island
+  through `Graphics_GetSafeRect`: four insets (left, right, top, bottom), not a rectangle (a rectangle
+  pushes the title's controls off screen). It reads them once, while it starts, in its own layout
+  units: 600 to the surface's height (156 moved the map's buttons 208 px on an 804 px tall surface).
+  Android passes half the larger side inset in both left and right. Hosts give the driver pixels
+  (`tl_pvz2_set_safe_insets`) and the driver converts; the iOS host passes the part of the view's
+  safe area that overlaps the game, left and right only.
 
 ## The mod's performance overlay
 

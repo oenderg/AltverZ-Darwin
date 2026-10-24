@@ -68,6 +68,10 @@ void tl_pvz2_lifecycle_foreground(void);
  * turned over (the 180-degree flip), 1 = portrait, 2 = portrait turned over.
  * The guest re-lays-out when the value changes, so the host must set it. */
 void tl_pvz2_set_orientation(int orientation);
+/* The part of the surface the screen's cutout covers (the Dynamic Island, the
+ * rounded corners), in the surface's pixels; zero where nothing does. The game
+ * keeps its buttons clear of it, as on an Android phone with a camera hole. */
+void tl_pvz2_set_safe_insets(int left, int right, int top, int bottom);
 unsigned long tl_pvz2_frames(void);
 /* 1 once the game is past its start-up (its save loaded, the frames smooth). */
 int tl_pvz2_started(void);

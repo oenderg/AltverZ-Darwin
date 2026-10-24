@@ -347,6 +347,45 @@ static void show_message(UIViewController *, NSString *, NSString *);
 static void audio_session_setup(void);
 static void display_size_pixels(UIWindowScene *windowScene, int *out_w, int *out_h);
 
+/* Scripted input, for the simulator (which has no input a script can send):
+ * TL_PVZ2_TAP="x,y;wait:3;drag:x1,y1,x2,y2;..." in the game's own pixels, the Mac
+ * test app's language. It starts TL_PVZ2_TAP_DELAY seconds (default 3) after the game
+ * has started. Launch with SIMCTL_CHILD_TL_PVZ2_TAP=... to set it in the simulator. */
+static void *tapper(void *arg)
+{
+    (void)arg;
+    pthread_setname_np("PVZ2 taps");
+    for (int i = 0; i < 600 && !tl_pvz2_started(); i++) usleep(100000);
+    int delay = getenv("TL_PVZ2_TAP_DELAY") ? atoi(getenv("TL_PVZ2_TAP_DELAY")) : 3;
+    sleep((unsigned)delay);
+    char *copy = strdup(getenv("TL_PVZ2_TAP")), *save = NULL;
+    for (char *tok = strtok_r(copy, ";", &save); tok; tok = strtok_r(NULL, ";", &save)) {
+        int x, y, x2, y2, wait;
+        if (sscanf(tok, "wait:%d", &wait) == 1) {
+            if (wait >= 0 && wait <= 600) sleep((unsigned)wait);
+        } else if (sscanf(tok, "drag:%d,%d,%d,%d", &x, &y, &x2, &y2) == 4) {
+            tl_log_line("ios: the script drags (%d,%d) -> (%d,%d)", x, y, x2, y2);
+            tl_pvz2_touch(0, 1, (float)x, (float)y);
+            for (int i = 1; i <= 10; i++) {
+                usleep(20000);
+                tl_pvz2_touch(1, 1, (float)(x + (x2 - x) * i / 10), (float)(y + (y2 - y) * i / 10));
+            }
+            usleep(20000);
+            tl_pvz2_touch(3, 1, (float)x2, (float)y2);
+            sleep(2);
+        } else if (sscanf(tok, "%d,%d", &x, &y) == 2) {
+            tl_log_line("ios: the script taps (%d,%d)", x, y);
+            tl_pvz2_touch(0, 1, (float)x, (float)y);
+            usleep(120000);
+            tl_pvz2_touch(3, 1, (float)x, (float)y);
+            sleep(2);
+        }
+    }
+    free(copy);
+    tl_log_line("ios: the tap script is done");
+    return NULL;
+}
+
 static void *launch_game(void *unused)
 {
     (void)unused;
@@ -359,6 +398,10 @@ static void *launch_game(void *unused)
         bool ok = tl_pvz2_start(&g_cfg) && tl_pvz2_run();
         atomic_store(&g_ready, ok);
         tl_log_line("ios: driver startup %s", ok ? "complete" : "FAILED");
+        if (ok && getenv("TL_PVZ2_TAP")) {
+            pthread_t t;
+            if (!pthread_create(&t, NULL, tapper, NULL)) pthread_detach(t);
+        }
         if (!ok) {
             /* A black screen is not a diagnosis. The usual reason is the one thing this
              * device cannot do without help: iPadOS 27 enforces TXM, so executable memory
@@ -413,6 +456,7 @@ static void packet_take_in_hand(double x, double y)
 
 @interface PVZ2View : UIView
 - (void)updateViewport:(const char *)reason;
+- (void)updateSafeInsets;
 @property(nonatomic, strong) CAMetalLayer *metal;
 @end
 
@@ -501,6 +545,46 @@ static CGRect _lastViewport;
                 self.bounds.size.width, self.bounds.size.height, scale, reason);
 }
 
+/* The screen's cutout, for the game: the part of the game's rectangle that the
+ * Dynamic Island and the rounded corners cover, in the game's pixels. The game
+ * keeps its buttons clear of it, as it does on an Android phone with a camera
+ * hole. Black bars around the game already keep it clear, so only the part of
+ * the unsafe area that overlaps the game counts. Left and right only: in
+ * landscape Android's cutout has no top or bottom either, and the home
+ * indicator is not a cutout (it hides itself). */
+static int _lastSafe[2] = { -1, -1 };
+- (void)updateSafeInsets
+{
+    CGRect r = [self gameRect];
+    if (r.size.width <= 0) return;
+    UIEdgeInsets sa = self.safeAreaInsets;
+    double px = (double)g_w / r.size.width;
+    double left = fmax(0, sa.left - r.origin.x);
+    double right = fmax(0, sa.right - (self.bounds.size.width - CGRectGetMaxX(r)));
+    /* A phone held upright: the game is a strip across the middle now, but the game reads
+     * the cutout only once, while it starts, and it is played in landscape -- where the
+     * island's inset (on top now) is on the side. The game then fills the screen, so a
+     * point is g_w / (the long side) of its pixels. */
+    if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone &&
+        self.bounds.size.height > self.bounds.size.width) {
+        left = right = sa.top;
+        px = (double)g_w / self.bounds.size.height;
+    }
+    int l = (int)lround(left * px), rt = (int)lround(right * px);
+    if (l == _lastSafe[0] && rt == _lastSafe[1]) return;
+    _lastSafe[0] = l; _lastSafe[1] = rt;
+    tl_pvz2_set_safe_insets(l, rt, 0, 0);
+    tl_log_line("ios: the safe area is %.0f,%.0f,%.0f,%.0f points (left, right, top, bottom); "
+                "the game keeps %d px clear on the left and %d on the right",
+                sa.left, sa.right, sa.top, sa.bottom, l, rt);
+}
+
+- (void)safeAreaInsetsDidChange
+{
+    [super safeAreaInsetsDidChange];
+    [self updateSafeInsets];
+}
+
 - (void)layoutSubviews
 {
     [super layoutSubviews];
@@ -509,6 +593,7 @@ static CGRect _lastViewport;
      * layoutSubviews: doing so freezes the test size and fights every resize. */
     self.layer.backgroundColor = [UIColor blackColor].CGColor;
     [self updateViewport:"the window changed shape"];
+    [self updateSafeInsets];
     /* Everything about the geometry, so a mismatch can be seen in the log
      * instead of guessed at from a screenshot. */
     CAMetalLayer *m = self.metal;
@@ -1561,6 +1646,16 @@ static NSDictionary *obb_info(void)
             tl_log_line("ios: the portrait window was refused: %s", e.localizedDescription.UTF8String);
         }];
       }
+      /* And TL_FORCE_LANDSCAPE=1 the other way, for a phone (or the simulator) that starts
+       * upright: the game is then seen as the player holds it. */
+      const char *force_landscape = getenv("TL_FORCE_LANDSCAPE");
+      if (force_landscape && force_landscape[0] == '1') {
+        UIWindowSceneGeometryPreferencesIOS *pref_land = [[UIWindowSceneGeometryPreferencesIOS alloc] init];
+        pref_land.interfaceOrientations = UIInterfaceOrientationMaskLandscapeRight;
+        [windowScene requestGeometryUpdateWithPreferences:pref_land errorHandler:^(NSError *e) {
+            tl_log_line("ios: the landscape window was refused: %s", e.localizedDescription.UTF8String);
+        }];
+      }
     }
 
     NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
@@ -1678,6 +1773,9 @@ static NSDictionary *obb_info(void)
     tl_pvz2_set_low_memory_warning(lowmem && lowmem[0] == '1');
     tl_log_line("ios: the display can do %d fps, and that is what the game's setting asks for", top);
     [view becomeFirstResponder];
+    /* The game asks for the cutout once, while it starts: it has to be known now. */
+    [view layoutIfNeeded];
+    [view updateSafeInsets];
 
     g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = "com.ea.game.pvz2_rfl",
                             .width = g_w, .height = g_h, .metal_layer = (__bridge void *)layer,
