@@ -1235,6 +1235,27 @@ static bool background_launch(void)
     return b && *b && strcmp(b, "0") != 0;
 }
 
+/* The first public bundle has its own defaults domain. Import before AppKit or
+ * SwiftUI reads a setting, and leave the source domain untouched. Background
+ * tests opt in with a separate source so they never import personal settings. */
+static void import_old_settings(void)
+{
+    const char *override = getenv("TL_PVZ2_IMPORT_FROM");
+    if (background_launch() && (!override || !*override)) return;
+    NSString *source = override && *override ? @(override) : @"org.husk." @"pvz2.macos";
+    NSString *own = NSBundle.mainBundle.bundleIdentifier;
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if ([defaults persistentDomainForName:own][@"importedFrom"]) {
+        tl_log_line("macos: settings import skipped: %s already has importedFrom", own.UTF8String);
+        return;
+    }
+    NSDictionary *old = [defaults persistentDomainForName:source];
+    for (NSString *key in old) [defaults setObject:old[key] forKey:key];
+    [defaults setObject:source forKey:@"importedFrom"];
+    tl_log_line("macos: imported %lu settings from %s into %s", (unsigned long)old.count,
+                source.UTF8String, own.UTF8String);
+}
+
 /* The keys the packets answer to, out of the box: the shared table (the iPad
  * host uses the same one). */
 static NSString *default_slot_key(int slot)
@@ -2970,6 +2991,8 @@ int main(int argc, char **argv)
                                 : [dataPath stringByAppendingPathComponent:@"pvz2.log"];
         freopen(logPath.UTF8String, "a", stderr);
         setvbuf(stderr, NULL, _IOLBF, 0);
+
+        import_old_settings();
 
         /* The APK: in the bundle, or wherever the environment says. */
         NSString *apk = nil;

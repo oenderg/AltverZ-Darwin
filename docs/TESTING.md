@@ -22,6 +22,7 @@ What it sets (you can set these yourself when running the binary by hand):
 |---|---|
 | `TL_DATA` | the data folder (default: `~/Library/Application Support/PvZ2 Reflourished`) |
 | `TL_PVZ2_LOG` | where the log goes |
+| `TL_PVZ2_IMPORT_FROM=<domain>` | import settings once from this domain; background tests otherwise skip import. Use a test bundle ID and test domains only. |
 | `TL_PVZ2_TAP`, `TL_PVZ2_TAP_DELAY` | the tap script, and the seconds before it starts (default 3) |
 | `TL_PVZ2_QUIET=1` | a test window: small, in the corner, never takes the focus, never remembered |
 | `TL_KEEP_RUNNING_IN_BACKGROUND=1` | keep drawing while another app is in front |
