@@ -232,10 +232,18 @@ static void J_void(tl_jcall *c) { (void)c; }
  * iPad's, or a Mac's -- raises it and sends the characters; a host that has
  * none does nothing, and the guest waits, which is what it did before. */
 static void (*g_keyboard_hook)(int show);
-static int g_keyboard_up;
+static atomic_int g_keyboard_up;
 
 void tl_pvz2_set_keyboard_hook(void (*fn)(int show)) { g_keyboard_hook = fn; }
-int tl_pvz2_keyboard_showing(void) { return g_keyboard_up; }
+int tl_pvz2_keyboard_showing(void) { return atomic_load(&g_keyboard_up); }
+
+void tl_pvz2_keyboard_dismissed(void)
+{
+    /* Android's onKeyboardDismissedWithBackButton only clears this flag. The
+     * guest polls it to end the edit, release focus and validate the name. */
+    if (atomic_exchange(&g_keyboard_up, 0))
+        tl_log_line("pvz2: the host dismissed the keyboard");
+}
 
 static void J_show_keyboard(tl_jcall *c)
 {
@@ -249,7 +257,7 @@ static void J_hide_keyboard(tl_jcall *c)
     if (g_keyboard_hook) g_keyboard_hook(0);
     c->ret = vz(1);
 }
-static void J_keyboard_showing(tl_jcall *c) { c->ret = vz(g_keyboard_up); }
+static void J_keyboard_showing(tl_jcall *c) { c->ret = vz(atomic_load(&g_keyboard_up)); }
 
 /* AndroidHttpProxy.GetNetworkStatus: 0 none, 1 mobile, 2 Wi-Fi.  The title
  * polls this every frame and keeps waiting while it reads 0, so report a

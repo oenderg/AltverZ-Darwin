@@ -351,6 +351,10 @@ static void display_size_pixels(UIWindowScene *windowScene, int *out_w, int *out
  * TL_PVZ2_TAP="x,y;wait:3;drag:x1,y1,x2,y2;..." in the game's own pixels, the Mac
  * test app's language. It starts TL_PVZ2_TAP_DELAY seconds (default 3) after the game
  * has started. Launch with SIMCTL_CHILD_TL_PVZ2_TAP=... to set it in the simulator. */
+static void test_text(const char *text);
+static void test_keyboard_hide(void);
+static void test_return(void);
+
 static void *tapper(void *arg)
 {
     (void)arg;
@@ -363,6 +367,14 @@ static void *tapper(void *arg)
         int x, y, x2, y2, wait;
         if (sscanf(tok, "wait:%d", &wait) == 1) {
             if (wait >= 0 && wait <= 600) sleep((unsigned)wait);
+        } else if (!strncmp(tok, "press:", 6)) {
+            char *text = strdup(tok + 6);
+            dispatch_sync(dispatch_get_main_queue(), ^{ test_text(text); });
+            free(text);
+        } else if (!strcmp(tok, "keyboard:hide")) {
+            dispatch_sync(dispatch_get_main_queue(), ^{ test_keyboard_hide(); });
+        } else if (!strcmp(tok, "return")) {
+            dispatch_sync(dispatch_get_main_queue(), ^{ test_return(); });
         } else if (sscanf(tok, "drag:%d,%d,%d,%d", &x, &y, &x2, &y2) == 4) {
             tl_log_line("ios: the script drags (%d,%d) -> (%d,%d)", x, y, x2, y2);
             tl_pvz2_touch(0, 1, (float)x, (float)y);
@@ -945,6 +957,17 @@ static void keyboard_shown(int show)
 @interface PVZ2FieldDelegate : NSObject <UITextFieldDelegate>
 @end
 @implementation PVZ2FieldDelegate
+- (void)textFieldDidEndEditing:(UITextField *)field
+{
+    tl_pvz2_keyboard_dismissed();
+}
+- (void)keyboardWillHide:(NSNotification *)notification
+{
+    /* The iPad keyboard's hide key can hide it without ending first responder.
+     * Android clears its keyboard flag here; the guest then releases the caret. */
+    tl_pvz2_keyboard_dismissed();
+    [g_field resignFirstResponder];
+}
 - (BOOL)textField:(UITextField *)field
     shouldChangeCharactersInRange:(NSRange)range
                 replacementString:(NSString *)text
@@ -984,7 +1007,30 @@ static void keyboard_install(UIView *view)
     g_field.autocapitalizationType = UITextAutocapitalizationTypeNone;
     g_field.keyboardType = UIKeyboardTypeDefault;
     [view addSubview:g_field];
+    [[NSNotificationCenter defaultCenter] addObserver:delegate selector:@selector(keyboardWillHide:)
+                                                 name:UIKeyboardWillHideNotification object:nil];
     tl_pvz2_set_keyboard_hook(keyboard_shown);
+}
+
+/* The simulator script exercises the same delegate as keyboard input. UIKit's
+ * programmatic insertText does not call shouldChangeCharactersInRange. */
+static void test_text(const char *text)
+{
+    tl_log_line("ios: the script types text");
+    NSString *value = [NSString stringWithUTF8String:text];
+    NSRange range = NSMakeRange(g_field.text.length, 0);
+    if ([g_field.delegate textField:g_field shouldChangeCharactersInRange:range replacementString:value])
+        [g_field insertText:value];
+}
+static void test_keyboard_hide(void)
+{
+    tl_log_line("ios: the script dismisses the keyboard");
+    [g_field resignFirstResponder];
+}
+static void test_return(void)
+{
+    tl_log_line("ios: the script presses Return");
+    [g_field.delegate textFieldShouldReturn:g_field];
 }
 
 #pragma mark - paths

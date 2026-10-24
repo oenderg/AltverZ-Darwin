@@ -43,6 +43,8 @@ void tl_pvz2_key(int keycode, int down);
  * register a hook. */
 void tl_pvz2_set_keyboard_hook(void (*fn)(int show));
 int tl_pvz2_keyboard_showing(void);
+/* Report a host dismissal so the guest can end its edit on the game thread. */
+void tl_pvz2_keyboard_dismissed(void);
 
 void tl_pvz2_set_paused(bool paused);
 

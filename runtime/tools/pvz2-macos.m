@@ -2097,6 +2097,9 @@ static NSButton *round_button(NSString *symbol, NSString *tip, SEL action, NSVie
         else tl_pvz2_touch(1, 1, gx, gy);
         return;
     }
+    /* A click ends the previous edit, as dismissing Android's keyboard does.
+     * The guest can start another edit if this click lands in a name field. */
+    if (phase == 0) tl_pvz2_keyboard_dismissed();
     tl_pvz2_touch(phase, 1, gx, gy);
 }
 - (void)mouseDown:(NSEvent *)event {
