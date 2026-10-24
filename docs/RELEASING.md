@@ -1,8 +1,8 @@
 # Releasing
 
 Releases are built by GitHub Actions from the user-supplied APK link, and published as a GitHub
-Release with slim and full apps and the app icon. The AltStore/SideStore source is updated in
-the same run when a slim iOS app is built.
+Release with slim and full apps and the app icon. The AltStore/SideStore source and the Mac
+app's update feed are updated in the same run when the slim apps are built.
 
 ## Running the build
 
@@ -43,7 +43,8 @@ reuses converted libraries in the same output folder while still making the DMG;
 Use reuse only when the APK, converter and hooks have not changed.
 
 The workflow uploads the files, then runs `scripts/update-altstore-source.py` and commits the
-updated `altstore/source.json` (`chore(altstore): ...`) to the default branch.
+updated `altstore/source.json` (`chore(altstore): ...`) to the default branch, then signs the slim
+Mac DMG and commits the Mac update feed `sparkle/appcast.xml` (`chore(sparkle): ...`).
 
 ## Versions
 
@@ -72,6 +73,33 @@ updated `altstore/source.json` (`chore(altstore): ...`) to the default branch.
   With a Developer ID certificate and notarization that step goes away; settings and saves carry
   over (they do not depend on who signed the app).
 
+## Mac updates (Sparkle)
+
+The Mac app updates itself with [Sparkle](https://sparkle-project.org) 2: PvZ2 Reflourished >
+Check for Updates…, a daily check (Settings > About > Updates turns it off), and Sparkle's own
+window, which asks before it installs. `build.sh` fetches the pinned Sparkle
+(`scripts/fetch-sparkle.sh`, checked by its SHA-256) and the app embeds it.
+
+- **The feed** is `sparkle/appcast.xml` on the default branch, the app's `SUFeedURL`. It offers
+  one update, the newest release's **slim** DMG, whatever variant a person installed: a full app
+  clones its OBB into the data folder on its first launch, so after an update it is a slim app
+  with its game data in place. A release with a new game version makes the updated app download
+  the new OBB on its first start, and the old one is deleted. `scripts/update-appcast.py` writes
+  the feed from the DMG; `--check` validates it.
+- **The key.** Every update is signed with an EdDSA key; the app carries its public half
+  (`sparkle/public-key`, the plist's `SUPublicEDKey`) and installs only updates signed with the
+  private half. The private key is in the owner's login keychain (made with Sparkle's
+  `bin/generate_keys`, which prints the public key again any time) and in the repository's Actions
+  secret `SPARKLE_PRIVATE_KEY`. A run without the secret builds and publishes as usual and leaves
+  the feed alone. **Never lose the key**: an app can only accept an update signed with it.
+  Back it up with `generate_keys -x <file>` (and keep that file somewhere safe, not in the
+  repository); `generate_keys -f <file>` imports it on another Mac.
+- **Changing how the Mac app is signed** (a Developer ID and notarization later) is fine: Sparkle
+  accepts an update whose code signature changed as long as the EdDSA key is the same. Never
+  change the code signature and the EdDSA key in the same release.
+- A build without `sparkle/public-key` (or `SPARKLE_PUBLIC_KEY`) has no updater and no menu item.
+  `SPARKLE_FEED_URL` points a test build at another feed (see [TESTING.md](TESTING.md)).
+
 ## The AltStore / SideStore source
 
 `altstore/source.json` lists the app and its versions, newest first; the workflow adds each release
@@ -87,5 +115,5 @@ check, pass `--source` with a copy of the JSON so the real source stays unchange
 - Build both apps locally from a clean clone (`./build.sh --apk ...`) and play a level on the Mac and
   on a device. Follow [TESTING.md](TESTING.md); a device test needs the owner's permission.
 - Dump both Info.plists and check the ID, app version, build number and game version. Check the Mac
-  icon too. Package each variant, then check its names and the AltStore download URL.
+  icon and `SUFeedURL` / `SUPublicEDKey` too. Package each variant, then check its names and the AltStore download URL.
 - Note in the release text what changed and anything untested.

@@ -16,7 +16,9 @@ Compare with `libs_sha256` in `data/game-1.4.2.json`.
   1.4.2): the driver's game addresses still hold. Re-record the hook table (step 3).
 - **`libPVZ2.so` changed**: every `GUEST_*` address in `husk-tl-pvz2.c` and every offset in
   [GAME-NOTES.md](GAME-NOTES.md) must be found again (step 4), and the hooks re-recorded.
-- **The OBB changed**: new name, size, SHA-256 and download links (step 2).
+- **The OBB changed**: new name, size, SHA-256 and download links (step 2). The builds take the
+  name from the data file; an updated app downloads the new OBB on its first start (a full app
+  carries it) and deletes the old one, and the iOS app replaces the APK it staged in Documents.
 
 ## 2. The game data file
 

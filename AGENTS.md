@@ -19,7 +19,7 @@ data/game-1.4.2.json          the supported game build: hashes, OBB links, CDN a
 data/hooks-1.4.2.json         the mod's 290 inline hooks, recorded once for that build
 runtime/src/translation-layer-next/   the runtime (bionic libc, JNI, EGL/GLES, audio, loader)
   husk-tl-pvz2.c              THE GAME DRIVER: Java contract, lifecycle, GL loop, PvZ2 features
-runtime/tools/pvz2-macos.m    Mac host (window, input, menus, OBB download)
+runtime/tools/pvz2-macos.m    Mac host (window, input, menus, OBB download, updater)
 runtime/tools/pvz2-macos-settings.swift   Mac settings window (SwiftUI)
 runtime/tools/macos-icon.swift  the Mac app icon from the APK's (a Mac icon's shape)
 runtime/tools/pvz2-ios.m      iPhone/iPad host (UIKit, touch, hardware keyboard, OBB download)
@@ -27,7 +27,8 @@ runtime/tools/pvz2-keys.h     the shared keyboard mapping
 runtime/tools/regress/        the app build scripts; pvz2-sources.sh = which runtime files are built
 prebuilt/ios/                 ANGLE for iOS (rebuild: runtime/scripts/build_angle_ios.sh)
 prebuilt/ios-simulator/       ANGLE for the iOS Simulator (ANGLE_SDK=iphonesimulator, same script)
-scripts/                      downloads, dmg, AltStore source; .github/workflows/build.yml = CI build
+scripts/                      downloads, dmg, AltStore source, Mac update feed; .github/workflows/build.yml = CI build
+sparkle/                      the Mac update feed (appcast.xml, written by CI) and the update key's public half
 docs/banner/                  the repository banner: banner.html + its screenshots, render.sh draws it
 ```
 
@@ -47,6 +48,7 @@ You need the game's APK (the user's own file; never commit it, or the OBB, or an
 - **Never commit game files** (APK, OBB, `.so`, extracted assets, saves) or personal data
   (paths under your home folder, device IDs, signing identities).
 - **Never change the app IDs** (`io.github.oenderg.reflourished-darwin` on iOS and Mac): players' saves and settings hang off them.
+- **Never change `sparkle/public-key`**: installed Mac apps accept only updates signed with its private half ([docs/RELEASING.md](docs/RELEASING.md)).
 - **The supported game build is exact.** `build.sh` refuses any other `libPVZ2.so`. Every game
   address in the driver (`GUEST_*`) is valid for 1.4.2 only: [docs/GAME-NOTES.md](docs/GAME-NOTES.md),
   and for a new version [docs/NEW-GAME-VERSION.md](docs/NEW-GAME-VERSION.md).

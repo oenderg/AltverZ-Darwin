@@ -28,6 +28,7 @@ What it sets (you can set these yourself when running the binary by hand):
 | `TL_KEEP_RUNNING_IN_BACKGROUND=1` | keep drawing while another app is in front |
 | `TL_AUDIO_MUTE=1` | play at a device's pace without sound |
 | `TL_PVZ2_TEST_SCREEN=n` | start on display n |
+| `TL_PVZ2_UPDATES=1` | start the updater (Sparkle) in a background test; it otherwise stays off there. Use a test bundle ID. |
 | `TL_PVZ2_OBB_URLS` | where a slim build downloads the OBB from (space-separated; e.g. a local server) |
 | `TL_PVZ2_SAFE_INSETS=l,r,t,b` | pretend the screen has a cutout, in surface pixels (an iPhone 16 Pro's island on the 1748x804 test surface: `124,124,0,0`) |
 
@@ -56,6 +57,40 @@ The log names the source, destination and key count. Run again with the same sou
 says the import was skipped, and changing a source key does not change the destination. Delete
 both test domains afterwards. Never write or delete a player's real defaults domain. Use a
 test `BUNDLE_ID` for any test that writes settings (`mode:`, `aspect:`, or settings controls).
+
+## Updates (Sparkle) and the OBB
+
+An update test needs two builds with a test `BUNDLE_ID`, a test `DATA_FOLDER` (the data folder's
+name in Application Support; Sparkle's relaunched app has no environment, so `TL_DATA` cannot
+point it elsewhere), a throwaway key and a local feed. Never sign a test with the real key.
+
+```sh
+openssl genpkey -algorithm ed25519 -outform DER -out k.der
+tail -c 32 k.der | base64 > test-private.txt
+openssl pkey -inform DER -in k.der -pubout -outform DER | tail -c 32 | base64 > test-public.txt
+export BUNDLE_ID=io.github.oenderg.reflourished-darwin.updatetest DATA_FOLDER="PvZ2 Reflourished Update Test"
+export SPARKLE_PUBLIC_KEY="$(cat test-public.txt)" SPARKLE_FEED_URL=http://127.0.0.1:8799/appcast.xml
+APP_BUILD=99 ./build.sh --mac --obb <obb> --apk <apk> --out out/update-old      # full, older
+./build.sh --mac --slim --apk <apk> --out out/update-new                        # slim, newer
+sig="$(out/update-new/.work/sparkle/bin/sign_update --ed-key-file test-private.txt -p out/update-new/PvZ2-Reflourished.dmg)"
+python3 scripts/update-appcast.py out/update-new/PvZ2-Reflourished.dmg --tag v0-test \
+    --ed-signature "$sig" --url http://127.0.0.1:8799/new.dmg --appcast feed/appcast.xml
+```
+
+Serve `feed/` (the appcast and the DMG as `new.dmg`) on that port. So that no Sparkle window
+takes the focus, let it update silently: `defaults write <test id> SUAutomaticallyUpdate -bool YES`,
+`SUHasLaunchedBefore -bool YES` and an old `SULastCheckTime` (`-date "2020-01-01 00:00:00 +0000"`).
+Start a copy of the old app with `TL_KEEP_RUNNING_IN_BACKGROUND=1 TL_PVZ2_UPDATES=1`. Its log says
+`cloned the bundled OBB into the data folder` and `updates from ...`; the server sees the feed and
+the DMG fetched, and Sparkle's `Autoupdate` waits. Quit the app (`kill <pid>`): the bundle becomes
+the slim build (`CFBundleVersion` 100, no `Game/obb`), and started again it plays from the cloned
+OBB without downloading. An `.obb` of another name in the data folder's obb folder is deleted
+(`removed another version's OBB`). Afterwards delete the test domain, the test data folder and
+`~/Library/Caches` / `~/Library/HTTPStorages` entries of the test ID.
+
+On iOS the same holds through the simulator: install a full `--ios-sim` build, launch it (the log
+says `staged the bundled OBB into Documents/obb`, in well under a second: a clone), then install a
+slim one over it, the way an AltStore update does, and launch: no download.
 
 ## The tap script
 
