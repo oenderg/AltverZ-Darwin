@@ -72,6 +72,12 @@ UITextField as first responder). On Mac, a click ends the previous edit before t
 same click reaches the game, including a click on ACCEPT. Clicking the field can
 start another edit. Return keeps its existing keycode 66 path.
 
+iOS also ends the edit on any touch that begins inside the game, including when
+a hardware keyboard supplies text without an on-screen keyboard. It clears the
+flag before queuing the touch, then waits 180 ms before resigning first responder
+(also for a guest hide request). A tap on the field makes the guest request the
+keyboard again in that interval, so UIKit keeps editing without a hide/show flicker.
+
 ## Rendering and memory
 
 - **The game never deletes its shaders.** It deletes programs but not the shaders attached to them,

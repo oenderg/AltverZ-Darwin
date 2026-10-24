@@ -169,6 +169,9 @@ For name-field tests, `press:<text>` calls the UITextField input delegate with c
 text, `keyboard:hide` resigns its first responder (exercising editing-end and UIKit's
 keyboard notifications), and `return` calls its Return delegate. These exercise host
 callbacks; they do not simulate a physical tap on the on-screen keyboard's hide key.
+`TL_PVZ2_TEST_HARDWARE_KEYBOARD=1` gives this app's UITextField an empty input view
+while keeping it first responder. Use it with `press:` to test touch dismissal
+without a software keyboard; it does not change Simulator's global keyboard settings.
 `--mask=black` draws the island and the corners into the screenshot. The log is
 `$C/Documents/pvz2.log`.
 

@@ -354,6 +354,16 @@ static void display_size_pixels(UIWindowScene *windowScene, int *out_w, int *out
 static void test_text(const char *text);
 static void test_keyboard_hide(void);
 static void test_return(void);
+static void keyboard_touch_began(void);
+
+static void send_game_touch(int phase, int id, float x, float y)
+{
+    if (phase == 0) {
+        if (NSThread.isMainThread) keyboard_touch_began();
+        else dispatch_sync(dispatch_get_main_queue(), ^{ keyboard_touch_began(); });
+    }
+    tl_pvz2_touch(phase, id, x, y);
+}
 
 static void *tapper(void *arg)
 {
@@ -377,7 +387,7 @@ static void *tapper(void *arg)
             dispatch_sync(dispatch_get_main_queue(), ^{ test_return(); });
         } else if (sscanf(tok, "drag:%d,%d,%d,%d", &x, &y, &x2, &y2) == 4) {
             tl_log_line("ios: the script drags (%d,%d) -> (%d,%d)", x, y, x2, y2);
-            tl_pvz2_touch(0, 1, (float)x, (float)y);
+            send_game_touch(0, 1, (float)x, (float)y);
             for (int i = 1; i <= 10; i++) {
                 usleep(20000);
                 tl_pvz2_touch(1, 1, (float)(x + (x2 - x) * i / 10), (float)(y + (y2 - y) * i / 10));
@@ -387,7 +397,7 @@ static void *tapper(void *arg)
             sleep(2);
         } else if (sscanf(tok, "%d,%d", &x, &y) == 2) {
             tl_log_line("ios: the script taps (%d,%d)", x, y);
-            tl_pvz2_touch(0, 1, (float)x, (float)y);
+            send_game_touch(0, 1, (float)x, (float)y);
             usleep(120000);
             tl_pvz2_touch(3, 1, (float)x, (float)y);
             sleep(2);
@@ -625,6 +635,7 @@ static int _lastSafe[2] = { -1, -1 };
         if (!tl_viewport_map(p.x, p.y, r.origin.x, r.origin.y, r.size.width, r.size.height,
                              g_w, g_h, &gx, &gy))
             continue;   /* a tap in the black bars is not a tap on the game */
+        if (phase == 0) keyboard_touch_began();
         if (atomic_load(&g_packet_in_hand)) {
             /* A packet is in hand (the keyboard took it out of the bank): the
              * finger carries it where it points and lets it go, which is how a
@@ -935,6 +946,36 @@ static int native_seed_pick_mode(void)
  * (action 3). The guest cannot tell the two apart. */
 static UITextField *g_field;
 
+static void keyboard_resign(const char *reason)
+{
+    if (!g_field.isFirstResponder) return;
+    tl_log_line("ios: resignFirstResponder (%s), keyboard flag=%d", reason, tl_pvz2_keyboard_showing());
+    [g_field resignFirstResponder];
+}
+
+static void keyboard_hide_if_still_dismissed(void)
+{
+    /* A touch on the name field makes the guest ask for the keyboard again.
+     * Keep UIKit editing throughout that round trip so the keyboard never flickers. */
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.18 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (tl_pvz2_keyboard_showing()) {
+            tl_log_line("ios: keeping the keyboard after a new guest request: flag=1, first responder=%d",
+                        g_field.isFirstResponder);
+            return;
+        }
+        keyboard_resign("edit stayed dismissed");
+    });
+}
+
+static void keyboard_touch_began(void)
+{
+    if (!tl_pvz2_keyboard_showing()) return;
+    tl_log_line("ios: a game touch ends the current edit: keyboard flag=1 -> 0");
+    tl_pvz2_keyboard_dismissed();
+    keyboard_hide_if_still_dismissed();
+}
+
 static void keyboard_shown(int show)
 {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -946,10 +987,10 @@ static void keyboard_shown(int show)
             /* With a hardware keyboard -- a Magic Keyboard, or a Mac's keyboard
              * through Universal Control -- iPadOS shows no on-screen keyboard:
              * the keys still arrive here. */
-            tl_log_line("ios: the guest asked for a keyboard: first responder=%d, in a window=%d",
-                        ok, g_field.window != nil);
+            tl_log_line("ios: the guest asked for a keyboard: flag=%d, first responder=%d, in a window=%d",
+                        tl_pvz2_keyboard_showing(), ok, g_field.window != nil);
         } else {
-            [g_field resignFirstResponder];
+            keyboard_hide_if_still_dismissed();
         }
     });
 }
@@ -966,7 +1007,7 @@ static void keyboard_shown(int show)
     /* The iPad keyboard's hide key can hide it without ending first responder.
      * Android clears its keyboard flag here; the guest then releases the caret. */
     tl_pvz2_keyboard_dismissed();
-    [g_field resignFirstResponder];
+    keyboard_resign("keyboard will hide");
 }
 - (BOOL)textField:(UITextField *)field
     shouldChangeCharactersInRange:(NSRange)range
@@ -989,7 +1030,7 @@ static void keyboard_shown(int show)
 {
     /* The IME's done key. The guest's own key events carry Android's key
      * codes, and ENTER is 66. */
-    [field resignFirstResponder];
+    keyboard_resign("Return");
     tl_pvz2_key(66, 1);
     tl_pvz2_key(66, 0);
     return NO;
@@ -1006,6 +1047,14 @@ static void keyboard_install(UIView *view)
     g_field.autocorrectionType = UITextAutocorrectionTypeNo;
     g_field.autocapitalizationType = UITextAutocapitalizationTypeNone;
     g_field.keyboardType = UIKeyboardTypeDefault;
+    /* An empty input view lets the simulator exercise hardware-like input
+     * while keeping first responder, without changing its global keyboard setting. */
+    if (getenv("TL_PVZ2_TEST_HARDWARE_KEYBOARD")) {
+        g_field.inputView = [[UIView alloc] initWithFrame:CGRectZero];
+        g_field.inputAssistantItem.leadingBarButtonGroups = @[];
+        g_field.inputAssistantItem.trailingBarButtonGroups = @[];
+        tl_log_line("ios: test hardware keyboard: using an empty input view");
+    }
     [view addSubview:g_field];
     [[NSNotificationCenter defaultCenter] addObserver:delegate selector:@selector(keyboardWillHide:)
                                                  name:UIKeyboardWillHideNotification object:nil];
@@ -1016,7 +1065,8 @@ static void keyboard_install(UIView *view)
  * programmatic insertText does not call shouldChangeCharactersInRange. */
 static void test_text(const char *text)
 {
-    tl_log_line("ios: the script types text");
+    tl_log_line("ios: the script types text: keyboard flag=%d, first responder=%d",
+                tl_pvz2_keyboard_showing(), g_field.isFirstResponder);
     NSString *value = [NSString stringWithUTF8String:text];
     NSRange range = NSMakeRange(g_field.text.length, 0);
     if ([g_field.delegate textField:g_field shouldChangeCharactersInRange:range replacementString:value])
@@ -1025,7 +1075,7 @@ static void test_text(const char *text)
 static void test_keyboard_hide(void)
 {
     tl_log_line("ios: the script dismisses the keyboard");
-    [g_field resignFirstResponder];
+    keyboard_resign("script hide");
 }
 static void test_return(void)
 {
