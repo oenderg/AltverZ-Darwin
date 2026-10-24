@@ -980,6 +980,13 @@ static void keyboard_shown(int show)
 {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (show) {
+            /* At start-up the guest asks for the keyboard and drops it again at
+             * once: by the time this runs it is already hidden again, and raising
+             * it now would only flash it on the screen. */
+            if (!tl_pvz2_keyboard_showing()) {
+                tl_log_line("ios: the guest's keyboard request was already withdrawn: not shown");
+                return;
+            }
             /* Each entry starts empty: the guest keeps its own text, and the
              * field is only a way to see the keyboard and to hear the keys. */
             g_field.text = @"";
