@@ -20,6 +20,7 @@ runtime/src/translation-layer-next/   the runtime (bionic libc, JNI, EGL/GLES, a
   husk-tl-pvz2.c              THE GAME DRIVER: Java contract, lifecycle, GL loop, PvZ2 features
 runtime/tools/pvz2-macos.m    Mac host (window, input, menus, OBB download)
 runtime/tools/pvz2-macos-settings.swift   Mac settings window (SwiftUI)
+runtime/tools/macos-icon.swift  the Mac app icon from the APK's (a Mac icon's shape)
 runtime/tools/pvz2-ios.m      iPhone/iPad host (UIKit, touch, hardware keyboard, OBB download)
 runtime/tools/pvz2-keys.h     the shared keyboard mapping
 runtime/tools/regress/        the app build scripts; pvz2-sources.sh = which runtime files are built

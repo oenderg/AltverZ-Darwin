@@ -19,6 +19,7 @@
 #   Contents/MacOS/PvZ2                  the host (tools/pvz2-macos.m) and the driver
 #   Contents/Frameworks/*.dylib          the converted guest libraries and their .facts
 #   Contents/Frameworks/libEGL.dylib     ANGLE: the EGL the driver needs on a Mac
+#   Contents/Resources/AppIcon.icns      the app's icon (Reflourished's, from the APK)
 #   Contents/Game/pvz2.apk               the game's APK
 #   Contents/Game/obb/*.obb              the game's expansion file
 #   Contents/Game/1.4.2.main.tar         the mod's CDN archive
@@ -141,6 +142,22 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# The app's icon: Reflourished's own, out of the APK (as the iOS app's), cut to a Mac
+# icon's shape by tools/macos-icon.swift. ICON_PNG takes another picture.
+if [ -z "${ICON_PNG:-}" ] && [ -n "${GAME_APK:-}" ]; then
+    ICON_DIR="$(mktemp -d)"
+    unzip -o -q "$GAME_APK" "res/mipmap-xxxhdpi/pvz2_icon.png" -d "$ICON_DIR"
+    ICON_PNG="$ICON_DIR/res/mipmap-xxxhdpi/pvz2_icon.png"
+fi
+if [ -n "${ICON_PNG:-}" ]; then
+    [ -f "$ICON_PNG" ] || { echo "no icon at $ICON_PNG" >&2; exit 1; }
+    ICONSET="$(mktemp -d)/AppIcon.iconset"
+    xcrun swift "$R/tools/macos-icon.swift" "$ICON_PNG" "$ICONSET"
+    iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APP/Contents/Info.plist"
+    echo "==> Reflourished's icon"
+fi
 
 # Where the app downloads the expansion file from when it is not there (a slim app,
 # built without GAME_OBB): the links in order, and the size and sha256 it must have.

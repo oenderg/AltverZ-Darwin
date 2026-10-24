@@ -85,7 +85,8 @@ answers the few calls into those parts). The pieces that matter here:
   (`pvz2-keys.h`); menus; the window modes (Fixed: one shape, any size; Adapt: the game lays out for
   the window's shape); the display's scale (the game always starts at least 804 px tall so it picks
   its HD art); the close/quit behaviour; the first-launch OBB download for slim builds; a scripted
-  test mode ([TESTING.md](TESTING.md)). Settings UI: `pvz2-macos-settings.swift` (SwiftUI).
+  test mode ([TESTING.md](TESTING.md)). Settings UI: `pvz2-macos-settings.swift` (SwiftUI). Icon: the APK's, cut to a Mac icon's shape by
+  `macos-icon.swift` at build time.
 - `pvz2-ios.m`: the iPhone/iPad app. UIKit scene, touch, hardware-keyboard shortcuts, the OBB
   download, files under `Documents/` (visible in the Files app).
 - `regress/build-macos-app.sh`, `regress/build-ios-app.sh`, `regress/build-ios-ipa.sh`: compile the
