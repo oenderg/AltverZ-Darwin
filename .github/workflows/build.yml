@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: "Link to the PvZ2 Reflourished 1.4.2 APK (direct, Google Drive or MEGA)"
-        required: true
+        description: "Link to the PvZ2 Reflourished 1.4.2 APK (direct, Google Drive or MEGA); empty: the repository's own copy (the build-inputs draft release)"
+        required: false
+        default: ""
       obb_url:
         description: "Link to the OBB (leave empty: the mod's own 1.4.2 OBB is used)"
         required: false
@@ -66,9 +67,30 @@ jobs:
           echo "tag=${RELEASE_TAG:-v$APP_VERSION}" >> "$GITHUB_OUTPUT"
           echo "prefix=PvZ2-Reflourished-$GAME_VERSION-Darwin-$APP_VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Build and package
+      - name: The APK
+        id: apk
         env:
           APK_URL: ${{ github.event.inputs.apk_url }}
+          GAME: ${{ steps.metadata.outputs.game }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "$APK_URL" ]; then echo "apk=$APK_URL" >> "$GITHUB_OUTPUT"; exit 0; fi
+          # The repository's own copy: an asset of the draft release "build-inputs", which only
+          # people with write access can see (docs/RELEASING.md). A fork has none: give a link.
+          name="PvZ2-Reflourished-$GAME.apk"
+          id="$(gh api "repos/$REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.draft and .tag_name == \"build-inputs\") | .assets[] | select(.name == \"$name\") | .id" | head -1)"
+          [ -n "$id" ] || { echo "no APK link given and no $name in a build-inputs draft release" >&2; exit 1; }
+          mkdir -p inputs
+          gh api -H "Accept: application/octet-stream" "repos/$REPOSITORY/releases/assets/$id" > "inputs/$name"
+          ls -l "inputs/$name"
+          echo "apk=$PWD/inputs/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Build and package
+        env:
+          APK_URL: ${{ steps.apk.outputs.apk }}
           OBB_URL: ${{ github.event.inputs.obb_url }}
           PLATFORMS: ${{ github.event.inputs.platforms }}
           VARIANTS: ${{ github.event.inputs.variants }}

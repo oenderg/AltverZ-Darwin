@@ -12,11 +12,19 @@ Actions > **Build** > Run workflow, with:
 
 | Input | Meaning |
 |---|---|
-| `apk_url` | a link to the PvZ2 Reflourished APK (direct, Google Drive or MEGA) |
+| `apk_url` | a link to the PvZ2 Reflourished APK (direct, Google Drive or MEGA); empty = the repository's own copy (below) |
 | `obb_url` | optional; empty = the mod's own OBB (only needed for full builds) |
 | `platforms` | iPhone/iPad and Mac, or one of them |
 | `variants` | Slim and full (default), Slim, or Full |
 | `release_tag` | optional; empty = `v<VERSION>` (for example `v1.0.0`) |
+
+**The repository's own APK.** The mod's only download hosts (Google Drive and MEGA) are unreliable
+for a machine, so this repository keeps the APK as an asset of a **draft** release named
+"Build inputs (never publish)" (tag `build-inputs`, which a draft does not create). A draft is
+visible only to people with write access to the repository, and to the workflow's own token, so
+nothing is published. The workflow downloads `PvZ2-Reflourished-<game version>.apk` from it when
+`apk_url` is empty. For a new game version, attach its APK to that draft (Releases > the draft >
+Edit). **Never publish it.** A fork has no such draft: it passes a link.
 
 The run uses a `macos-26` runner; expect the better part of an hour the first time. For both
 variants it builds slim first, packages it, removes intermediate bundles, then builds full with
