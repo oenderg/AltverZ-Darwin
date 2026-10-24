@@ -96,10 +96,10 @@ optionally a save (`$C/Documents/data` takes a test run's `data/` folder as it i
 ```sh
 xcrun simctl boot "iPhone 18 Pro"
 xcrun simctl install booted out/PvZ2-Reflourished-sim.app
-C="$(xcrun simctl get_app_container booted com.reflourished.darwin data)"
+C="$(xcrun simctl get_app_container booted io.github.oenderg.reflourished-darwin data)"
 mkdir -p "$C/Documents/obb"
 cp out/.work/game.obb "$C/Documents/obb/main.675.com.ea.game.pvz2_rfl.obb"
-SIMCTL_CHILD_TL_PVZ2_TAP="1310,1100;wait:14" xcrun simctl launch booted com.reflourished.darwin
+SIMCTL_CHILD_TL_PVZ2_TAP="1310,1100;wait:14" xcrun simctl launch booted io.github.oenderg.reflourished-darwin
 xcrun simctl io booted screenshot --mask=black out/ios-sim.png
 ```
 

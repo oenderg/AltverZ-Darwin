@@ -45,8 +45,7 @@ You need the game's APK (the user's own file; never commit it, or the OBB, or an
 
 - **Never commit game files** (APK, OBB, `.so`, extracted assets, saves) or personal data
   (paths under your home folder, device IDs, signing identities).
-- **Never change the app IDs** (`com.reflourished.darwin` on iOS, the Mac app's
-  `CFBundleIdentifier`): players' saves and settings hang off them.
+- **Never change the app IDs** (`io.github.oenderg.reflourished-darwin` on iOS and Mac): players' saves and settings hang off them.
 - **The supported game build is exact.** `build.sh` refuses any other `libPVZ2.so`. Every game
   address in the driver (`GUEST_*`) is valid for 1.4.2 only: [docs/GAME-NOTES.md](docs/GAME-NOTES.md),
   and for a new version [docs/NEW-GAME-VERSION.md](docs/NEW-GAME-VERSION.md).

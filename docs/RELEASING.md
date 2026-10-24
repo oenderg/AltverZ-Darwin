@@ -32,7 +32,7 @@ release, then runs `scripts/update-altstore-source.py` and commits the updated `
 
 - **iPhone/iPad**: the IPA is ad-hoc signed. Every sideloader (AltStore, SideStore, Sideloadly,
   LiveContainer) re-signs it with the installing person's own Apple ID, so updates keep their data
-  as long as the app ID (`com.reflourished.darwin`) stays the same.
+  as long as the app ID (`io.github.oenderg.reflourished-darwin`) stays the same.
 - **Mac**: the app is ad-hoc signed and not notarized, so macOS refuses the first open; the player
   clicks Open Anyway in System Settings > Privacy & Security (right-click > Open no longer does it). With a Developer ID
   certificate and notarization that step goes away; settings and saves carry over (they do not depend

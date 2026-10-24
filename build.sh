@@ -151,7 +151,7 @@ if [ "$WANT_IOS" = 1 ] || [ "$WANT_IOS_SIM" = 1 ]; then
         step "building the iOS app"
         GAME_APK="$APK" GAME_OBB="$IOS_OBB" GAME_CDN_TAR="$CDN" \
         OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" \
-        AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-com.reflourished.darwin}" \
+        AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-io.github.oenderg.reflourished-darwin}" \
             bash "$ROOT/runtime/tools/regress/build-ios-ipa.sh" "$WORK/ios" | grep -E '^==>|^built|^ipa' || true
         [ -f "$WORK/ios/PvZ2.ipa" ] || { echo "the iOS build failed (see above)" >&2; exit 1; }
         mv -f "$WORK/ios/PvZ2.ipa" "$OUT/PvZ2-Reflourished.ipa"
@@ -161,7 +161,7 @@ if [ "$WANT_IOS" = 1 ] || [ "$WANT_IOS_SIM" = 1 ]; then
         step "building the iOS Simulator app"
         GAME_APK="$APK" GAME_OBB="$IOS_OBB" GAME_CDN_TAR="$CDN" \
         OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" \
-        AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-com.reflourished.darwin}" \
+        AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-io.github.oenderg.reflourished-darwin}" \
         IOS_SIM=1 IOS_SIM_APP="$OUT/PvZ2-Reflourished-sim.app" \
             bash "$ROOT/runtime/tools/regress/build-ios-ipa.sh" "$WORK/ios-sim"
     fi

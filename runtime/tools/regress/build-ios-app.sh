@@ -28,7 +28,7 @@ if [ "${IOS_SIM:-0}" = 1 ]; then
     SDK_ARGS=(-isysroot "$(xcrun --sdk "$SDKNAME" --show-sdk-path)")
 fi
 # A specific provisioning profile fixes the bundle ID; override when signing with one.
-BUNDLE_ID="${BUNDLE_ID:-org.husk.pvz2}"
+BUNDLE_ID="${BUNDLE_ID:-io.github.oenderg.reflourished-darwin}"
 
 [ -f "$ANGLE" ] || { echo "no ANGLE at $ANGLE -- run scripts/build_angle_ios.sh first" >&2; exit 1; }
 
