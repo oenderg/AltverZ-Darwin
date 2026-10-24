@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>PvZ2 Reflourished</title>
+    <link>https://github.com/oenderg/Reflourished-Darwin/releases</link>
+    <description>Updates of PvZ2 Reflourished for the Mac (Reflourished-Darwin)</description>
+    <language>en</language>
+    <item>
+      <title>Reflourished-Darwin 1.0.0 · PvZ2: Reflourished 1.4.2</title>
+      <pubDate>Sat, 24 Oct 2026 22:26:27 +0000</pubDate>
+      <link>https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.0.0</link>
+      <sparkle:version>10000</sparkle:version>
+      <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<p>The first release: <b>PvZ2: Reflourished 1.4.2, running natively on iPhone, iPad and Mac.</b> No jailbreak, no JIT, no emulator.</p><ul><li>Plays at your display's refresh rate: 120 Hz on ProMotion iPads.</li><li>Touch, mouse and trackpad, plus keyboard shortcuts on the Mac and on an iPad with a keyboard: <code>1</code>-<code>8</code> seed packets, <code>S</code> shovel, <code>Space</code> collects sun and coins, <code>Esc</code> pauses.</li><li>On the Mac, the window takes any size, or any shape from 4:3 to 21:9, and you can pick your own keys in Settings.</li><li>The Mac app updates itself, and iPhone / iPad get updates through the AltStore and SideStore source.</li></ul><p><a href="https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.0.0">The release on GitHub</a></p>]]></description>
+      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.0.0/PvZ2-Reflourished-1.4.2-Darwin-1.0.0-Mac.dmg" length="68874750"
+                 type="application/octet-stream" sparkle:edSignature="Cn1wKkZxtQw4Pu7NtHrMtO0R5xOd/MKYAAeXHJr/3zHmYk+T8x5dS5V/CrcVZn1VHWNpS/X6HWRh25JJnPxVAA=="/>
+    </item>
+  </channel>
+</rss>
