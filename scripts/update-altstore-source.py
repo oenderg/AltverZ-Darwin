@@ -175,7 +175,7 @@ def main():
     parser.add_argument("--changelog", default="",
                         help="text for the version's localizedDescription")
     parser.add_argument("--icon-url",
-                        help="where the app's icon is (the release's own copy of it)")
+                        help="where the app's icon is (default: the one in the source, docs/banner/icon.png on main)")
     parser.add_argument("--source", default=DEFAULT_SOURCE,
                         help=f"path to altstore/source.json (default: {DEFAULT_SOURCE})")
     parser.add_argument("--check", action="store_true",
