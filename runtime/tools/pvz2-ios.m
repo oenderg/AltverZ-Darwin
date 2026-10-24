@@ -995,18 +995,74 @@ static void mkdirs(const char *path)
     mkdir(t, 0755);
 }
 
+/* A new game version's OBB has a new name, and the old one is 1.3 GB that nothing
+ * reads any more: once the one this app wants is in place, the others go. */
+static void drop_other_obbs(NSString *dir, NSString *keep)
+{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    for (NSString *name in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+        if ([name isEqualToString:keep] || ![name.pathExtension.lowercaseString isEqualToString:@"obb"]) continue;
+        if ([fm removeItemAtPath:[dir stringByAppendingPathComponent:name] error:nil])
+            tl_log_line("ios: removed another version's OBB: %s", name.UTF8String);
+    }
+}
+
+/* A full IPA's OBB is copied into Documents/obb, where a slim app keeps its own. The
+ * copy is a clone (APFS, and NSFileManager clones): instant, no space of its own, and
+ * it outlives the bundle, so an update to the slim app (the AltStore source's) keeps
+ * the game's data. */
+static void stage_bundled_obb(NSString *from_dir, NSString *docs)
+{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *dir = [docs stringByAppendingPathComponent:@"obb"];
+    for (NSString *name in [fm contentsOfDirectoryAtPath:from_dir error:nil]) {
+        if (![name.pathExtension.lowercaseString isEqualToString:@"obb"]) continue;
+        NSString *from = [from_dir stringByAppendingPathComponent:name];
+        NSString *to = [dir stringByAppendingPathComponent:name];
+        long long size = [[fm attributesOfItemAtPath:from error:nil][NSFileSize] longLongValue];
+        NSDictionary *have = [fm attributesOfItemAtPath:to error:nil];
+        if (!have || [have[NSFileSize] longLongValue] != size) {
+            NSString *part = [to stringByAppendingString:@".part"];
+            NSError *err = nil;
+            [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+            [fm removeItemAtPath:part error:nil];
+            [fm removeItemAtPath:to error:nil];
+            if (![fm copyItemAtPath:from toPath:part error:&err] || ![fm moveItemAtPath:part toPath:to error:&err]) {
+                tl_log_line("ios: could not stage the bundled OBB: %s", err.localizedDescription.UTF8String);
+                [fm removeItemAtPath:part error:nil];
+                return;
+            }
+            [[NSURL fileURLWithPath:dir] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:nil];
+            tl_log_line("ios: staged the bundled OBB into Documents/obb (%s)", name.UTF8String);
+        }
+        drop_other_obbs(dir, name);
+        return;
+    }
+}
+
 /* The APK and OBB that came with the app, if any: an IPA that carries the game needs no
- * file transfer to start, and Documents stays the place a user can replace them. */
+ * file transfer to start, and Documents stays the place a user can replace them. An
+ * update that brings another game version replaces the APK staged by the one before:
+ * the game version the staged copies came with is noted beside them. */
 static void stage_bundled_game(NSString *docs)
 {
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *src = [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"Game"];
     if (![fm fileExistsAtPath:src]) return;
+    NSString *mark = [docs stringByAppendingPathComponent:@".bundled-game-version"];
+    NSString *version = NSBundle.mainBundle.infoDictionary[@"PVZ2GameVersion"] ?: @"";
+    NSString *staged = [NSString stringWithContentsOfFile:mark encoding:NSUTF8StringEncoding error:nil];
+    bool new_game = version.length && ![staged isEqualToString:version];
 
     for (NSString *name in [fm contentsOfDirectoryAtPath:src error:nil]) {
         NSString *from = [src stringByAppendingPathComponent:name];
         NSString *to = [docs stringByAppendingPathComponent:name];
-        if ([fm fileExistsAtPath:to]) continue;              // the user's copy wins
+        if ([name isEqualToString:@"obb"]) { stage_bundled_obb(from, docs); continue; }
+        bool replace = new_game && [name.pathExtension.lowercaseString isEqualToString:@"apk"];
+        if ([fm fileExistsAtPath:to]) {
+            if (!replace) continue;                          // the user's copy wins
+            [fm removeItemAtPath:to error:nil];
+        }
         NSError *err = nil;
         if (![fm copyItemAtPath:from toPath:to error:&err])
             tl_log_line("ios: could not stage %s: %s", name.UTF8String,
@@ -1014,7 +1070,8 @@ static void stage_bundled_game(NSString *docs)
         else
             tl_log_line("ios: staged %s from the app bundle", name.UTF8String);
     }
-    /* the OBB belongs in Documents/obb, whatever the bundle called it */
+    if (new_game) [version writeToFile:mark atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    /* an OBB a user put in Documents itself belongs in Documents/obb */
     NSString *obb = [docs stringByAppendingPathComponent:@"obb"];
     for (NSString *name in [fm contentsOfDirectoryAtPath:docs error:nil]) {
         if (![name.pathExtension.lowercaseString isEqualToString:@"obb"]) continue;
@@ -1023,7 +1080,7 @@ static void stage_bundled_game(NSString *docs)
         if (![fm createDirectoryAtPath:obb withIntermediateDirectories:YES
             attributes:nil error:nil]) return;
         [fm moveItemAtPath:from toPath:[obb stringByAppendingPathComponent:name] error:nil];
-        tl_log_line("ios: moved the bundled OBB into Documents/obb");
+        tl_log_line("ios: moved the OBB in Documents into Documents/obb");
         return;
     }
 }
@@ -1326,6 +1383,7 @@ static NSDictionary *obb_info(void)
             /* 1.3 GB that can be downloaded again does not belong in a backup. */
             [[NSURL fileURLWithPath:dir] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:nil];
             tl_log_line("ios: the OBB is downloaded and checked (%lld bytes)", have);
+            drop_other_obbs(dir, name);
             [self finish];
         });
     });

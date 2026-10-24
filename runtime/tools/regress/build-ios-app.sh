@@ -185,7 +185,7 @@ if [ -n "${GAME_APK:-}" ]; then
         mkdir -p "$APP/Game/obb"
         # the host finds the expansion file by its extension, and the game's data is exactly
         # what the expansion file holds, so the name is all that matters here
-        cp "$GAME_OBB" "$APP/Game/obb/main.675.com.ea.game.pvz2_rfl.obb"
+        cp "$GAME_OBB" "$APP/Game/obb/${OBB_NAME:-main.675.com.ea.game.pvz2_rfl.obb}"
         echo "==> bundled the game: $(du -h "$GAME_APK" | cut -f1) apk, $(du -h "$GAME_OBB" | cut -f1) obb"
     fi
 fi
@@ -201,7 +201,7 @@ if [ -n "${OBB_URLS:-}" ]; then
     done
     $PB -c "Add :PVZ2ObbSHA256 string $OBB_SHA256" "$APP/Info.plist"
     $PB -c "Add :PVZ2ObbSize integer $OBB_SIZE" "$APP/Info.plist"
-    $PB -c "Add :PVZ2ObbName string main.675.com.ea.game.pvz2_rfl.obb" "$APP/Info.plist"
+    $PB -c "Add :PVZ2ObbName string ${OBB_NAME:-main.675.com.ea.game.pvz2_rfl.obb}" "$APP/Info.plist"
     echo "==> the expansion file is downloaded from $i link(s) when it is missing"
 fi
 # The mod's CDN content. The game asks for it over the network, and a device that is

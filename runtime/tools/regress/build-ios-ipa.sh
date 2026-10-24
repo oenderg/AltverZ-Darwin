@@ -11,6 +11,7 @@
 #   GAME_OBB   the expansion file         (default: the main tar in /tmp; "none" for the slim
 #              app, which downloads it on the first launch from OBB_URLS)
 #   OBB_URLS, OBB_SHA256, OBB_SIZE   where the host downloads the expansion file from
+#   OBB_NAME   its name (default: 1.4.2's, main.675.com.ea.game.pvz2_rfl.obb)
 #   SIGN_*     identity, provisioning profile, keychain: as for build-ios-app.sh
 set -euo pipefail
 
