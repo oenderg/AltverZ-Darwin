@@ -14,6 +14,7 @@ environment they expect. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ```
 build.sh                      the one entry point: APK -> IPA / Mac app / dmg (./build.sh --help)
 converter/                    ELF .so -> signed Mach-O dylib, with the mod's hooks baked in
+VERSION                       our release version, separate from the game
 data/game-1.4.2.json          the supported game build: hashes, OBB links, CDN archive
 data/hooks-1.4.2.json         the mod's 290 inline hooks, recorded once for that build
 runtime/src/translation-layer-next/   the runtime (bionic libc, JNI, EGL/GLES, audio, loader)
@@ -54,7 +55,12 @@ You need the game's APK (the user's own file; never commit it, or the OBB, or an
 - **Call into the game only on its own thread** (the GL thread in `husk-tl-pvz2.c`): hosts post
   requests (`tl_pvz2_request_*`) and the driver performs them between frames.
 - Mac tests must not disturb the person using the Mac: no global input events, no stealing focus,
-  capture your test window only (TESTING.md).
+  capture your test window only (TESTING.md). Use a test `BUNDLE_ID` for settings writes;
+  never change the real defaults domains. Background launches skip the old-settings import
+  unless `TL_PVZ2_IMPORT_FROM` names a test source domain.
+- The app version comes from `VERSION`, the game version from `data/game-1.4.2.json`.
+  Build numbers are `major*10000 + minor*100 + patch`; slim and full share a number.
+  Release names and the workflow are in [docs/RELEASING.md](docs/RELEASING.md).
 - Commit titles: Conventional Commits (`fix(mac): ...`, `feat(keys): ...`, `docs: ...`).
 - Comments in this code are full sentences that say *why*; match that style.
 

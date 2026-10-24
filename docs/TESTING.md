@@ -35,6 +35,28 @@ Launch arguments after `--` override the app's settings for that run only, witho
 `-resizeMode Fixed|Adapt`, `-fixedAspect display|game|16:9|...`, `-renderSharp YES|NO`,
 `-closeAction quit|pause`, `-confirmQuit NO`. Pass them in tests: your own settings may differ.
 
+## Settings import
+
+The public Mac app imports its pre-release settings once, before any setting is read. The
+`importedFrom` key in its own persistent domain records that the attempt happened, even if the
+source was empty. The source is only read. Background test launches skip the import entirely
+unless `TL_PVZ2_IMPORT_FROM` names a source domain. The runner passes through environment variables.
+
+Build a test copy with `BUNDLE_ID=io.github.oenderg.reflourished-darwin.importtest` and use only
+test domains. For example, after building that copy:
+
+```sh
+defaults write io.github.oenderg.importtest.src resizeMode -string Adapt
+defaults write io.github.oenderg.importtest.src closeAction -string pause
+TL_PVZ2_IMPORT_FROM=io.github.oenderg.importtest.src scripts/test-run.sh --seconds 15
+defaults read io.github.oenderg.reflourished-darwin.importtest
+```
+
+The log names the source, destination and key count. Run again with the same source: the log
+says the import was skipped, and changing a source key does not change the destination. Delete
+both test domains afterwards. Never write or delete a player's real defaults domain. Use a
+test `BUNDLE_ID` for any test that writes settings (`mode:`, `aspect:`, or settings controls).
+
 ## The tap script
 
 Commands separated by `;`, run in order on their own thread:

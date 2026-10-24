@@ -26,10 +26,14 @@ request looks like. If you use an AI agent, point it at [AGENTS.md](AGENTS.md).
   are never touched, and drive it with a tap script: [docs/TESTING.md](docs/TESTING.md).
 - For iPhone/iPad, `./build.sh --ios --slim --apk ...` gives `out/PvZ2-Reflourished.ipa`; sideload
   it. To sign it yourself, `SIGN_IDENTITY`, `SIGN_PROFILE` (and `SIGN_KEYCHAIN`) are passed through to
-  `runtime/tools/regress/build-ios-app.sh`; `BUNDLE_ID` sets the app ID for a test copy.
+  `runtime/tools/regress/build-ios-app.sh`; `BUNDLE_ID` sets the app ID for a test copy on either platform. The public ID is
+  `io.github.oenderg.reflourished-darwin` on both.
 - The app's log: `~/Library/Application Support/PvZ2 Reflourished/pvz2.log` on the Mac (a test run
   writes to its `TL_PVZ2_LOG` instead), and `Documents/pvz2.log` on iOS (Files app: On My iPhone >
   PvZ2 Reflourished).
+
+Our app version is in `VERSION`; the game version is in `data/game-1.4.2.json`. Local file names
+stay the same. For versioned release names and packaging, see [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Where to make a change
 

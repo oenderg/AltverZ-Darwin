@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build PvZ2: Reflourished for iPhone, iPad and Mac from the Android release.
 #
-#   ./build.sh --apk <file|url> [--obb <file|url>] [--ios] [--ios-sim] [--mac] [--slim] [--quick] [--reuse-converted] [--out dir]
+#   ./build.sh --apk <file|url> [--obb <file|url>] [--cdn <file|url>] [--ios] [--ios-sim] [--mac] [--slim] [--quick] [--reuse-converted] [--out dir]
 #
 # Without --ios, --ios-sim or --mac, iOS and Mac are built. --apk and --obb take a file, or a link
 # (direct, Google Drive or MEGA) that is downloaded first; without --obb the OBB
@@ -11,6 +11,7 @@
 # build in the same --out and skips the disk image: the fast loop while working
 # on runtime/. VERSION sets our version; data/game-1.4.2.json sets the game version.
 # --reuse-converted reuses the converted code but still makes the disk image (release variants).
+# scripts/package-release.sh gives the IPA and DMG their versioned release names.
 # APP_BUILD overrides the build number (default: major*10000 + minor*100 + patch).
 # The results land in out/ (or --out):
 #
