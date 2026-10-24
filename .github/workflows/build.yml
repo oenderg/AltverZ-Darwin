@@ -34,6 +34,8 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the tags: the release notes list the changes since the previous one
 
       - name: Free disk space
         run: |
@@ -57,6 +59,8 @@ jobs:
           RELEASE_TAG: ${{ github.event.inputs.release_tag }}
         run: |
           . scripts/app-version.sh
+          # The release notes' What's new is written by hand before the run (release-notes/README.md).
+          python3 scripts/release-notes.py --whats-new --version "$APP_VERSION" > /dev/null
           echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "game=$GAME_VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=${RELEASE_TAG:-v$APP_VERSION}" >> "$GITHUB_OUTPUT"
@@ -95,25 +99,22 @@ jobs:
           done
           ls -lh release
 
+      - name: Release notes
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release-notes.py release --version "$VERSION" --tag "$TAG" --repo "$REPOSITORY" > release-notes.md
+          cat release-notes.md
+
       - name: Publish the release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.metadata.outputs.tag }}
           name: "Reflourished-Darwin ${{ steps.metadata.outputs.version }} · PvZ2: Reflourished ${{ steps.metadata.outputs.game }}"
-          body: |
-            Reflourished-Darwin ${{ steps.metadata.outputs.version }} · PvZ2: Reflourished ${{ steps.metadata.outputs.game }}
-            This release contains the platforms and variants selected for this build.
-
-            **Slim:** a small download. The app downloads the game's data on first launch.
-            - iPhone / iPad: `${{ steps.metadata.outputs.prefix }}-iOS.ipa`
-            - Mac: `${{ steps.metadata.outputs.prefix }}-Mac.dmg`
-
-            **Full:** the game's data is inside. Pick this for an offline first launch.
-            - iPhone / iPad: `${{ steps.metadata.outputs.prefix }}-iOS-Full.ipa`
-            - Mac: `${{ steps.metadata.outputs.prefix }}-Mac-Full.dmg`
-
-            **iPhone / iPad:** install the IPA with SideStore, AltStore, Sideloadly or LiveContainer.
-            **Mac:** open the DMG and drag the app onto Applications. The first time, macOS refuses to open it (it is not notarized): click Done, then Open Anyway in System Settings > Privacy & Security. After that the Mac app updates itself (PvZ2 Reflourished > Check for Updates…).
+          body_path: release-notes.md
           files: release/*
           fail_on_unmatched_files: true
 
@@ -128,8 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/update-altstore-source.py "release/$PREFIX-iOS.ipa" --tag "$TAG" \
-            --icon-url "https://github.com/$REPOSITORY/releases/download/$TAG/PvZ2-Reflourished-icon.png" \
-            --changelog "Reflourished-Darwin $VERSION · PvZ2: Reflourished $GAME."
+            --changelog "$(python3 scripts/release-notes.py --whats-new --version "$VERSION" --format text)"
           python3 scripts/update-altstore-source.py --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -142,6 +142,7 @@ jobs:
         if: github.event.inputs.platforms != 'iPhone/iPad' && github.event.inputs.variants != 'Full'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          VERSION: ${{ steps.metadata.outputs.version }}
           TAG: ${{ steps.metadata.outputs.tag }}
           PREFIX: ${{ steps.metadata.outputs.prefix }}
         run: |
@@ -153,7 +154,8 @@ jobs:
           # Every update is the slim app, signed with the key whose public half the app carries.
           dmg="release/$PREFIX-Mac.dmg"
           sig="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | out/.work/sparkle/bin/sign_update --ed-key-file - -p "$dmg")"
-          python3 scripts/update-appcast.py "$dmg" --tag "$TAG" --ed-signature "$sig"
+          python3 scripts/update-appcast.py "$dmg" --tag "$TAG" --ed-signature "$sig" \
+            --notes-html "$(python3 scripts/release-notes.py --whats-new --version "$VERSION" --format html)"
           python3 scripts/update-appcast.py --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

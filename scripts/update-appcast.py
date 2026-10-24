@@ -2,7 +2,7 @@
 """Write the Mac app's update feed (Sparkle's appcast) for a release.
 
   scripts/update-appcast.py <mac.dmg> --tag <release-tag> --ed-signature <signature>
-                            [--notes <text>] [--appcast <file>] [--url <download-url>]
+                            [--notes-html <html>] [--appcast <file>] [--url <download-url>]
   scripts/update-appcast.py --check [--appcast <file>]
 
 The first form mounts the DMG (read-only, hdiutil), reads the app's Info.plist
@@ -11,7 +11,9 @@ LSMinimumSystemVersion) and writes sparkle/appcast.xml with that release as the
 one update on offer: Sparkle only needs the newest. The signature is the
 `sparkle:edSignature` value Sparkle's sign_update printed for the same DMG (the
 key never comes near this script). The download link is the release asset's,
-from the DMG's file name, unless --url gives another.
+from the DMG's file name, unless --url gives another. --notes-html is what the
+update window shows (scripts/release-notes.py --whats-new --format html), with a
+link to the release under it.
 
 `--check` only validates the feed and exits non-zero if something is off.
 Python 3 standard library only.
@@ -62,9 +64,10 @@ def write(args):
         sys.exit("--ed-signature is not an EdDSA signature (sign_update prints it)")
     url = args.url or f"{RELEASES}/download/{args.tag}/{os.path.basename(args.dmg)}"
     page = f"{RELEASES}/tag/{args.tag}"
-    notes = args.notes or f"Reflourished-Darwin {version} · PvZ2: Reflourished {game}."
-    description = (f"<p>{html.escape(notes)}</p>"
-                   f'<p><a href="{html.escape(page)}">The release on GitHub</a></p>')
+    notes = args.notes_html or f"<p>Reflourished-Darwin {html.escape(version)} · PvZ2: Reflourished {html.escape(game)}.</p>"
+    if "]]>" in notes:
+        sys.exit("--notes-html cannot contain ]]>")
+    description = notes + f'<p><a href="{html.escape(page)}">The release on GitHub</a></p>'
     feed = f"""<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="{SPARKLE}">
   <channel>
@@ -114,7 +117,7 @@ def main():
     p.add_argument("dmg", nargs="?")
     p.add_argument("--tag")
     p.add_argument("--ed-signature")
-    p.add_argument("--notes")
+    p.add_argument("--notes-html")
     p.add_argument("--url")
     p.add_argument("--appcast", default=DEFAULT_APPCAST)
     p.add_argument("--check", action="store_true")
