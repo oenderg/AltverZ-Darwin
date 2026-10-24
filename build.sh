@@ -9,7 +9,8 @@
 # (the IPA is about 60 MB, the Mac disk image about 65 MB): they download it themselves
 # on their first launch. --quick reuses the game's converted code from the last
 # build in the same --out and skips the disk image: the fast loop while working
-# on runtime/. APP_BUILD in the environment sets the build number.
+# on runtime/. VERSION sets our version; data/game-1.4.2.json sets the game version.
+# APP_BUILD overrides the build number (default: major*10000 + minor*100 + patch).
 # The results land in out/ (or --out):
 #
 #   PvZ2-Reflourished.ipa          for iPhone and iPad (sign it with your sideloader)
@@ -21,6 +22,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+. "$ROOT/scripts/app-version.sh"
 OUT="$ROOT/out"
 APK="" OBB="" CDN="" WANT_IOS=0 WANT_IOS_SIM=0 WANT_MAC=0 SLIM=0 QUICK=0
 
@@ -35,7 +37,7 @@ while [ $# -gt 0 ]; do
         --mac) WANT_MAC=1; shift ;;
         --slim) SLIM=1; shift ;;
         --quick) QUICK=1; shift ;;
-        -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,/^set -euo pipefail/{ /^set -euo pipefail/d; p; }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (see ./build.sh --help)" >&2; exit 2 ;;
     esac
 done

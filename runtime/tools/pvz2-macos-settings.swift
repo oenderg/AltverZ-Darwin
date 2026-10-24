@@ -517,8 +517,10 @@ private struct AboutPane: View {
     var body: some View {
         Pane {
             Section {
-                LabeledContent("Game version",
+                LabeledContent("Reflourished-Darwin version",
                                value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")
+                LabeledContent("Game version",
+                               value: Bundle.main.infoDictionary?["PVZ2GameVersion"] as? String ?? "?")
                 Text("Plants vs. Zombies 2: Reflourished, running natively on this Mac: the game's own Android code, converted ahead of time, drawn through Metal.")
                     .font(.callout)
                     .foregroundStyle(.secondary)

@@ -10,7 +10,8 @@
 #   GAME_APK       the game's APK
 #   GAME_OBB       the game's expansion file (the assets); leave it out for a slim app
 #   OBB_URLS, OBB_SHA256, OBB_SIZE   where a slim app downloads the expansion file from
-#   APP_VERSION, APP_BUILD           the version and build number (default 1.4.2 and 1)
+#   APP_BUILD      override the build number (default: major*10000 + minor*100 + patch)
+# The app version comes from VERSION; the game version comes from data/game-1.4.2.json.
 #   GAME_CDN_TAR   the mod's CDN archive (1.4.2.main.tar)
 #   ANGLE_EGL      ANGLE's libEGL.dylib   (default: the copy inside Steam's CEF)
 #   ANGLE_GLES     ANGLE's libGLESv2.dylib
@@ -29,6 +30,7 @@
 set -euo pipefail
 
 R="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$R/../scripts/app-version.sh"
 N="$R/src/translation-layer-next"
 T="$R/src/translation-layer"
 OUT="${1:-$R/build/pvz2-macos}"
@@ -134,8 +136,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleName</key><string>PvZ2 Reflourished</string>
 	<key>CFBundleDisplayName</key><string>PvZ2 Reflourished</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleVersion</key><string>${APP_BUILD:-1}</string>
-	<key>CFBundleShortVersionString</key><string>${APP_VERSION:-1.4.2}</string>
+	<key>CFBundleVersion</key><string>${APP_BUILD}</string>
+	<key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
+	<key>PVZ2GameVersion</key><string>${GAME_VERSION}</string>
 	<key>LSMinimumSystemVersion</key><string>12.0</string>
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSSupportsAutomaticGraphicsSwitching</key><true/>

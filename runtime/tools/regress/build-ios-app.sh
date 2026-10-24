@@ -5,12 +5,17 @@
 #
 #   tools/regress/build-ios-app.sh [out-dir]
 #
+# VERSION sets the app version; data/game-1.4.2.json sets the game version.
+# APP_BUILD overrides the build number (default: major*10000 + minor*100 + patch).
+# BUNDLE_ID overrides the public ID for a development provisioning profile.
+#
 # Then sign for the device (see the last lines it prints). ANGLE must have been
 # built first: scripts/build_angle_ios.sh (it needs the Xcode Metal toolchain:
 # xcodebuild -downloadComponent MetalToolchain).
 set -euo pipefail
 
 R="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$R/../scripts/app-version.sh"
 N="$R/src/translation-layer-next"
 T="$R/src/translation-layer"
 ANGLE="$R/build/ios-arm64/sysroot/lib/libANGLE-shared.dylib"
@@ -103,8 +108,9 @@ cat > "$APP/Info.plist" <<PLIST
 	<key>CFBundleName</key><string>PvZ2 Reflourished</string>
 	<key>CFBundleDisplayName</key><string>PvZ2 Reflourished</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleVersion</key><string>${APP_BUILD:-1}</string>
-	<key>CFBundleShortVersionString</key><string>${APP_VERSION:-1.4.2}</string>
+	<key>CFBundleVersion</key><string>${APP_BUILD}</string>
+	<key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
+	<key>PVZ2GameVersion</key><string>${GAME_VERSION}</string>
 	<key>MinimumOSVersion</key><string>$DEPLOY</string>
 	<key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
 	<!-- Without this iOS treats the app as iPhone-only and runs it in a compatibility
