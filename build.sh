@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build PvZ2: Reflourished for iPhone, iPad and Mac from the Android release.
 #
-#   ./build.sh --apk <file|url> [--obb <file|url>] [--ios] [--ios-sim] [--mac] [--slim] [--quick] [--out dir]
+#   ./build.sh --apk <file|url> [--obb <file|url>] [--ios] [--ios-sim] [--mac] [--slim] [--quick] [--reuse-converted] [--out dir]
 #
 # Without --ios, --ios-sim or --mac, iOS and Mac are built. --apk and --obb take a file, or a link
 # (direct, Google Drive or MEGA) that is downloaded first; without --obb the OBB
@@ -10,6 +10,7 @@
 # on their first launch. --quick reuses the game's converted code from the last
 # build in the same --out and skips the disk image: the fast loop while working
 # on runtime/. VERSION sets our version; data/game-1.4.2.json sets the game version.
+# --reuse-converted reuses the converted code but still makes the disk image (release variants).
 # APP_BUILD overrides the build number (default: major*10000 + minor*100 + patch).
 # The results land in out/ (or --out):
 #
@@ -24,7 +25,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 . "$ROOT/scripts/app-version.sh"
 OUT="$ROOT/out"
-APK="" OBB="" CDN="" WANT_IOS=0 WANT_IOS_SIM=0 WANT_MAC=0 SLIM=0 QUICK=0
+APK="" OBB="" CDN="" WANT_IOS=0 WANT_IOS_SIM=0 WANT_MAC=0 SLIM=0 QUICK=0 REUSE_CONVERTED=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -37,6 +38,7 @@ while [ $# -gt 0 ]; do
         --mac) WANT_MAC=1; shift ;;
         --slim) SLIM=1; shift ;;
         --quick) QUICK=1; shift ;;
+        --reuse-converted) REUSE_CONVERTED=1; shift ;;
         -h|--help) sed -n '2,/^set -euo pipefail/{ /^set -euo pipefail/d; p; }' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (see ./build.sh --help)" >&2; exit 2 ;;
     esac
@@ -140,8 +142,8 @@ if [ "$WANT_IOS" = 1 ] || [ "$WANT_IOS_SIM" = 1 ]; then
         fi
     fi
 
-    if [ "$QUICK" = 1 ] && [ -f "$WORK/ios-dylibs/libPVZ2.dylib" ]; then
-        step "the game's code for iOS: reused from the last build (--quick)"
+    if { [ "$QUICK" = 1 ] || [ "$REUSE_CONVERTED" = 1 ]; } && [ -f "$WORK/ios-dylibs/libPVZ2.dylib" ]; then
+        step "the game's code for iOS: reused from the last build"
     else
         step "converting the game's code for iOS"
         HOOKS="$HOOKS" bash "$ROOT/converter/build-ios-dylibs.sh" "$LIBS" "$WORK/ios-dylibs"
@@ -154,7 +156,7 @@ if [ "$WANT_IOS" = 1 ] || [ "$WANT_IOS_SIM" = 1 ]; then
         GAME_APK="$APK" GAME_OBB="$IOS_OBB" GAME_CDN_TAR="$CDN" \
         OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" \
         AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-io.github.oenderg.reflourished-darwin}" \
-            bash "$ROOT/runtime/tools/regress/build-ios-ipa.sh" "$WORK/ios" | grep -E '^==>|^built|^ipa' || true
+            bash "$ROOT/runtime/tools/regress/build-ios-ipa.sh" "$WORK/ios" | grep -E '^==>|^built|^ipa'
         [ -f "$WORK/ios/PvZ2.ipa" ] || { echo "the iOS build failed (see above)" >&2; exit 1; }
         mv -f "$WORK/ios/PvZ2.ipa" "$OUT/PvZ2-Reflourished.ipa"
     fi
@@ -177,8 +179,8 @@ if [ "$WANT_MAC" = 1 ]; then
         bash "$ROOT/scripts/fetch-angle-macos.sh" "$ANGLE_MAC"
     fi
 
-    if [ "$QUICK" = 1 ] && [ -f "$WORK/macos-dylibs/libPVZ2.dylib" ]; then
-        step "the game's code for the Mac: reused from the last build (--quick)"
+    if { [ "$QUICK" = 1 ] || [ "$REUSE_CONVERTED" = 1 ]; } && [ -f "$WORK/macos-dylibs/libPVZ2.dylib" ]; then
+        step "the game's code for the Mac: reused from the last build"
     else
         step "converting the game's code for the Mac"
         HOOKS="$HOOKS" GLES="$ANGLE_MAC/libGLESv2.dylib" \
@@ -190,7 +192,7 @@ if [ "$WANT_MAC" = 1 ]; then
     GAME_APK="$APK" GAME_OBB="$MAC_OBB" GAME_CDN_TAR="$CDN" AOT_DYLIB_DIR="$WORK/macos-dylibs" \
     OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" \
     ANGLE_EGL="$ANGLE_MAC/libEGL.dylib" ANGLE_GLES="$ANGLE_MAC/libGLESv2.dylib" \
-        bash "$ROOT/runtime/tools/regress/build-macos-app.sh" "$WORK/macos" | grep -E '^==>|^built' || true
+        bash "$ROOT/runtime/tools/regress/build-macos-app.sh" "$WORK/macos" | grep -E '^==>|^built'
     [ -d "$WORK/macos/PvZ2 Reflourished.app" ] || { echo "the Mac build failed (see above)" >&2; exit 1; }
     rm -rf "$OUT/PvZ2 Reflourished.app"
     mv "$WORK/macos/PvZ2 Reflourished.app" "$OUT/"

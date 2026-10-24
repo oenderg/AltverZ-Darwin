@@ -15,14 +15,15 @@ on:
         type: choice
         options: [iPhone/iPad and Mac, iPhone/iPad, Mac]
         default: iPhone/iPad and Mac
-      slim:
-        description: "Slim apps (about 60 MB to download; they download the game's data on the first launch)"
-        type: boolean
-        default: true
+      variants:
+        description: "Which downloads to build"
+        type: choice
+        options: [Slim and full, Slim, Full]
+        default: Slim and full
       release_tag:
-        description: "Tag of the release that will hold the builds"
+        description: "Release tag (leave empty: v<VERSION>)"
         required: false
-        default: "build"
+        default: ""
 
 permissions:
   contents: write
@@ -50,59 +51,89 @@ jobs:
           sudo xcode-select -s "$x"
           xcodebuild -version
 
-      - name: Build
+      - name: Release metadata
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          . scripts/app-version.sh
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "game=$GAME_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=${RELEASE_TAG:-v$APP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "prefix=PvZ2-Reflourished-$GAME_VERSION-Darwin-$APP_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build and package
         env:
           APK_URL: ${{ github.event.inputs.apk_url }}
           OBB_URL: ${{ github.event.inputs.obb_url }}
           PLATFORMS: ${{ github.event.inputs.platforms }}
-          SLIM: ${{ github.event.inputs.slim }}
-          APP_BUILD: ${{ github.run_number }}
+          VARIANTS: ${{ github.event.inputs.variants }}
         run: |
+          set -euo pipefail
           case "$PLATFORMS" in
-            "iPhone/iPad") which=--ios ;;
-            "Mac") which=--mac ;;
-            *) which="--ios --mac" ;;
+            "iPhone/iPad") platforms=(--ios) ;;
+            "Mac") platforms=(--mac) ;;
+            *) platforms=(--ios --mac) ;;
           esac
-          extra=""
-          [ "$SLIM" = true ] && extra="$extra --slim"
-          [ -n "$OBB_URL" ] && extra="$extra --obb $OBB_URL"
-          ./build.sh $which $extra --apk "$APK_URL" --out out
-
-      - name: Package
-        run: |
-          mkdir -p release
-          [ -f out/PvZ2-Reflourished.ipa ] && mv out/PvZ2-Reflourished.ipa release/
-          [ -f out/PvZ2-Reflourished.dmg ] && mv out/PvZ2-Reflourished.dmg release/
-          # the app's icon, from the APK it was built from, for the AltStore source
-          unzip -p out/.work/game.apk res/mipmap-xxxhdpi/pvz2_icon.png > release/PvZ2-Reflourished-icon.png || rm -f release/PvZ2-Reflourished-icon.png
-          ls -la release
+          case "$VARIANTS" in
+            "Slim") variants=(slim) ;;
+            "Full") variants=(full) ;;
+            *) variants=(slim full) ;;
+          esac
+          reuse=()
+          for variant in "${variants[@]}"; do
+            extra=()
+            [ "$variant" = slim ] && extra+=(--slim)
+            [ -n "$OBB_URL" ] && extra+=(--obb "$OBB_URL")
+            ./build.sh "${platforms[@]}" ${extra[@]+"${extra[@]}"} ${reuse[@]+"${reuse[@]}"} --apk "$APK_URL" --out out
+            scripts/package-release.sh out release "$variant"
+            # Keep downloaded inputs and converted dylibs, not bundles or converter scratch files.
+            rm -rf out/.work/ios out/.work/macos 'out/PvZ2 Reflourished.app' out/.work/libs \
+              out/.work/ios-dylibs/.work out/.work/macos-dylibs/.work
+            reuse=(--reuse-converted)
+            df -h /
+          done
+          ls -lh release
 
       - name: Publish the release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.release_tag }}
-          name: "PvZ2: Reflourished (${{ github.event.inputs.release_tag }})"
+          tag_name: ${{ steps.metadata.outputs.tag }}
+          name: "Reflourished-Darwin ${{ steps.metadata.outputs.version }} · PvZ2: Reflourished ${{ steps.metadata.outputs.game }}"
           body: |
-            Built by run #${{ github.run_number }} from Reflourished 1.4.2.
-            **iPhone / iPad:** install `PvZ2-Reflourished.ipa` with SideStore, AltStore, Sideloadly or LiveContainer.
-            **Mac:** open `PvZ2-Reflourished.dmg` and drag the app onto Applications. The first time, macOS refuses to open it (it is not notarized): click Done, then Open Anyway in System Settings > Privacy & Security.
+            Reflourished-Darwin ${{ steps.metadata.outputs.version }} · PvZ2: Reflourished ${{ steps.metadata.outputs.game }}
+            This release contains the platforms and variants selected for this build.
+
+            **Slim:** a small download. The app downloads the game's data on first launch.
+            - iPhone / iPad: `${{ steps.metadata.outputs.prefix }}-iOS.ipa`
+            - Mac: `${{ steps.metadata.outputs.prefix }}-Mac.dmg`
+
+            **Full:** the game's data is inside. Pick this for an offline first launch.
+            - iPhone / iPad: `${{ steps.metadata.outputs.prefix }}-iOS-Full.ipa`
+            - Mac: `${{ steps.metadata.outputs.prefix }}-Mac-Full.dmg`
+
+            **iPhone / iPad:** install the IPA with SideStore, AltStore, Sideloadly or LiveContainer.
+            **Mac:** open the DMG and drag the app onto Applications. The first time, macOS refuses to open it (it is not notarized): click Done, then Open Anyway in System Settings > Privacy & Security.
           files: release/*
           fail_on_unmatched_files: true
 
       - name: Update the AltStore source
-        if: ${{ hashFiles('release/PvZ2-Reflourished.ipa') != '' }}
+        if: github.event.inputs.platforms != 'Mac' && github.event.inputs.variants != 'Full'
         env:
-          TAG: ${{ github.event.inputs.release_tag }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          GAME: ${{ steps.metadata.outputs.game }}
+          PREFIX: ${{ steps.metadata.outputs.prefix }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          icon=""
-          [ -f release/PvZ2-Reflourished-icon.png ] && icon="--icon-url https://github.com/${{ github.repository }}/releases/download/$TAG/PvZ2-Reflourished-icon.png"
-          python3 scripts/update-altstore-source.py release/PvZ2-Reflourished.ipa --tag "$TAG" $icon \
-            --changelog "Built by run #${{ github.run_number }} from Reflourished 1.4.2."
+          python3 scripts/update-altstore-source.py "release/$PREFIX-iOS.ipa" --tag "$TAG" \
+            --icon-url "https://github.com/$REPOSITORY/releases/download/$TAG/PvZ2-Reflourished-icon.png" \
+            --changelog "Reflourished-Darwin $VERSION · PvZ2: Reflourished $GAME."
           python3 scripts/update-altstore-source.py --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add altstore/source.json
           git diff --cached --quiet && exit 0
-          git commit -m "chore(altstore): update the source for $TAG (run #${{ github.run_number }})"
+          git commit -m "chore(altstore): update the source for $TAG"
           git push origin "HEAD:${{ github.event.repository.default_branch }}"

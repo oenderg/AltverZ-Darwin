@@ -25,7 +25,6 @@ import sys
 import zipfile
 
 RELEASES = "https://github.com/oenderg/Reflourished-Darwin/releases/download"
-ASSET = "PvZ2-Reflourished.ipa"
 DEFAULT_SOURCE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "altstore", "source.json"
 )
@@ -52,12 +51,16 @@ def add_version(source, ipa, tag, changelog):
     if not bundle_id:
         sys.exit("error: the IPA's Info.plist has no CFBundleIdentifier")
 
+    if not changelog:
+        changelog = (f"Reflourished-Darwin {version} · PvZ2: Reflourished "
+                     f"{info.get('PVZ2GameVersion', '?')}")
+
     new = {
         "version": str(version),
         "buildVersion": str(info.get("CFBundleVersion", "")),
         "date": datetime.date.today().isoformat(),
         "localizedDescription": changelog,
-        "downloadURL": f"{RELEASES}/{tag}/{ASSET}",
+        "downloadURL": f"{RELEASES}/{tag}/{os.path.basename(ipa)}",
         "size": os.path.getsize(ipa),
         "minOSVersion": str(info.get("MinimumOSVersion", "12.0")),
     }
