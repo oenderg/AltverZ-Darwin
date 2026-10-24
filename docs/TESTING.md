@@ -165,6 +165,10 @@ xcrun simctl io booted screenshot --mask=black out/ios-sim.png
 simulator starts upright, and `TL_FORCE_LANDSCAPE=1` turns its window. `TL_PVZ2_TAP` is the Mac runner's tap language
 (`x,y`, `drag:x1,y1,x2,y2`, `wait:N`) in the game's own pixels (2622x1206 on an iPhone 18 Pro),
 starting `TL_PVZ2_TAP_DELAY` seconds (default 3) after the game has started.
+For name-field tests, `press:<text>` calls the UITextField input delegate with committed
+text, `keyboard:hide` resigns its first responder (exercising editing-end and UIKit's
+keyboard notifications), and `return` calls its Return delegate. These exercise host
+callbacks; they do not simulate a physical tap on the on-screen keyboard's hide key.
 `--mask=black` draws the island and the corners into the screenshot. The log is
 `$C/Documents/pvz2.log`.
 

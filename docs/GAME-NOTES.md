@@ -48,6 +48,30 @@ through a guard that turns a fault into a log line instead of a crash.
   and no modal is up. Never write the game's sun, currency or object state directly: call the game's
   own functions and let it do its bookkeeping.
 
+## Profile name input
+
+Android's `EditInputConnection` queues text records through `UI_ProcessEvents`: type 6,
+action 0 = committed UTF-8, 1 = composing text, 2 = finish composition (empty payload),
+3 = backspace (empty payload). Action 2 ends composition, not the field's edit. Return
+is Android keycode 66. `HandleLostFocus` / `HandleGotFocus` concern app focus and touch
+cancellation; they do not queue a text-field focus event.
+
+Dismissing Android's keyboard goes through `AndroidSurfaceView.onKeyPreIme` to
+`SexyAppFrameworkActivity.onKeyboardDismissedWithBackButton`, which only clears
+`AndroidGameApp.mbIsKeyboardShowing`. Show sets it true; hide, dismissal and app focus
+loss set it false. The native field polls `Device_IsKeyboardShowing`: false ends the
+edit, validates the name and enables ACCEPT / SAVE. An empty field then shows
+"TAP TO ENTER NAME". Sending characters alone leaves the edit open. On first
+launch, ending a nonempty edit also opens Reflourished's "Skip Base Game Content"
+prompt; answer it before pressing the now-enabled Welcome ACCEPT button.
+
+The hosts must report dismissal through `tl_pvz2_keyboard_dismissed`, which clears
+an atomic flag; only the game thread polls it and ends the edit. iOS reports both
+editing-end and keyboard-hide notifications (the iPad hide key can leave the hidden
+UITextField as first responder). On Mac, a click ends the previous edit before the
+same click reaches the game, including a click on ACCEPT. Clicking the field can
+start another edit. Return keeps its existing keycode 66 path.
+
 ## Rendering and memory
 
 - **The game never deletes its shaders.** It deletes programs but not the shaders attached to them,
@@ -72,8 +96,6 @@ The runtime's made-up `/proc/meminfo` and `/proc/self/status` are not what it sh
 
 ## Other things that cost time
 
-- The name field's ACCEPT is enabled by the ENTER key event (Android keycode 66, down and up), not
-  by the text.
 - `Resources_GetAssetFileSize` must return -1 for a missing asset (0 hangs start-up).
 - The game's ContentDownloader reads the CDN archive through zlib's `gz*` functions; the archive is
   bundled in the apps and staged into `No_Backup/1.4.2.main.tar`, so the mod's content applies offline.
