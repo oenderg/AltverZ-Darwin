@@ -99,13 +99,12 @@ xcrun simctl install booted out/PvZ2-Reflourished-sim.app
 C="$(xcrun simctl get_app_container booted com.reflourished.darwin data)"
 mkdir -p "$C/Documents/obb"
 cp out/.work/game.obb "$C/Documents/obb/main.675.com.ea.game.pvz2_rfl.obb"
-SIMCTL_CHILD_TL_FORCE_LANDSCAPE=1 SIMCTL_CHILD_TL_PVZ2_TAP="1310,1100;wait:14" \
-    xcrun simctl launch booted com.reflourished.darwin
+SIMCTL_CHILD_TL_PVZ2_TAP="1310,1100;wait:14" xcrun simctl launch booted com.reflourished.darwin
 xcrun simctl io booted screenshot --mask=black out/ios-sim.png
 ```
 
-`SIMCTL_CHILD_` passes a variable to the app. The simulator starts upright:
-`TL_FORCE_LANDSCAPE=1` turns the window. `TL_PVZ2_TAP` is the Mac runner's tap language
+`SIMCTL_CHILD_` passes a variable to the app. A phone is always in landscape; an iPad
+simulator starts upright, and `TL_FORCE_LANDSCAPE=1` turns its window. `TL_PVZ2_TAP` is the Mac runner's tap language
 (`x,y`, `drag:x1,y1,x2,y2`, `wait:N`) in the game's own pixels (2622x1206 on an iPhone 18 Pro),
 starting `TL_PVZ2_TAP_DELAY` seconds (default 3) after the game has started.
 `--mask=black` draws the island and the corners into the screenshot. The log is

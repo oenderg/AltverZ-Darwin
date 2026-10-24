@@ -561,15 +561,6 @@ static int _lastSafe[2] = { -1, -1 };
     double px = (double)g_w / r.size.width;
     double left = fmax(0, sa.left - r.origin.x);
     double right = fmax(0, sa.right - (self.bounds.size.width - CGRectGetMaxX(r)));
-    /* A phone held upright: the game is a strip across the middle now, but the game reads
-     * the cutout only once, while it starts, and it is played in landscape -- where the
-     * island's inset (on top now) is on the side. The game then fills the screen, so a
-     * point is g_w / (the long side) of its pixels. */
-    if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone &&
-        self.bounds.size.height > self.bounds.size.width) {
-        left = right = sa.top;
-        px = (double)g_w / self.bounds.size.height;
-    }
     int l = (int)lround(left * px), rt = (int)lround(right * px);
     if (l == _lastSafe[0] && rt == _lastSafe[1]) return;
     _lastSafe[0] = l; _lastSafe[1] = rt;
@@ -655,6 +646,17 @@ static int _lastSafe[2] = { -1, -1 };
 @end
 
 static void keyboard_install(UIView *view);
+
+/* The orientations the window may take. On the iPad the window follows the
+ * device, like other iPad games: in portrait the game (which has no portrait
+ * layout, and is always told it is in landscape) is a landscape strip with bars
+ * above and below. A phone stays in landscape, as phone games do: the strip
+ * would be a third of its screen. */
+static UIInterfaceOrientationMask allowed_orientations(void)
+{
+    return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone
+        ? UIInterfaceOrientationMaskLandscape : UIInterfaceOrientationMaskAll;
+}
 
 @interface PVZ2ViewController : UIViewController
 @end
@@ -907,11 +909,7 @@ static int native_seed_pick_mode(void)
         });
     }
 }
-/* The window follows the device, like other games do. The *game* is still
- * landscape: it is drawn as a landscape strip in the window, with bars above
- * and below, and the guest is told it is in landscape (it has no portrait
- * layout). */
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskAll; }
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return allowed_orientations(); }
 @end
 
 #pragma mark - the keyboard
@@ -1607,9 +1605,7 @@ static NSDictionary *obb_info(void)
 
     if (@available(iOS 16.0, *)) {
         UIWindowSceneGeometryPreferencesIOS *pref = [[UIWindowSceneGeometryPreferencesIOS alloc] init];
-        /* The window follows the device, like other games do: in portrait the
-         * window is portrait, and the game is a landscape strip in it. */
-        pref.interfaceOrientations = UIInterfaceOrientationMaskAll;
+        pref.interfaceOrientations = allowed_orientations();
         /* The window can be made smaller -- the game is scaled into whatever
          * shape the window has -- but not to nothing: the smallest sensible
          * window is about 40% of the game's size, with the game's own ratio.

@@ -110,12 +110,10 @@ cat > "$APP/Info.plist" <<PLIST
 	<!-- Without this iOS treats the app as iPhone-only and runs it in a compatibility
 	     window on iPad: letterboxed, portrait, a fraction of the screen. -->
 	<key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
-	<!-- All four, on the phone as well: the window follows the device, and
-	     the game is a landscape strip in it. -->
+	<!-- The phone: landscape only, as phone games are. A landscape strip on a
+	     portrait phone is a third of the screen. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
