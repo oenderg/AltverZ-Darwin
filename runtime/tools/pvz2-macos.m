@@ -1235,14 +1235,15 @@ static bool background_launch(void)
     return b && *b && strcmp(b, "0") != 0;
 }
 
-/* The first public bundle has its own defaults domain. Import before AppKit or
- * SwiftUI reads a setting, and leave the source domain untouched. Background
- * tests opt in with a separate source so they never import personal settings. */
+/* The settings of the builds before the first release, under their old app ID
+ * (org.husk.pvz2.macos), copied once into this ID's own: before AppKit or SwiftUI
+ * reads a setting. The old domain is only read. Test launches skip it unless
+ * TL_PVZ2_IMPORT_FROM names a test domain to import from instead. */
 static void import_old_settings(void)
 {
     const char *override = getenv("TL_PVZ2_IMPORT_FROM");
     if (background_launch() && (!override || !*override)) return;
-    NSString *source = override && *override ? @(override) : @"org.husk." @"pvz2.macos";
+    NSString *source = override && *override ? @(override) : @"org.husk.pvz2.macos";
     NSString *own = NSBundle.mainBundle.bundleIdentifier;
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
     if ([defaults persistentDomainForName:own][@"importedFrom"]) {
