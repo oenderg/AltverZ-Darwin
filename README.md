@@ -86,7 +86,7 @@ touch and keyboard input, and the app's lifecycle.
 | `converter/` | ELF → Mach-O conversion and the hook bake |
 | `runtime/` | the host: Android and JNI environment, graphics, audio, input, iOS and Mac apps |
 | `data/` | the mod's recorded hook table and the game version it matches |
-| `prebuilt/` | ANGLE for iOS (rebuild with `REBUILD_ANGLE=1 ./build.sh …`) |
+| `prebuilt/` | ANGLE for iOS and the iOS Simulator (rebuild with `REBUILD_ANGLE=1 ./build.sh …`) |
 | `scripts/` | downloads, the disk image, the AltStore source, the Mac test runner |
 | `docs/` | how it works, testing, the game's internals, releasing |
 

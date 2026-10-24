@@ -17,6 +17,16 @@ ANGLE="$R/build/ios-arm64/sysroot/lib/libANGLE-shared.dylib"
 OUT="${1:-$R/build/pvz2-ios}"
 APP="$OUT/PvZ2.app"
 DEPLOY=15.5
+SDKNAME=iphoneos
+TARGET="arm64-apple-ios$DEPLOY"
+SDK_ARGS=()
+if [ "${IOS_SIM:-0}" = 1 ]; then
+    APP="${IOS_SIM_APP:-$OUT/PvZ2-Reflourished-sim.app}"
+    ANGLE="$R/build/iossim-arm64/sysroot/lib/libANGLE-shared.dylib"
+    SDKNAME=iphonesimulator
+    TARGET="$TARGET-simulator"
+    SDK_ARGS=(-isysroot "$(xcrun --sdk "$SDKNAME" --show-sdk-path)")
+fi
 # A specific provisioning profile fixes the bundle ID; override when signing with one.
 BUNDLE_ID="${BUNDLE_ID:-org.husk.pvz2}"
 
@@ -30,9 +40,9 @@ mkdir -p "$APP/Frameworks"
 SRCS="$R/tools/pvz2-ios.m $(pvz2_runtime_sources | tr '\n' ' ')"
 [ "${AOT_DYLIB_TEST:-0}" = 1 ] && SRCS="$SRCS -DAOT_DYLIB_TEST=1"
 
-echo "==> compiling for arm64-apple-ios$DEPLOY (this is the whole translation layer)"
+echo "==> compiling for $TARGET (this is the whole translation layer)"
 # -U: the console host asks the app glue which game is loaded; this host has none.
-xcrun --sdk iphoneos clang -target "arm64-apple-ios$DEPLOY" -O1 -g -fobjc-arc \
+xcrun --sdk "$SDKNAME" clang -target "$TARGET" ${SDK_ARGS[@]+"${SDK_ARGS[@]}"} -O1 -g -fobjc-arc \
     -Wall -Wno-unused-function -Wno-deprecated-declarations \
     -I"$T" -I"$N" \
     -Wl,-U,_husk_native_loaded_apk -Wl,-rpath,@executable_path/Frameworks \
@@ -68,6 +78,18 @@ else
     echo "    ELF instead, which needs StikDebug attached at launch (run scripts/build-ios-dylibs.sh)"
 fi
 # END JIT-FREE GUEST LIBRARIES
+
+if [ "${IOS_SIM:-0}" = 1 ]; then
+    # Apple silicon runs the same arm64 instructions, but dyld requires the simulator
+    # platform on every image. Only bundle copies change; device inputs stay intact.
+    sdk_version="$(xcrun --sdk "$SDKNAME" --show-sdk-version)"
+    for dylib in "$APP"/Frameworks/*.dylib; do
+        echo "==> relabelling $(basename "$dylib") for the iOS Simulator"
+        xcrun vtool -set-build-version iossim "$DEPLOY" "$sdk_version" -replace \
+            -output "$dylib.simulator" "$dylib"
+        mv -f "$dylib.simulator" "$dylib"
+    done
+fi
 
 [ -d "$OUT/PvZ2.dSYM" ] || true
 
@@ -136,6 +158,11 @@ cat > "$APP/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+if [ "${IOS_SIM:-0}" = 1 ]; then
+    /usr/libexec/PlistBuddy -c 'Add :CFBundleSupportedPlatforms array' "$APP/Info.plist"
+    /usr/libexec/PlistBuddy -c 'Add :CFBundleSupportedPlatforms:0 string iPhoneSimulator' "$APP/Info.plist"
+fi
 
 # ---------------------------------------------------------------- game data and icon
 # Both are optional and both happen before signing, because anything added to the bundle
@@ -213,22 +240,32 @@ fi
 # distribution profile refuse get-task-allow, and with it the JIT).
 IDENTITY="${SIGN_IDENTITY:-}"
 ENTITLEMENTS="$R/tools/pvz2-ios.entitlements"
-if [ -n "${SIGN_PROFILE:-}" ]; then
-    [ -f "$SIGN_PROFILE" ] || { echo "no profile at $SIGN_PROFILE" >&2; exit 1; }
-    security cms -D -i "$SIGN_PROFILE" > "$OUT/profile.raw.plist"
-    plutil -extract Entitlements xml1 -o "$OUT/profile.entitlements" "$OUT/profile.raw.plist"
-    ENTITLEMENTS="$OUT/profile.entitlements"
-    cp "$SIGN_PROFILE" "$APP/embedded.mobileprovision"
-    echo "==> embedding $(basename "$SIGN_PROFILE"); signing entitlements come from it"
-fi
-if [ -n "$IDENTITY" ]; then
-    echo "==> signing with $IDENTITY"
-else
-    echo "==> ad-hoc signing (set SIGN_IDENTITY/SIGN_PROFILE for the device)"
+if [ "${IOS_SIM:-0}" = 1 ]; then
+    # Simulator code needs no development identity and no entitlements at all: an ad-hoc
+    # signature that carries get-task-allow is refused by the Mac ("Security policy issue").
     IDENTITY="-"
+    ENTITLEMENTS=""
+    echo "==> ad-hoc signing for the iOS Simulator (no provisioning profile)"
+else
+    if [ -n "${SIGN_PROFILE:-}" ]; then
+        [ -f "$SIGN_PROFILE" ] || { echo "no profile at $SIGN_PROFILE" >&2; exit 1; }
+        security cms -D -i "$SIGN_PROFILE" > "$OUT/profile.raw.plist"
+        plutil -extract Entitlements xml1 -o "$OUT/profile.entitlements" "$OUT/profile.raw.plist"
+        ENTITLEMENTS="$OUT/profile.entitlements"
+        cp "$SIGN_PROFILE" "$APP/embedded.mobileprovision"
+        echo "==> embedding $(basename "$SIGN_PROFILE"); signing entitlements come from it"
+    fi
+    if [ -n "$IDENTITY" ]; then
+        echo "==> signing with $IDENTITY"
+    else
+        echo "==> ad-hoc signing (set SIGN_IDENTITY/SIGN_PROFILE for the device)"
+        IDENTITY="-"
+    fi
 fi
 KEYCHAIN_ARG=()
-[ -n "${SIGN_KEYCHAIN:-}" ] && KEYCHAIN_ARG=(--keychain "$SIGN_KEYCHAIN")
+[ "${IOS_SIM:-0}" != 1 ] && [ -n "${SIGN_KEYCHAIN:-}" ] && KEYCHAIN_ARG=(--keychain "$SIGN_KEYCHAIN")
+ENT_ARG=()
+[ -n "$ENTITLEMENTS" ] && ENT_ARG=(--entitlements "$ENTITLEMENTS")
 # BEGIN AOT-DYLIB-LOADER TEST (sign every nested dylib, not just ANGLE)
 # iOS library validation requires the main binary's Team ID on every piece of code the
 # process loads, so the converted guest dylib has to be signed with the same identity
@@ -241,7 +278,7 @@ for dylib in "$APP"/Frameworks/*.dylib; do
     [ -f "$dylib" ] || continue
     echo "==> signing $(basename "$dylib")"
     codesign --force --timestamp=none ${KEYCHAIN_ARG[@]+"${KEYCHAIN_ARG[@]}"} \
-        --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" "$dylib"
+        --sign "$IDENTITY" ${ENT_ARG[@]+"${ENT_ARG[@]}"} "$dylib"
 done
 # END AOT-DYLIB-LOADER TEST
 # The dSYM is written next to the binary, which lands it inside the bundle. It has to
@@ -250,10 +287,14 @@ done
 # are no longer there and the bundle refuses to install.
 if [ -d "$APP/PvZ2.dSYM" ]; then rm -rf "$OUT/PvZ2.dSYM"; mv "$APP/PvZ2.dSYM" "$OUT/"; fi
 codesign --force --timestamp=none ${KEYCHAIN_ARG[@]+"${KEYCHAIN_ARG[@]}"} \
-    --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" "$APP"
+    --sign "$IDENTITY" ${ENT_ARG[@]+"${ENT_ARG[@]}"} "$APP"
 
 echo
 echo "built: $APP  ($(du -sh "$APP" | cut -f1))"
+
+if [ "${IOS_SIM:-0}" = 1 ]; then
+    exit 0
+fi
 
 # A plain IPA for sideloaders (SideStore/AltStore/StikStore sign it themselves and
 # supply the provisioning profile, which is why we do not need the Apple ID here).

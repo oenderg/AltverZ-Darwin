@@ -1,9 +1,9 @@
 #!/bin/bash
 # Build PvZ2: Reflourished for iPhone, iPad and Mac from the Android release.
 #
-#   ./build.sh --apk <file|url> [--obb <file|url>] [--ios] [--mac] [--slim] [--quick] [--out dir]
+#   ./build.sh --apk <file|url> [--obb <file|url>] [--ios] [--ios-sim] [--mac] [--slim] [--quick] [--out dir]
 #
-# Without --ios or --mac, both are built. --apk and --obb take a file, or a link
+# Without --ios, --ios-sim or --mac, iOS and Mac are built. --apk and --obb take a file, or a link
 # (direct, Google Drive or MEGA) that is downloaded first; without --obb the OBB
 # comes from the mod's own release. --slim makes the apps without the OBB inside
 # (the IPA is about 60 MB, the Mac disk image about 65 MB): they download it themselves
@@ -13,6 +13,7 @@
 # The results land in out/ (or --out):
 #
 #   PvZ2-Reflourished.ipa          for iPhone and iPad (sign it with your sideloader)
+#   PvZ2-Reflourished-sim.app      for the iOS Simulator (Apple silicon, --ios-sim)
 #   PvZ2 Reflourished.app          for the Mac (Apple silicon)
 #   PvZ2-Reflourished.dmg          the same app in a disk image, ready to share
 #
@@ -21,7 +22,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUT="$ROOT/out"
-APK="" OBB="" CDN="" WANT_IOS=0 WANT_MAC=0 SLIM=0 QUICK=0
+APK="" OBB="" CDN="" WANT_IOS=0 WANT_IOS_SIM=0 WANT_MAC=0 SLIM=0 QUICK=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -30,14 +31,15 @@ while [ $# -gt 0 ]; do
         --cdn) CDN="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
         --ios) WANT_IOS=1; shift ;;
+        --ios-sim) WANT_IOS_SIM=1; shift ;;
         --mac) WANT_MAC=1; shift ;;
         --slim) SLIM=1; shift ;;
         --quick) QUICK=1; shift ;;
-        -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (see ./build.sh --help)" >&2; exit 2 ;;
     esac
 done
-[ "$WANT_IOS$WANT_MAC" = 00 ] && WANT_IOS=1 WANT_MAC=1
+[ "$WANT_IOS$WANT_IOS_SIM$WANT_MAC" = 000 ] && WANT_IOS=1 WANT_MAC=1
 [ -n "$APK" ] || { echo "--apk is required (see ./build.sh --help)" >&2; exit 2; }
 
 mkdir -p "$OUT"
@@ -106,7 +108,11 @@ OBB_SHA256="$(json 'd["obb_sha256"]')"
 OBB_SIZE="$(json 'd["obb_size"]')"
 
 # ---------------------------------------------------------------- iPhone and iPad
-if [ "$WANT_IOS" = 1 ]; then
+if [ "$WANT_IOS" = 1 ] || [ "$WANT_IOS_SIM" = 1 ]; then
+    if [ "$WANT_IOS_SIM" = 1 ]; then
+        xcrun --sdk iphonesimulator --show-sdk-path >/dev/null 2>&1 || {
+            echo "Xcode's iOS Simulator SDK is missing" >&2; exit 1; }
+    fi
     xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1 || {
         echo "Xcode's iOS platform is missing (Xcode > Settings > Components)" >&2; exit 1; }
 
@@ -119,6 +125,18 @@ if [ "$WANT_IOS" = 1 ]; then
         step "ANGLE for iOS (once; it takes a while)"
         bash "$ROOT/runtime/scripts/build_angle_ios.sh"
     fi
+    if [ "$WANT_IOS_SIM" = 1 ]; then
+        # The simulator needs its own ANGLE: a device one aborts on the first 16-bit texture.
+        ANGLE_SIM="$ROOT/runtime/build/iossim-arm64/sysroot/lib/libANGLE-shared.dylib"
+        if [ ! -f "$ANGLE_SIM" ] && [ -f "$ROOT/prebuilt/ios-simulator/libANGLE-shared.dylib" ] && [ -z "${REBUILD_ANGLE:-}" ]; then
+            mkdir -p "$(dirname "$ANGLE_SIM")"
+            cp "$ROOT/prebuilt/ios-simulator/libANGLE-shared.dylib" "$ANGLE_SIM"
+        fi
+        if [ ! -f "$ANGLE_SIM" ]; then
+            step "ANGLE for the iOS Simulator (once; it takes a while)"
+            ANGLE_SDK=iphonesimulator bash "$ROOT/runtime/scripts/build_angle_ios.sh"
+        fi
+    fi
 
     if [ "$QUICK" = 1 ] && [ -f "$WORK/ios-dylibs/libPVZ2.dylib" ]; then
         step "the game's code for iOS: reused from the last build (--quick)"
@@ -128,14 +146,25 @@ if [ "$WANT_IOS" = 1 ]; then
         python3 "$ROOT/converter/check-build.py" "$WORK/ios-dylibs"
     fi
 
-    step "building the iOS app"
     IOS_OBB="$OBB"; [ "$SLIM" = 1 ] && IOS_OBB=none
-    GAME_APK="$APK" GAME_OBB="$IOS_OBB" GAME_CDN_TAR="$CDN" \
-    OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" \
-    AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-com.reflourished.darwin}" \
-        bash "$ROOT/runtime/tools/regress/build-ios-ipa.sh" "$WORK/ios" | grep -E '^==>|^built|^ipa' || true
-    [ -f "$WORK/ios/PvZ2.ipa" ] || { echo "the iOS build failed (see above)" >&2; exit 1; }
-    mv -f "$WORK/ios/PvZ2.ipa" "$OUT/PvZ2-Reflourished.ipa"
+    if [ "$WANT_IOS" = 1 ]; then
+        step "building the iOS app"
+        GAME_APK="$APK" GAME_OBB="$IOS_OBB" GAME_CDN_TAR="$CDN" \
+        OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" \
+        AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-com.reflourished.darwin}" \
+            bash "$ROOT/runtime/tools/regress/build-ios-ipa.sh" "$WORK/ios" | grep -E '^==>|^built|^ipa' || true
+        [ -f "$WORK/ios/PvZ2.ipa" ] || { echo "the iOS build failed (see above)" >&2; exit 1; }
+        mv -f "$WORK/ios/PvZ2.ipa" "$OUT/PvZ2-Reflourished.ipa"
+    fi
+
+    if [ "$WANT_IOS_SIM" = 1 ]; then
+        step "building the iOS Simulator app"
+        GAME_APK="$APK" GAME_OBB="$IOS_OBB" GAME_CDN_TAR="$CDN" \
+        OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" \
+        AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-com.reflourished.darwin}" \
+        IOS_SIM=1 IOS_SIM_APP="$OUT/PvZ2-Reflourished-sim.app" \
+            bash "$ROOT/runtime/tools/regress/build-ios-ipa.sh" "$WORK/ios-sim"
+    fi
 fi
 
 # ---------------------------------------------------------------- Mac
@@ -172,6 +201,7 @@ fi
 
 step "done"
 [ "$WANT_IOS" = 1 ] && echo "    $OUT/PvZ2-Reflourished.ipa"
+[ "$WANT_IOS_SIM" = 1 ] && echo "    $OUT/PvZ2-Reflourished-sim.app"
 [ "$WANT_MAC" = 1 ] && echo "    $OUT/PvZ2 Reflourished.app"
 [ "$WANT_MAC" = 1 ] && [ "$QUICK" = 0 ] && echo "    $OUT/PvZ2-Reflourished.dmg"
 exit 0

@@ -33,6 +33,13 @@ export ICON_PNG
 
 "$R/tools/regress/build-ios-app.sh" "$OUT"
 
+if [ "${IOS_SIM:-0}" = 1 ]; then
+    echo
+    echo "install the simulator bundle directly:"
+    echo "  xcrun simctl install booted \"${IOS_SIM_APP:-$OUT/PvZ2-Reflourished-sim.app}\""
+    exit 0
+fi
+
 echo
 echo "install the bundle directly:"
 echo "  xcrun devicectl device install app --device <udid> $OUT/PvZ2.app"

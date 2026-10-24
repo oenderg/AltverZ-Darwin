@@ -24,6 +24,7 @@ runtime/tools/pvz2-ios.m      iPhone/iPad host (UIKit, touch, hardware keyboard,
 runtime/tools/pvz2-keys.h     the shared keyboard mapping
 runtime/tools/regress/        the app build scripts; pvz2-sources.sh = which runtime files are built
 prebuilt/ios/                 ANGLE for iOS (rebuild: runtime/scripts/build_angle_ios.sh)
+prebuilt/ios-simulator/       ANGLE for the iOS Simulator (ANGLE_SDK=iphonesimulator, same script)
 scripts/                      downloads, dmg, AltStore source; .github/workflows/build.yml = CI build
 ```
 

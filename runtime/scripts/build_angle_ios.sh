@@ -1,6 +1,10 @@
 #!/bin/bash
 # Build ANGLE (EGL + GLES over Metal) for iOS arm64.
 #
+# ANGLE_SDK=iphonesimulator builds it for the iOS Simulator instead (into build/iossim-arm64):
+# the simulator's Metal has no packed 16-bit formats, and ANGLE's simulator build stores those
+# textures as 32-bit ones (a device build relabelled for the simulator aborts on the first one).
+#
 # This is the host-side GPU stack Husk needs. virglrenderer turns the guest's
 # GL calls into real draw calls, but it needs an EGL/GLES implementation to make
 # them against -- and iOS has no EGL at all. ANGLE supplies one on top of Metal.
@@ -15,8 +19,13 @@ set -euo pipefail
 HUSK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GPU="$HUSK_ROOT/third_party/gpu"
 WK="$GPU/webkit"
-PREFIX="$HUSK_ROOT/build/ios-arm64/sysroot"
-LOG="$HUSK_ROOT/build/logs/angle-build.log"
+SDK="${ANGLE_SDK:-iphoneos}"
+case "$SDK" in
+    iphoneos) PREFIX="$HUSK_ROOT/build/ios-arm64/sysroot"; ARCHIVE=ANGLE ;;
+    iphonesimulator) PREFIX="$HUSK_ROOT/build/iossim-arm64/sysroot"; ARCHIVE=ANGLE-simulator ;;
+    *) echo "ANGLE_SDK must be iphoneos or iphonesimulator" >&2; exit 2 ;;
+esac
+LOG="$HUSK_ROOT/build/logs/angle-build-$SDK.log"
 mkdir -p "$GPU" "$(dirname "$LOG")"
 
 if [ ! -d "$WK" ]; then
@@ -66,8 +75,8 @@ angle_build () {
     fi
 
     env -i PATH="$PATH" HOME="$HOME" xcodebuild archive \
-        -archivePath "ANGLE" -scheme "ANGLE" \
-        -sdk iphoneos -arch arm64 -configuration Release \
+        -archivePath "$ARCHIVE" -scheme "ANGLE" \
+        -sdk "$SDK" -arch arm64 -configuration Release \
         WEBCORE_LIBRARY_DIR="/usr/local/lib" NORMAL_UMBRELLA_FRAMEWORKS_DIR="" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
         WK_AVAILABILITY_OVERLAY_FLAGS="" WK_AVAILABILITY_OVERLAY_SWIFT_FLAGS="" \
@@ -94,11 +103,11 @@ angle_build () {
 # the aliases collide with. It is also unnecessary: epoxy resolves GL entry
 # points through eglGetProcAddress, so EGL is the only surface that must be
 # reachable by its standard name.
-echo "==> building ANGLE for iOS arm64, pass 1 (log: $LOG)"
+echo "==> building ANGLE for $SDK arm64, pass 1 (log: $LOG)"
 angle_build ""
 
 echo "==> generating EGL symbol aliases"
-nm -g "ANGLE.xcarchive/Products/usr/local/lib/libANGLE-shared.dylib" \
+nm -g "$ARCHIVE.xcarchive/Products/usr/local/lib/libANGLE-shared.dylib" \
   | awk '$2=="T"{print $3}' | grep -E '^_EGL_' \
   | awk '{o=$1; a=$1; sub(/^_EGL_/,"_egl",a); print o, a}' > "$ALIASES"
 echo "    $(wc -l < "$ALIASES") aliases"
@@ -106,7 +115,7 @@ echo "    $(wc -l < "$ALIASES") aliases"
 echo "==> pass 2, relinking with standard EGL names"
 angle_build "$ALIASES"
 
-DYLIB="ANGLE.xcarchive/Products/usr/local/lib/libANGLE-shared.dylib"
+DYLIB="$ARCHIVE.xcarchive/Products/usr/local/lib/libANGLE-shared.dylib"
 [ -f "$DYLIB" ] || { echo "no dylib at $DYLIB" >&2; exit 1; }
 
 install -d "$PREFIX/lib" "$PREFIX/include"

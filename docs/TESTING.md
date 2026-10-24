@@ -28,6 +28,7 @@ What it sets (you can set these yourself when running the binary by hand):
 | `TL_AUDIO_MUTE=1` | play at a device's pace without sound |
 | `TL_PVZ2_TEST_SCREEN=n` | start on display n |
 | `TL_PVZ2_OBB_URLS` | where a slim build downloads the OBB from (space-separated; e.g. a local server) |
+| `TL_PVZ2_SAFE_INSETS=l,r,t,b` | pretend the screen has a cutout, in surface pixels (an iPhone 16 Pro's island on the 1748x804 test surface: `124,124,0,0`) |
 
 Launch arguments after `--` override the app's settings for that run only, without changing them:
 `-resizeMode Fixed|Adapt`, `-fixedAspect display|game|16:9|...`, `-renderSharp YES|NO`,
@@ -73,9 +74,46 @@ Commands separated by `;`, run in order on their own thread:
 - Kill only the test's own pid. Never by app name: the person may be playing.
 - Use your own data folder and launch arguments, never the app's real settings.
 
+## iOS Simulator
+
+The iPhone's screen (the Dynamic Island, the rounded corners) without an iPhone, on an
+Apple-silicon Mac with Xcode's iOS Simulator and an iOS runtime installed:
+
+```sh
+./build.sh --ios-sim --slim --apk "PvZ2 Reflourished 1.4.2.apk"
+```
+
+This builds `out/PvZ2-Reflourished-sim.app`, ad-hoc signed with no entitlements (a signature
+that carries `get-task-allow` is refused: "Security policy issue"). The host is compiled for the
+simulator and bundle copies of the converted game libraries are relabelled `IOSSIMULATOR`. ANGLE
+is its own simulator build (`prebuilt/ios-simulator`; `REBUILD_ANGLE=1` rebuilds it with
+`ANGLE_SDK=iphonesimulator runtime/scripts/build_angle_ios.sh`): a device ANGLE aborts on the
+game's first 16-bit texture, which the simulator's Metal does not have.
+
+Install it with the OBB in place **before the first launch** (or the slim app downloads it), and
+optionally a save (`$C/Documents/data` takes a test run's `data/` folder as it is):
+
+```sh
+xcrun simctl boot "iPhone 18 Pro"
+xcrun simctl install booted out/PvZ2-Reflourished-sim.app
+C="$(xcrun simctl get_app_container booted com.reflourished.darwin data)"
+mkdir -p "$C/Documents/obb"
+cp out/.work/game.obb "$C/Documents/obb/main.675.com.ea.game.pvz2_rfl.obb"
+SIMCTL_CHILD_TL_FORCE_LANDSCAPE=1 SIMCTL_CHILD_TL_PVZ2_TAP="1310,1100;wait:14" \
+    xcrun simctl launch booted com.reflourished.darwin
+xcrun simctl io booted screenshot --mask=black out/ios-sim.png
+```
+
+`SIMCTL_CHILD_` passes a variable to the app. The simulator starts upright:
+`TL_FORCE_LANDSCAPE=1` turns the window. `TL_PVZ2_TAP` is the Mac runner's tap language
+(`x,y`, `drag:x1,y1,x2,y2`, `wait:N`) in the game's own pixels (2622x1206 on an iPhone 18 Pro),
+starting `TL_PVZ2_TAP_DELAY` seconds (default 3) after the game has started.
+`--mask=black` draws the island and the corners into the screenshot. The log is
+`$C/Documents/pvz2.log`.
+
 ## On an iPhone or iPad
 
-There is no scripted input on iOS; test by hand and read `Documents/pvz2.log` (Files app, or
+There is no scripted input on a device; test by hand and read `Documents/pvz2.log` (Files app, or
 `xcrun devicectl device copy from --domain-type appDataContainer ...` for a copy you signed).
 Worth checking after a change that touches iOS: the first launch (OBB download, Welcome screen), a
 level with touch, the hardware keyboard (1-8, S, Space, Esc), going to the Home Screen and back
