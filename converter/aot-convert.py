@@ -1272,9 +1272,13 @@ def patch_linked(path, e, lay, sv, stub_bytes, strict_refs=False, redirect=(),
             "offset": secs["__guest_code"]["offset"] + (blob - secs["__guest_code"]["addr"])}
     for need in (CODE_LABEL, DATA_LABEL, TCB_LABEL):
         if syms[need] & 0xFFF:
+            # The section table says what the linker put in front of it (names, addresses
+            # and sizes only: safe to print in a public build log).
+            table = "; ".join(f"{name} {s['addr']:#x}+{s['size']:#x}"
+                              for name, s in sorted(secs.items(), key=lambda kv: kv[1]["addr"]))
             raise Bail(f"{need} landed at {syms[need]:#x}, not page-aligned; the guest's "
                        "page-relative adrp arithmetic would be wrong for every site in "
-                       "the first page. Force the section alignment.")
+                       f"the first page. Force the section alignment. Sections: {table}")
     # The one property everything else rests on: the data sits at the same distance from
     # the code as it did in the ELF. If the linker put it anywhere else, every adrp in the
     # guest would be pointing at the wrong page, and nothing else would notice until the

@@ -21,6 +21,10 @@ on:
         type: choice
         options: [Slim and full, Slim, Full]
         default: Slim and full
+      publish:
+        description: "Publish the release, the AltStore source and the Mac update feed (off: build only)"
+        type: boolean
+        default: true
       release_tag:
         description: "Release tag (leave empty: v<VERSION>)"
         required: false
@@ -122,6 +126,7 @@ jobs:
           ls -lh release
 
       - name: Release notes
+        if: github.event.inputs.publish == 'true'
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
           TAG: ${{ steps.metadata.outputs.tag }}
@@ -132,6 +137,7 @@ jobs:
           cat release-notes.md
 
       - name: Publish the release
+        if: github.event.inputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.metadata.outputs.tag }}
@@ -141,7 +147,7 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Update the AltStore source
-        if: github.event.inputs.platforms != 'Mac' && github.event.inputs.variants != 'Full'
+        if: github.event.inputs.publish == 'true' && github.event.inputs.platforms != 'Mac' && github.event.inputs.variants != 'Full'
         env:
           TAG: ${{ steps.metadata.outputs.tag }}
           VERSION: ${{ steps.metadata.outputs.version }}
@@ -161,7 +167,7 @@ jobs:
           git push origin "HEAD:${{ github.event.repository.default_branch }}"
 
       - name: Update the Mac update feed
-        if: github.event.inputs.platforms != 'iPhone/iPad' && github.event.inputs.variants != 'Full'
+        if: github.event.inputs.publish == 'true' && github.event.inputs.platforms != 'iPhone/iPad' && github.event.inputs.variants != 'Full'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           VERSION: ${{ steps.metadata.outputs.version }}
