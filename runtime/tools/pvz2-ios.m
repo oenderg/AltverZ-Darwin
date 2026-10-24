@@ -1544,7 +1544,12 @@ static NSDictionary *obb_info(void)
      * on the console instead, where the launch tool can stream it. */
     NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     if (!getenv("TL_IOS_CONSOLE")) {
+        /* Each launch starts its own log. The one before it stays as pvz2.previous.log
+         * (after a crash, that is the run that crashed), so the log never grows past
+         * two runs. */
         NSString *logPath = [docs stringByAppendingPathComponent:@"pvz2.log"];
+        rename(logPath.UTF8String,
+               [docs stringByAppendingPathComponent:@"pvz2.previous.log"].UTF8String);
         freopen(logPath.UTF8String, "a", stderr);
         setvbuf(stderr, NULL, _IOLBF, 0);
     }

@@ -3087,6 +3087,13 @@ int main(int argc, char **argv)
         const char *log = getenv("TL_PVZ2_LOG");
         NSString *logPath = log ? [NSString stringWithUTF8String:log]
                                 : [dataPath stringByAppendingPathComponent:@"pvz2.log"];
+        /* Each launch starts its own log. The one before it stays as pvz2.previous.log
+         * (after a crash, that is the run that crashed), so the log never grows past
+         * two runs. A restart to fit the window is the same session and keeps writing
+         * to it, and a test's TL_PVZ2_LOG is the test's to manage. */
+        if (!log && !g_relaunch)
+            rename(logPath.UTF8String,
+                   [dataPath stringByAppendingPathComponent:@"pvz2.previous.log"].UTF8String);
         freopen(logPath.UTF8String, "a", stderr);
         setvbuf(stderr, NULL, _IOLBF, 0);
 

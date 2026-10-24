@@ -579,7 +579,7 @@ private struct AboutPane: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Log")
-                        Text("pvz2.log, for a bug report").font(.caption).foregroundStyle(.secondary)
+                        Text("pvz2.log, for a bug report (after a crash: pvz2.previous.log)").font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }

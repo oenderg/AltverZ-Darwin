@@ -30,7 +30,7 @@ request looks like. If you use an AI agent, point it at [AGENTS.md](AGENTS.md).
   `io.github.oenderg.reflourished-darwin` on both.
 - The app's log: `~/Library/Application Support/PvZ2 Reflourished/pvz2.log` on the Mac (a test run
   writes to its `TL_PVZ2_LOG` instead), and `Documents/pvz2.log` on iOS (Files app: On My iPhone >
-  PvZ2 Reflourished).
+  PvZ2 Reflourished). Each launch starts a new one; the run before is `pvz2.previous.log` next to it.
 
 Our app version is in `VERSION`; the game version is in `data/game-1.4.2.json`. Local file names
 stay the same. For versioned release names and packaging, see [docs/RELEASING.md](docs/RELEASING.md).
@@ -65,4 +65,5 @@ needs (`runtime/tools/regress/pvz2-sources.sh`, `runtime/tools/pvz2-standins.c`)
 ## Reporting a bug
 
 Use the issue form: device and OS, the app's version (Mac: Settings > About), what you did, what
-happened, and the `pvz2.log` from right after it happened.
+happened, and the `pvz2.log` from right after it happened (`pvz2.previous.log` if the app crashed or
+was opened again since).
