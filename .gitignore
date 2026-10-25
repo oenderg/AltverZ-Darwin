@@ -5,3 +5,4 @@ runtime/third_party/
 *.obb
 .DS_Store
 __pycache__/
+scripts/dmg/art

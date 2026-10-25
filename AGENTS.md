@@ -28,6 +28,7 @@ runtime/tools/regress/        the app build scripts; pvz2-sources.sh = which run
 prebuilt/ios/                 ANGLE for iOS (rebuild: runtime/scripts/build_angle_ios.sh)
 prebuilt/ios-simulator/       ANGLE for the iOS Simulator (ANGLE_SDK=iphonesimulator, same script)
 scripts/                      downloads, dmg, AltStore source, Mac update feed; .github/workflows/build.yml = CI build
+scripts/dmg/                  the Mac DMG window: dmg.html, render.sh -> background.tiff, dmgbuild settings.py
 release-notes/                 each release's What's new (<version>.md) and the fixed footer; scripts/release-notes.py
 sparkle/                      the Mac update feed (appcast.xml, written by CI) and the update key's public half
 docs/banner/                  the repository banner: banner.html + its screenshots, render.sh draws it

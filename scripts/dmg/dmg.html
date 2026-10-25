@@ -1,0 +1,78 @@
+<!doctype html>
+<meta charset="utf-8">
+<!-- The Mac disk image's window background: 720x440 points, drawn at 2x by render.sh.
+     The game's front yard (the house on the left, the street on the right) with a panel drawn like
+     the game's own popups (its Settings panel: the game's UI font, a brown frame, a cream list).
+     Finder draws the labels in black under the icons, on the cream. The icon centres here must
+     match settings.py: the app at (283, 252), Applications at (473, 252).
+     ?preview=1 also draws the two icons and their labels, to judge the layout.
+     The art and the font are the game's own, read from art/ (not in the repository: see render.sh). -->
+<style>
+  @font-face { font-family: PvZ2UI; src: url(art/pvz2-ui.ttf); }
+  html, body { margin: 0; width: 720px; height: 440px; overflow: hidden; }
+  .stage { position: relative; width: 720px; height: 440px; overflow: hidden; background: #3d6b2a; }
+  .scene, .grass { position: absolute; }
+  img.s { position: absolute; filter: drop-shadow(0 4px 3px rgba(0,0,0,.35)); }
+  .shadow { position: absolute; border-radius: 50%; background: radial-gradient(rgba(0,0,0,.45), rgba(0,0,0,0) 70%); }
+  /* the popup: an outer band, a dark line, the brown face, the cream list (colours from the game) */
+  .panel { position: absolute; left: 168px; top: 64px; width: 420px; height: 330px; box-sizing: border-box; border-radius: 22px;
+           background: #ab6f3f; border: 2px solid #1c0d05; padding: 5px;
+           box-shadow: inset 0 2px 0 #d9a066, inset 2px 0 0 #c98a50, 0 8px 18px rgba(0,0,0,.45); }
+  .frame { position: relative; height: 100%; box-sizing: border-box; border-radius: 17px; background: #aa7042;
+           border: 2px solid #2d2113; box-shadow: 0 -1px 0 #fdb060, 0 0 0 1px #d39154, inset 0 2px 0 rgba(255,214,150,.35); }
+  .head { position: absolute; left: 0; right: 0; top: 4px; text-align: center; font: 31px/40px PvZ2UI; color: #ffe176;
+          letter-spacing: .5px; -webkit-text-stroke: 4px #321e00; paint-order: stroke fill; text-shadow: 0 2px 0 rgba(30,15,0,.6); }
+  .list { position: absolute; left: 14px; right: 14px; top: 50px; bottom: 14px; border-radius: 10px; background: #eee5c4;
+          border: 2px solid #5b3816; box-shadow: inset 0 3px 0 #cfc3a0, inset 0 0 0 1px #fff6dc; overflow: hidden; }
+  .row { position: absolute; left: 0; right: 0; top: 0; height: 42px; border-bottom: 2px solid #d3c49b;
+         font: 22px/42px PvZ2UI; color: #594f03; padding-left: 18px; }
+  .row b { font-weight: normal; color: #2f7a12; }
+  svg { position: absolute; left: 0; top: 0; }
+  .icon { position: absolute; width: 128px; height: 128px; transform: translate(-50%, -50%); }
+  .label { position: absolute; transform: translateX(-50%); font: 13px/16px -apple-system, sans-serif; color: #000; white-space: nowrap; }
+</style>
+<div class="stage" id="stage">
+  <img class="scene" id="scene" src="art/scene.jpg">
+  <img class="grass" id="grass" src="art/grass.webp">
+
+  <!-- the plants by the front door -->
+  <div class="shadow" style="left:82px; top:204px; width:60px; height:14px"></div>
+  <img class="s" src="art/peashooter.png" style="left:78px; top:150px; width:64px">
+  <div class="shadow" style="left:84px; top:330px; width:58px; height:14px"></div>
+  <img class="s" src="art/sunflower.png" style="left:82px; top:268px; width:62px">
+
+  <div class="panel"><div class="frame">
+    <div class="head">Install</div>
+    <div class="list"><div class="row">Drag <b>PvZ2 Reflourished</b> to Applications</div></div>
+  </div></div>
+
+  <!-- the game's list arrow, centred in the gap between the icons as Finder draws them -->
+  <svg width="720" height="440">
+    <defs><linearGradient id="ar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#f0a21e"/></linearGradient></defs>
+    <path d="M354 242 h14 v-13 l26 23 l-26 23 v-13 h-14 z" fill="url(#ar)" stroke="#4a2a05" stroke-width="2.6" stroke-linejoin="round"/>
+  </svg>
+
+  <!-- the zombies coming up the street -->
+  <div class="shadow" style="left:640px; top:200px; width:60px; height:13px"></div>
+  <img class="s" src="art/zombie-bucket.png" style="left:632px; top:94px; height:112px">
+  <div class="shadow" style="left:604px; top:318px; width:60px; height:13px"></div>
+  <img class="s" src="art/zombie-cone.png" style="left:598px; top:208px; height:118px">
+  <div class="shadow" style="left:654px; top:404px; width:58px; height:13px"></div>
+  <img class="s" src="art/zombie-basic.png" style="left:646px; top:306px; height:104px">
+</div>
+<script>
+  // The scene is the game's front lawn (its first 2400x1540 pixels) at 0.30, the whole yard in the
+  // window; the grass covers its dirt patch, at 520..2000 x 400..1380, the way the game lays it.
+  const K = 0.30, SX = 0, SY = -12;
+  const scene = document.getElementById('scene'), grass = document.getElementById('grass');
+  Object.assign(scene.style, { left: SX + 'px', top: SY + 'px', width: 2400 * K + 'px' });
+  const dirt = { x: 520 * K + SX, y: 400 * K + SY, w: 1480 * K, h: 980 * K };
+  Object.assign(grass.style, { left: dirt.x + (dirt.w - 1577 * K) / 2 + 'px', top: dirt.y + (dirt.h - 990 * K) / 2 + 'px', width: 1577 * K + 'px' });
+  if (location.search.includes('preview')) {
+    // Finder puts a label's text centre about 83 points under the icon's centre (128-point icons).
+    const st = document.getElementById('stage');
+    for (const [x, img, name] of [[283, 'preview-app.png', 'PvZ2 Reflourished'], [473, 'preview-folder.png', 'Applications']]) {
+      st.insertAdjacentHTML('beforeend', `<img class="icon" src="${img}" style="left:${x}px; top:252px"><div class="label" style="left:${x}px; top:${252 + 75}px">${name}</div>`);
+    }
+  }
+</script>

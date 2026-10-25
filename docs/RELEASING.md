@@ -51,6 +51,14 @@ an existing release asset. Package each variant before building the next one. `-
 reuses converted libraries in the same output folder while still making the DMG; `--quick` skips it.
 Use reuse only when the APK, converter and hooks have not changed.
 
+The Mac DMG's window (the front yard, an "Install" panel, the app and an Applications link) is laid
+out by `dmgbuild` (`pip install dmgbuild`; CI installs 1.6.5) from `scripts/dmg/settings.py` and
+`scripts/dmg/background.tiff`. Without dmgbuild, `scripts/make-dmg.sh` warns and makes a plain DMG.
+To change the picture, edit `scripts/dmg/dmg.html` and run `scripts/dmg/render.sh`; it needs the
+game's art and UI font in `scripts/dmg/art/` (decoded from the OBB, never committed), and
+`render.sh preview.png` draws the icons in to judge the layout. Finder counts the title bar in the
+window height and draws the labels black: check a changed layout in a real Finder window.
+
 The release's text is `scripts/release-notes.py`'s: What's new from `release-notes/<version>.md`,
 the feat/fix/perf commits since the previous tag (folded, with the compare link; the checkout fetches
 the tags for this), and `release-notes/footer.md` with a table of the files the run built. The same

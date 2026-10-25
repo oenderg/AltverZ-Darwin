@@ -92,6 +92,17 @@ jobs:
           ls -l "inputs/$name"
           echo "apk=$PWD/inputs/$name" >> "$GITHUB_OUTPUT"
 
+      - name: dmgbuild
+        # Lays out the Mac disk image's window (scripts/make-dmg.sh, scripts/dmg/). In a venv put
+        # first on PATH: the runner's Python refuses pip installs; the other scripts need only the
+        # standard library.
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/dmg-venv"
+          "$RUNNER_TEMP/dmg-venv/bin/pip" install --quiet dmgbuild==1.6.5
+          echo "$RUNNER_TEMP/dmg-venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/dmg-venv/bin/python3" -c "import dmgbuild"
+
       - name: Build and package
         env:
           APK_URL: ${{ steps.apk.outputs.apk }}
