@@ -65,7 +65,7 @@ answers the few calls into those parts). The pieces that matter here:
   does not exist; the driver answers the ~130 methods the native code calls (config storage,
   screen size, HTTP, assets, broadcasts) with C functions (`M(APP, "Config_ConfigKeyExists", ...)`).
 - **Live content.** `husk-tl-cdn.m` uses Foundation on both platforms to fetch only the
-  Reflourished HTTPS host, with a ten-second timeout. It queues real response headers
+  Reflourished HTTPS host (30 s without data, 60 s in total). It queues real response headers
   (including the server Date) and unchanged gzip bytes for the driver's GL-thread
   callbacks. A validated download updates the writable CDN cache atomically; failures
   use that cache or the staged bundle with device-clock time. See GAME-NOTES.md.

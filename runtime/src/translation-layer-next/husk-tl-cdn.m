@@ -221,13 +221,15 @@ void tl_cdn_fetch(const char *url, const char *method, const void *body, size_t 
             return;
         }
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:fetch.url]
-            cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:10];
+            cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:30];
         request.HTTPMethod = @(method);
         if (length) request.HTTPBody = [NSData dataWithBytes:body length:length];
         /* The .tar is itself gzip, and the guest inflates it. Do not request a second HTTP encoding. */
         [request setValue:@"identity" forHTTPHeaderField:@"Accept-Encoding"];
         NSURLSessionConfiguration *config = NSURLSessionConfiguration.ephemeralSessionConfiguration;
-        config.timeoutIntervalForRequest = 10; config.timeoutIntervalForResource = 10;
+        /* As Android: 30 s without data (HttpURLConnection, SetTimeout(30)). Android has no total limit and
+         * its loading screen waits for the reply, so a total of 60 s bounds that wait. */
+        config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 60;
         config.URLCache = nil; config.HTTPCookieStorage = nil; config.URLCredentialStorage = nil;
         NSOperationQueue *queue = [NSOperationQueue new]; queue.maxConcurrentOperationCount = 1;
         fetch.session = [NSURLSession sessionWithConfiguration:config delegate:fetch delegateQueue:queue];

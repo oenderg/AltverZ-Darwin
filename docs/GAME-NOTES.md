@@ -110,7 +110,8 @@ The runtime's made-up `/proc/meminfo` and `/proc/self/status` are not what it sh
 
 The shared `husk-tl-cdn.m` helper fetches HTTPS requests only to
 `reflourished.ducnguyen.org` (also checked on redirects), using an ephemeral NSURLSession
-with a ten-second timeout. The worker queues status, headers and body; `husk-tl-pvz2.c`
+with a 30-second idle timeout (as Android) and a 60-second total, since start-up waits on
+the loading screen for the reply. The worker queues status, headers and body; `husk-tl-pvz2.c`
 delivers the game's response/data/completion callbacks on its GL thread between frames,
 with the same 16 KiB data chunks as Android. Other hosts still fail immediately.
 
