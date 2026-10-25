@@ -41,6 +41,7 @@
 
 #include "husk-tl-audio.h"
 #include "husk-tl-pvz2.h"
+#include "husk-tl-cdn.h"
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
 
@@ -1188,27 +1189,13 @@ static void stage_bundled_game(NSString *docs)
     }
 }
 
-/* The mod's CDN archive. The game asks for it over the network; a device that is not
- * on a network gets nothing, so the mod's content (products, quests, event
- * schedules) is missing. The archive in the bundle is put where the translation
- * layer looks for it: the data directory's No_Backup. */
+/* The shared staging policy lets an updated bundle replace only an older cache. */
 static void stage_bundled_cdn(NSString *docs)
 {
-    NSFileManager *fm = NSFileManager.defaultManager;
+    if (getenv("TL_PVZ2_MAIN_TAR")) return;
     NSString *src = [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"Game/1.4.2.main.tar"];
-    if (![fm fileExistsAtPath:src]) return;
-    NSString *dir = [docs stringByAppendingPathComponent:@"data/No_Backup"];
-    NSString *to = [dir stringByAppendingPathComponent:@"1.4.2.main.tar"];
-    if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil]) {
-        tl_log_line("ios: could not make %s for the CDN archive", dir.UTF8String);
-        return;
-    }
-    if ([fm fileExistsAtPath:to]) return;                 /* the user's copy wins */
-    NSError *err = nil;
-    if (![fm copyItemAtPath:src toPath:to error:&err])
-        tl_log_line("ios: could not stage the CDN archive: %s", err.localizedDescription.UTF8String);
-    else
-        tl_log_line("ios: staged the CDN archive from the app bundle");
+    NSString *dst = [docs stringByAppendingPathComponent:@"data/No_Backup/1.4.2.main.tar"];
+    tl_cdn_stage(src.UTF8String, dst.UTF8String);
 }
 
 /* The APK is the only .apk in Documents; the OBB lives in Documents/obb and the

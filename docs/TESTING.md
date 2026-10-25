@@ -21,6 +21,9 @@ What it sets (you can set these yourself when running the binary by hand):
 | Variable | Meaning |
 |---|---|
 | `TL_DATA` | the data folder (default: `~/Library/Application Support/PvZ2 Reflourished`) |
+| `TL_PVZ2_CDN=offline` | skip CDN networking and replay the local archive with a fresh device-clock UTC Date |
+| `TL_PVZ2_MAIN_TAR` | override the writable CDN cache path; skips bundle staging (use a test copy) |
+| `TL_PVZ2_FRAMES`, `TL_PVZ2_FRAME_EVERY` | save only this app's rendered frame as `latest.bmp` in an existing directory, every N frames; works with the lid closed |
 | `TL_PVZ2_LOG` | where the log goes |
 | `TL_PVZ2_IMPORT_FROM=<domain>` | import settings once from this domain; background tests otherwise skip import. Use a test bundle ID and test domains only. |
 | `TL_PVZ2_TAP`, `TL_PVZ2_TAP_DELAY` | the tap script, and the seconds before it starts (default 3) |
@@ -35,6 +38,29 @@ What it sets (you can set these yourself when running the binary by hand):
 Launch arguments after `--` override the app's settings for that run only, without changing them:
 `-resizeMode Fixed|Adapt`, `-fixedAspect display|game|16:9|...`, `-renderSharp YES|NO`,
 `-closeAction quit|pause`, `-confirmQuit NO`. Pass them in tests: your own settings may differ.
+
+## CDN paths
+
+Use a full test build and a copied save. An online launch should log
+`CDN live ... -> 200, ... bytes, Date ...`, `CDN cache updated local copy ...`, and
+`HTTP delivered ... on the GL thread`. Restart with the **same data folder** to check
+`CDN cache kept local copy ...`; another live request still refreshes it. With
+`TL_PVZ2_CDN=offline`, expect `CDN fallback (forced offline) -> local copy, Date ...`
+and no network request. Check both the world-map badges and the Promoted shop offers;
+plant ownership, profile unlocks and previous purchases still govern availability.
+Compare the cache's gzip hash with the guest's `CDN.1.4.2/` files after extraction.
+
+With the lid closed, allow extra time for frames and taps. Use `TL_PVZ2_FRAMES` if window
+capture is unavailable, and inspect `latest.bmp` yourself; low fps alone is not a failure.
+
+The cache/allowlist regression test needs no network or game assets:
+
+```sh
+clang -fobjc-arc -fsanitize=address -Iruntime/src/translation-layer-next \
+  -Iruntime/src/translation-layer runtime/tools/regress/test-cdn.m \
+  runtime/src/translation-layer-next/husk-tl-cdn.m -framework Foundation -lz -o /tmp/test-cdn
+/tmp/test-cdn
+```
 
 ## Settings import
 

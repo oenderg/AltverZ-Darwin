@@ -44,6 +44,7 @@
 #include "husk-tl-jni.h"
 #include "husk-tl-ld.h"
 #include "husk-tl-pvz2.h"
+#include "husk-tl-cdn.h"
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
 
@@ -344,16 +345,14 @@ static void mkdirs(NSString *path)
                               withIntermediateDirectories:YES attributes:nil error:nil];
 }
 
-/* The CDN archive: the game asks for it over the network, and a Mac that is not on a
- * network gets nothing -- so the mod's content (its products, its quests, its event
- * schedules) would be missing. The archive in the bundle is handed to the driver the
- * way the harness hands it over: TL_PVZ2_MAIN_TAR. */
+/* Stage the bundled fallback without replacing a newer downloaded archive. */
 static NSString *stage_cdn_tar(void)
 {
-    NSString *bundled = bundle_dir(@"Game/1.4.2.main.tar");
-    if (![NSFileManager.defaultManager fileExistsAtPath:bundled]) return nil;
-    setenv("TL_PVZ2_MAIN_TAR", bundled.UTF8String, 1);
-    return bundled;
+    if (getenv("TL_PVZ2_MAIN_TAR")) return @(getenv("TL_PVZ2_MAIN_TAR"));
+    NSString *local = [@(g_data) stringByAppendingPathComponent:@"No_Backup/1.4.2.main.tar"];
+    tl_cdn_stage(bundle_dir(@"Game/1.4.2.main.tar").UTF8String, local.UTF8String);
+    setenv("TL_PVZ2_MAIN_TAR", local.UTF8String, 1);
+    return local;
 }
 
 /* ------------------------------------------------------------ the game's data (OBB)
@@ -3134,7 +3133,7 @@ int main(int argc, char **argv)
         else tl_log_line("macos: no converted guest libraries in the bundle; the guest's "
                          "ELF will be translated, which needs executable memory");
         NSString *cdn = stage_cdn_tar();
-        if (cdn) tl_log_line("macos: the CDN archive is in the bundle (%s)", cdn.UTF8String);
+        if (cdn) tl_log_line("macos: the CDN fallback archive is %s", cdn.UTF8String);
 
         tl_ld_set_verbosity(getenv("TL_VERBOSE") ? atoi(getenv("TL_VERBOSE")) : 1);
         tl_jni_set_trace(getenv("TL_JNI_TRACE") ? atoi(getenv("TL_JNI_TRACE")) : 1);

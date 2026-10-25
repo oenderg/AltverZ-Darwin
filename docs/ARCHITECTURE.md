@@ -64,6 +64,11 @@ answers the few calls into those parts). The pieces that matter here:
 - **The Java contract.** The game's Java side (`AndroidGameApp`, `AndroidSurfaceView`, Nimble, ...)
   does not exist; the driver answers the ~130 methods the native code calls (config storage,
   screen size, HTTP, assets, broadcasts) with C functions (`M(APP, "Config_ConfigKeyExists", ...)`).
+- **Live content.** `husk-tl-cdn.m` uses Foundation on both platforms to fetch only the
+  Reflourished HTTPS host, with a ten-second timeout. It queues real response headers
+  (including the server Date) and unchanged gzip bytes for the driver's GL-thread
+  callbacks. A validated download updates the writable CDN cache atomically; failures
+  use that cache or the staged bundle with device-clock time. See GAME-NOTES.md.
 - **Boot order** (the game is written against Android's): libraries -> constructors -> `JNI_OnLoad`
   -> `libRFLib` init -> Nimble launch -> `Native_GameAppInitialize` -> lifecycle observer ->
   will/did finish launching -> foreground -> active.
@@ -94,7 +99,8 @@ answers the few calls into those parts). The pieces that matter here:
   download, files under `Documents/` (visible in the Files app).
 - `regress/build-macos-app.sh`, `regress/build-ios-app.sh`, `regress/build-ios-ipa.sh`: compile the
   runtime + host and assemble the bundle (converted dylibs, ANGLE, the APK, the CDN archive, the
-  OBB unless slim). `build.sh` at the top drives all of it.
+  OBB unless slim). The CDN archive in the bundle is an offline fallback; startup staging
+  preserves newer downloaded content in the data folder. `build.sh` at the top drives all of it.
 
 ## Data on disk
 

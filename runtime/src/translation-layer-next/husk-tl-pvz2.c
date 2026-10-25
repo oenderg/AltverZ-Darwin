@@ -24,6 +24,7 @@
 
 #define _DARWIN_C_SOURCE
 #include "husk-tl-pvz2.h"
+#include "husk-tl-cdn.h"
 
 #include <errno.h>
 #include <pthread.h>
@@ -672,17 +673,14 @@ static void J_get_scale(tl_jcall *c) { jvalue v; v.f = P.scale; c->ret = v; }
 static void J_asset_info(tl_jcall *c) { tl_log_line("pvz2: asset info \"%s\"", S(c->args[0].l)); c->ret = vl(NULL); }
 static void J_asset_size(tl_jcall *c) { tl_log_line("pvz2: asset size \"%s\"", S(c->args[0].l)); c->ret = vj(-1); }
 
-/* HTTP: the transaction object exists and requests fail at once, except for an
- * optional cached Reflourished CDN package. A no-op Start would leave the
- * engine waiting forever on the loading screen: on a device the transaction
- * either completes or errors, and only the engine's own callbacks move it on.
- * The main.tar is replayed from a local copy (the same body the CDN serves);
- * everything else is failed immediately. */
-typedef struct { jobj *obj; uint64_t native; char url[512]; int status; long length;
-                 unsigned char *body; size_t body_len; } http_txn;
-static struct { http_txn v[64]; int n; pthread_mutex_t mu; } HTX = { .mu = PTHREAD_MUTEX_INITIALIZER };
+/* Network workers only publish responses. The GL thread delivers the guest's
+ * callbacks between frames, so no NSURLSession thread can enter the game. */
+typedef struct { jobj *obj; uint64_t native; char url[512], method[16]; int status; long length;
+                 unsigned char *body; size_t body_len; uint64_t token;
+                 tl_cdn_response *response; bool ready; } http_txn;
+static struct { http_txn v[64]; int n; uint64_t serial; pthread_mutex_t mu; } HTX = { .mu = PTHREAD_MUTEX_INITIALIZER };
 
-static void http_put(jobj *o, uint64_t native, const char *url)
+static void http_put(jobj *o, uint64_t native, const char *url, const char *method)
 {
     pthread_mutex_lock(&HTX.mu);
     int slot = -1;
@@ -704,10 +702,14 @@ static void http_put(jobj *o, uint64_t native, const char *url)
         slot = HTX.n++;
         memset(&HTX.v[slot], 0, sizeof(HTX.v[slot]));
     } else {
-        free(HTX.v[slot].body); HTX.v[slot].body = NULL; HTX.v[slot].body_len = 0;
+        free(HTX.v[slot].body);
+        tl_cdn_response_free(HTX.v[slot].response);
+        memset(&HTX.v[slot], 0, sizeof HTX.v[slot]);
     }
     HTX.v[slot].obj = o; HTX.v[slot].native = native;
     snprintf(HTX.v[slot].url, sizeof(HTX.v[slot].url), "%s", url ? url : "");
+    snprintf(HTX.v[slot].method, sizeof HTX.v[slot].method, "%s", method && *method ? method : "GET");
+    HTX.v[slot].token = ++HTX.serial;
     HTX.v[slot].status = 0; HTX.v[slot].length = 0;
     pthread_mutex_unlock(&HTX.mu);
 }
@@ -744,17 +746,12 @@ static int http_info(jobj *o, char *url, size_t urlsz, long *length)
     pthread_mutex_unlock(&HTX.mu);
     return found;
 }
-static void http_set(jobj *o, int status, long length)
-{
-    pthread_mutex_lock(&HTX.mu);
-    for (int i = 0; i < HTX.n; i++) if (HTX.v[i].obj == o) { HTX.v[i].status = status; HTX.v[i].length = length; break; }
-    pthread_mutex_unlock(&HTX.mu);
-}
 static void http_forget(jobj *o)
 {
     pthread_mutex_lock(&HTX.mu);
     for (int i = 0; i < HTX.n; i++) if (HTX.v[i].obj == o) {
         free(HTX.v[i].body);
+        tl_cdn_response_free(HTX.v[i].response);
         HTX.v[i] = HTX.v[--HTX.n];
         /* The vacated slot must be cleared: it would otherwise keep a copy of
          * the body pointer that was just freed, and the next transaction into
@@ -764,85 +761,106 @@ static void http_forget(jobj *o)
     }
     pthread_mutex_unlock(&HTX.mu);
 }
-/* The request body, as the host has it. Only the length is handed out: the
- * pointer would be used after the lock is dropped, and the body is freed when
- * the transaction goes. */
-static size_t http_body_len(jobj *o)
+static void http_complete(uint64_t token, tl_cdn_response *response)
 {
-    size_t len = 0;
     pthread_mutex_lock(&HTX.mu);
-    for (int i = 0; i < HTX.n; i++) if (HTX.v[i].obj == o) { len = HTX.v[i].body_len; break; }
+    for (int i = 0; i < HTX.n; ++i) if (HTX.v[i].token == token) {
+        tl_cdn_response_free(HTX.v[i].response);
+        HTX.v[i].response = response;
+        HTX.v[i].ready = true;
+        pthread_mutex_unlock(&HTX.mu);
+        return;
+    }
     pthread_mutex_unlock(&HTX.mu);
-    return len;
+    /* A released or restarted transaction must not receive a late completion. */
+    tl_cdn_response_free(response);
 }
-static unsigned char *read_file(const char *path, size_t *len)
+static bool http_active(jobj *obj, uint64_t token)
 {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
-    if (n <= 0 || n > 64 * 1024 * 1024) { fclose(f); return NULL; }
-    unsigned char *buf = malloc((size_t)n);
-    if (!buf) { fclose(f); return NULL; }
-    size_t got = fread(buf, 1, (size_t)n, f); fclose(f);
-    if (got != (size_t)n) { free(buf); return NULL; }
-    *len = got;
-    return buf;
+    bool active = false;
+    pthread_mutex_lock(&HTX.mu);
+    for (int i = 0; i < HTX.n; ++i)
+        if (HTX.v[i].obj == obj && HTX.v[i].token == token) { active = true; break; }
+    pthread_mutex_unlock(&HTX.mu);
+    return active;
+}
+static void http_pump(void)
+{
+    typedef void (*cb1_fn)(void *, void *, int64_t);
+    typedef void (*cbdata_fn)(void *, void *, int64_t, void *, int32_t);
+    for (int count = 0; count < 64; ++count) {
+        jobj *obj = NULL; uint64_t native = 0, token = 0; tl_cdn_response *r = NULL;
+        pthread_mutex_lock(&HTX.mu);
+        for (int i = 0; i < HTX.n; ++i) if (HTX.v[i].ready) {
+            http_txn *t = &HTX.v[i];
+            t->ready = false; r = t->response; tl_cdn_response_retain(r);
+            obj = tl_jni_ref(t->obj); native = t->native; token = t->token;
+            t->status = r ? r->status : 0; t->length = r ? (long)r->length : 0;
+            break;
+        }
+        pthread_mutex_unlock(&HTX.mu);
+        if (!obj) break;
+        if (r) {
+            cb1_fn resp = (cb1_fn)tl_jni_native(TXN, "HttpReceivedResponse", "(J)V");
+            cbdata_fn data = (cbdata_fn)tl_jni_native(TXN, "HttpReceivedData", "(J[BI)V");
+            cb1_fn done = (cb1_fn)tl_jni_native(TXN, "HttpTransactionComplete", "(J)V");
+            if (resp) resp(tl_jni_env(), obj, (int64_t)native);
+            if (data && http_active(obj, token)) {
+                jobj *arr = tl_jni_new_prim_array('B', 16384);
+                size_t delivered = 0;
+                for (size_t off = 0; off < r->length && http_active(obj, token); off += 16384) {
+                    size_t chunk = r->length - off > 16384 ? 16384 : r->length - off;
+                    memcpy(arr->arr.data, r->body + off, chunk);
+                    data(tl_jni_env(), obj, (int64_t)native, arr, (int32_t)chunk);
+                    delivered += chunk;
+                }
+                tl_jni_unref(arr);
+                tl_log_line("pvz2: HTTP delivered %zu chunk(s) of %zu bytes to the guest on the GL thread",
+                            (delivered + 16383) / 16384, delivered);
+            }
+            if (done && http_active(obj, token)) done(tl_jni_env(), obj, (int64_t)native);
+        } else {
+            cb1_fn err = (cb1_fn)tl_jni_native(TXN, "HttpTransactionError", "(J)V");
+            if (err && native) err(tl_jni_env(), obj, (int64_t)native);
+        }
+        tl_cdn_response_free(r); tl_jni_unref(obj);
+    }
 }
 static void J_http_ctor(tl_jcall *c)
 {
     const char *url = c->args[2].l ? S(c->args[2].l) : "";
-    http_put(c->self, (uint64_t)c->args[0].j, url);
+    http_put(c->self, (uint64_t)c->args[0].j, url, S(c->args[1].l));
     tl_log_line("pvz2: HTTP transaction native=%#llx %s", (unsigned long long)c->args[0].j, url);
     c->ret = vi(0);
 }
 static void J_http_start(tl_jcall *c)
 {
-    char url[512] = ""; long length = 0;
-    http_info(c->self, url, sizeof(url), &length);
-    typedef void (*cb1_fn)(void *, void *, int64_t);
-    typedef void (*cbdata_fn)(void *, void *, int64_t, void *, int32_t);
-    uint64_t native = 0;
+    char url[512] = "", method[16] = "GET", local[700];
+    uint64_t token = 0, native = 0; unsigned char *body = NULL; size_t length = 0;
     pthread_mutex_lock(&HTX.mu);
-    for (int i = 0; i < HTX.n; i++) if (HTX.v[i].obj == c->self) { native = HTX.v[i].native; break; }
-    pthread_mutex_unlock(&HTX.mu);
-
-    const char *path = getenv("TL_PVZ2_MAIN_TAR");
-    char local[700];
-    if (!path) { snprintf(local, sizeof(local), "%s/No_Backup/1.4.2.main.tar", P.data); path = local; }
-    size_t n = 0;
-    unsigned char *body = strstr(url, "main.tar") ? read_file(path, &n) : NULL;
-    if (body) {
-        cb1_fn resp = (cb1_fn)tl_jni_native(TXN, "HttpReceivedResponse", "(J)V");
-        cbdata_fn data = (cbdata_fn)tl_jni_native(TXN, "HttpReceivedData", "(J[BI)V");
-        cb1_fn done = (cb1_fn)tl_jni_native(TXN, "HttpTransactionComplete", "(J)V");
-        tl_log_line("pvz2: HTTP callbacks resp=%p data=%p done=%p", (void *)resp, (void *)data, (void *)done);
-        http_set(c->self, 200, (long)n);
-        tl_log_line("pvz2: HTTP main.tar -> %zu bytes from %s", n, path);
-        if (resp) resp(tl_jni_env(), c->self, (int64_t)native);
-        if (data) {
-            /* Java's AndroidHttpTransaction reuses one 16 KiB byte[] for every
-             * read; do the same. */
-            jobj *arr = tl_jni_new_prim_array('B', 16384);
-            int chunks = 0;
-            for (size_t off = 0; off < n; off += 16384) {
-                size_t chunk = n - off > 16384 ? 16384 : n - off;
-                memcpy(arr->arr.data, body + off, chunk);
-                data(tl_jni_env(), c->self, (int64_t)native, arr, (int32_t)chunk);
-                chunks++;
-            }
-            /* Say how much the guest was handed: a guest that does not accumulate it
-             * writes an empty file, and this says whether the data was delivered. */
-            tl_log_line("pvz2: HTTP delivered %d chunk(s) of %zu bytes to the guest", chunks, n);
-        }
-        if (done) done(tl_jni_env(), c->self, (int64_t)native);
-        free(body);
-    } else {
-        cb1_fn err = (cb1_fn)tl_jni_native(TXN, "HttpTransactionError", "(J)V");
-        size_t body_len = http_body_len(c->self);
-        tl_log_line("pvz2: HTTP fail %s (native=%#llx)%s", url, (unsigned long long)native,
-                    body_len ? " -- and the request had a body this host cannot send" : "");
-        if (err && native) err(tl_jni_env(), c->self, (int64_t)native);
+    for (int i = 0; i < HTX.n; ++i) if (HTX.v[i].obj == c->self) {
+        http_txn *t = &HTX.v[i];
+        token = t->token = ++HTX.serial; native = t->native;
+        t->ready = false; tl_cdn_response_free(t->response); t->response = NULL;
+        snprintf(url, sizeof url, "%s", t->url); snprintf(method, sizeof method, "%s", t->method);
+        length = t->body_len;
+        if (length) { body = malloc(length); if (body) memcpy(body, t->body, length); }
+        break;
     }
+    pthread_mutex_unlock(&HTX.mu);
+    if (!tl_cdn_allowed_url(url)) {
+        typedef void (*cb1_fn)(void *, void *, int64_t);
+        cb1_fn err = (cb1_fn)tl_jni_native(TXN, "HttpTransactionError", "(J)V");
+        tl_log_line("pvz2: HTTP fail %s (outside CDN allowlist)", url);
+        if (err && native) err(tl_jni_env(), c->self, (int64_t)native);
+    } else if (length && !body) {
+        http_complete(token, NULL);
+    } else {
+        const char *path = getenv("TL_PVZ2_MAIN_TAR");
+        if (!path) { snprintf(local, sizeof local, "%s/No_Backup/1.4.2.main.tar", P.data); path = local; }
+        tl_cdn_fetch(url, method, body, length, path, token, http_complete);
+    }
+    free(body);
     c->ret = vi(0);
 }
 static void J_http_release(tl_jcall *c) { http_forget(c->self); c->ret = vi(0); }
@@ -922,11 +940,15 @@ static void J_http_statusline(tl_jcall *c) { (void)c; c->ret = vl(str("OK")); }
 static void J_http_header(tl_jcall *c)
 {
     const char *key = S(c->args[0].l);
-    long len = 0; char url[512] = ""; http_info(c->self, url, sizeof(url), &len);
-    if (!strcasecmp(key, "Content-Length")) { char b[32]; snprintf(b, sizeof(b), "%ld", len); c->ret = vl(str(b)); }
-    else if (!strcasecmp(key, "Content-Type")) c->ret = vl(str("application/x-tar"));
-    else if (!strcasecmp(key, "ETag")) c->ret = vl(str("\"8e4abd94e352d9301e15428c4021c177\""));
-    else c->ret = vl(str(""));
+    char *value = NULL;
+    pthread_mutex_lock(&HTX.mu);
+    for (int i = 0; i < HTX.n; ++i) if (HTX.v[i].obj == c->self) {
+        value = tl_cdn_header(HTX.v[i].response, key);
+        break;
+    }
+    pthread_mutex_unlock(&HTX.mu);
+    c->ret = vl(str(value ? value : ""));
+    free(value);
 }
 static void J_http_url(tl_jcall *c)
 {
@@ -3676,6 +3698,7 @@ static void *gl_main(void *arg)
             continue;
         }
         if (pump) pump(tl_jni_env(), P.view);
+        http_pump();
         nb_pump();
         draw(tl_jni_env(), P.view);
         /* The guest's own UI geometry, asked of the guest on the game's own

@@ -103,5 +103,31 @@ The runtime's made-up `/proc/meminfo` and `/proc/self/status` are not what it sh
 ## Other things that cost time
 
 - `Resources_GetAssetFileSize` must return -1 for a missing asset (0 hangs start-up).
-- The game's ContentDownloader reads the CDN archive through zlib's `gz*` functions; the archive is
-  bundled in the apps and staged into `No_Backup/1.4.2.main.tar`, so the mod's content applies offline.
+- The game's ContentDownloader reads the CDN archive through zlib's `gz*` functions. The
+  archive is gzip despite its `.tar` suffix; the HTTP bridge must pass its bytes unchanged.
+
+## Live CDN and the server clock
+
+The shared `husk-tl-cdn.m` helper fetches HTTPS requests only to
+`reflourished.ducnguyen.org` (also checked on redirects), using an ephemeral NSURLSession
+with a ten-second timeout. The worker queues status, headers and body; `husk-tl-pvz2.c`
+delivers the game's response/data/completion callbacks on its GL thread between frames,
+with the same 16 KiB data chunks as Android. Other hosts still fail immediately.
+
+**The response's `Date` is required even when the archive has not changed.** In 1.4.2,
+`0x15398fc` reads that header, parses RFC 1123 GMT, and records the server timestamp;
+`0x111b0d8` consumes it when `UseHTTPTime` is enabled. Clock state is at the singleton
+pointer `0x256a010`: server epoch +0x48, synchronization frame +0x50, device-time mode
++0x64. `0x111b26c` checks synchronization; `0x111b408` reads server time. Thymed Events
+check synchronization/device-time mode (`0x13ff3f0`); the market scheduler also uses this
+clock. Serving only the tar bytes with an empty Date leaves timed content unavailable.
+
+A successful gzip download atomically replaces `No_Backup/1.4.2.main.tar`; its real
+headers and body hash are kept in `.cdn.plist` beside it. Startup retains that cache unless
+a different bundled archive has a newer modification time. The last bundled hash in the
+sidecar prevents the same old bundle from replacing a downloaded update on every launch.
+A failed/timed-out download, invalid gzip or invalid Date falls back to the local tar,
+with a fresh **device-clock UTC Date**, so offline events follow the device clock. Cached
+headers are reused only when their body hash matches. `TL_PVZ2_CDN=offline` forces this
+path without a network request. `TL_PVZ2_MAIN_TAR` overrides the writable cache path and
+skips bundle staging, for tests with their own archive.
