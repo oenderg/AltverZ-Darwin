@@ -46,6 +46,9 @@ int tl_pvz2_keyboard_showing(void);
 /* Report a host dismissal so the guest can end its edit on the game thread. */
 void tl_pvz2_keyboard_dismissed(void);
 
+/* The host opens web links on its UI thread and reports whether launch was accepted. */
+void tl_pvz2_set_open_url_hook(bool (*fn)(const char *url));
+
 void tl_pvz2_set_paused(bool paused);
 
 /* The surface is a new size: the guest is told, the way Android tells it when

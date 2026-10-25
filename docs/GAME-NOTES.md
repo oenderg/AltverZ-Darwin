@@ -56,6 +56,20 @@ to and owns persistence. Existing saves keep their stored PCPID and quest IDs,
 including IDs made by the old constant stub; there is no identity migration.
 `TL_JNI_TRACE=2` logs generated UUIDs for testing.
 
+## Web links
+
+`Web_SysOpenURL` calls a host hook: AppKit's `NSWorkspace openURL:` on Mac,
+UIKit's `openURL:options:completionHandler:` on iOS, on the main thread. Only
+valid HTTP(S) URLs are accepted. The game's Help and legal URLs use those schemes;
+email intents are a separate Java path, so this hook does not accept `mailto`.
+`TL_PVZ2_OPEN_URL=log` validates and logs without opening another app.
+
+The JNI result is false for refused URLs, failed launches or exceptions. The APK
+actually returns true even in its catch block; the host deliberately reports those
+failures. On iOS, true means the handler exists and the request was submitted;
+a later UIKit completion failure is logged. Waiting for that completion would
+hold up the guest while the main thread asks it to save on backgrounding.
+
 ## Profile name input
 
 Android's `EditInputConnection` queues text records through `UI_ProcessEvents`: type 6,

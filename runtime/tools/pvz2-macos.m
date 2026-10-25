@@ -47,6 +47,14 @@
 #include "husk-tl-cdn.h"
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
+#include "pvz2-open-url.h"
+
+static bool open_game_url(const char *url)
+{
+    return pvz2_open_url(url, ^BOOL(NSURL *target) {
+        return [NSWorkspace.sharedWorkspace openURL:target];
+    });
+}
 
 static tl_ga_config config;
 static atomic_bool ready;
@@ -2728,6 +2736,7 @@ static void start_updater(void)
     /* The guest's keyboard. On iOS the host has to invent one; here the hardware is
      * the keyboard, and this is what tells the driver that the guest asked for it. */
     tl_pvz2_set_keyboard_hook(keyboard_shown);
+    tl_pvz2_set_open_url_hook(open_game_url);
 
     /* The display's own maximum: the game's "Target 60 FPS" switch asks the
      * host for a rate, and the host answers with what the screen can show --

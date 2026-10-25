@@ -261,6 +261,15 @@ static void J_hide_keyboard(tl_jcall *c)
 }
 static void J_keyboard_showing(tl_jcall *c) { c->ret = vz(atomic_load(&g_keyboard_up)); }
 
+static bool (*g_open_url_hook)(const char *url);
+void tl_pvz2_set_open_url_hook(bool (*fn)(const char *url)) { g_open_url_hook = fn; }
+static void J_open_url(tl_jcall *c)
+{
+    const char *url = S(c->args[0].l);
+    if (!g_open_url_hook) tl_log_line("pvz2: open URL %s refused (no host handler)", url);
+    c->ret = vz(g_open_url_hook && g_open_url_hook(url));
+}
+
 /* AndroidHttpProxy.GetNetworkStatus: 0 none, 1 mobile, 2 Wi-Fi.  The title
  * polls this every frame and keeps waiting while it reads 0, so report a
  * connected device (TL_PVZ2_NET overrides it). */
@@ -1339,7 +1348,7 @@ static const tl_jhle k_hle[] = {
     M(APP, "Info_SysGetUserLocale", J_locale),
     M(APP, "Info_SysGetCountryCodeString", J_country),
     M(APP, "Info_SysGetIntentExtraDataString", J_empty),
-    M(APP, "Web_SysOpenURL", J_true),
+    M(APP, "Web_SysOpenURL", J_open_url),
     M(APP, "Config_ConfigKeyExists", J_config_exists),
     M(APP, "Config_ConfigEraseKey", J_config_erase),
     M(APP, "Config_ConfigReadString", J_config_read_str),

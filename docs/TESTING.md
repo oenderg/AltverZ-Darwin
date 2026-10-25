@@ -22,6 +22,7 @@ What it sets (you can set these yourself when running the binary by hand):
 |---|---|
 | `TL_DATA` | the data folder (default: `~/Library/Application Support/PvZ2 Reflourished`) |
 | `TL_PVZ2_CDN=offline` | skip CDN networking and replay the local archive with a fresh device-clock UTC Date |
+| `TL_PVZ2_OPEN_URL=log` | validate game web links and log `pvz2: open URL <url> (test: not opened)` without opening another app; use for every automated link test |
 | `TL_PVZ2_MAIN_TAR` | override the writable CDN cache path; skips bundle staging (use a test copy) |
 | `TL_PVZ2_FRAMES`, `TL_PVZ2_FRAME_EVERY` | save only this app's rendered frame as `latest.bmp` in an existing directory, every N frames; works with the lid closed |
 | `TL_PVZ2_LOG` | where the log goes |
@@ -38,6 +39,18 @@ What it sets (you can set these yourself when running the binary by hand):
 Launch arguments after `--` override the app's settings for that run only, without changing them:
 `-resizeMode Fixed|Adapt`, `-fixedAspect display|game|16:9|...`, `-renderSharp YES|NO`,
 `-closeAction quit|pause`, `-confirmQuit NO`. Pass them in tests: your own settings may differ.
+
+## Web links
+
+Game web links must be tested with `TL_PVZ2_OPEN_URL=log` so another app never
+opens or takes focus. Settings → Help should log its real HTTP(S) URL and
+`(test: not opened)`. Scheme rejection, failed/throwing openers and UI-thread
+dispatch can be checked without opening any external app:
+
+```sh
+clang -fobjc-arc runtime/tools/regress/test-open-url.m -framework Foundation -o /tmp/test-open-url
+/tmp/test-open-url
+```
 
 ## CDN paths
 

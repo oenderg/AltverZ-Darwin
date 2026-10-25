@@ -44,6 +44,21 @@
 #include "husk-tl-cdn.h"
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
+#include "pvz2-open-url.h"
+
+static bool open_game_url(const char *url)
+{
+    return pvz2_open_url(url, ^BOOL(NSURL *target) {
+        UIApplication *app = UIApplication.sharedApplication;
+        if (![app canOpenURL:target]) return NO;
+        /* UIKit completes asynchronously; the JNI result reports accepted submission
+         * so the guest can save when opening a link backgrounds the app. */
+        [app openURL:target options:@{} completionHandler:^(BOOL success) {
+            if (!success) tl_log_line("pvz2: open URL %s failed (iOS completion)", target.absoluteString.UTF8String);
+        }];
+        return YES;
+    });
+}
 
 /* ===================== BEGIN AOT-DYLIB-LOADER TEST ============================
  * Delete everything from here to the END marker to revert. Nothing below changes
@@ -1067,6 +1082,7 @@ static void keyboard_install(UIView *view)
     [[NSNotificationCenter defaultCenter] addObserver:delegate selector:@selector(keyboardWillHide:)
                                                  name:UIKeyboardWillHideNotification object:nil];
     tl_pvz2_set_keyboard_hook(keyboard_shown);
+    tl_pvz2_set_open_url_hook(open_game_url);
 }
 
 /* The simulator script exercises the same delegate as keyboard input. UIKit's
