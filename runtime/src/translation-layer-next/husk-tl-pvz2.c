@@ -36,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -82,6 +83,10 @@ void *tl_nwindow_get(void);
 #define PLAYL "com/popcap/SexyAppFramework/GooglePlay/GooglePlayLeaderboard"
 #define NOTIF "com/popcap/SexyAppFramework/AndroidNotification"
 #define UIEV "com/popcap/SexyAppFramework/AndroidUIEventManager"
+
+/* These are the package fields read by AndroidGameApp from the pinned APK. */
+#define PVZ2_ANDROID_VERSION_CODE 675
+#define PVZ2_ANDROID_VERSION_NAME "1.4.0"
 
 #define OBB_NAME "main.675." PKG ".obb"
 
@@ -381,7 +386,16 @@ static void J_set_framerate(tl_jcall *c)
     atomic_store(&P.asked_fps, asked);
     atomic_store(&P.target_fps, target);
 }
-static void J_product_version(tl_jcall *c) { (void)c; c->ret = vl(str("1")); }
+static void J_product_version(tl_jcall *c)
+{
+    c->ret = vi(PVZ2_ANDROID_VERSION_CODE);
+    tl_log_line("pvz2: Android package version code -> %d", PVZ2_ANDROID_VERSION_CODE);
+}
+static void J_product_version_string(tl_jcall *c)
+{
+    c->ret = vl(str(PVZ2_ANDROID_VERSION_NAME));
+    tl_log_line("pvz2: Android package version name -> %s", PVZ2_ANDROID_VERSION_NAME);
+}
 static void J_package(tl_jcall *c) { (void)c; c->ret = vl(str(PKG)); }
 static void J_activity_name(tl_jcall *c) { (void)c; c->ret = vl(str(ACT2)); }
 static void J_locale(tl_jcall *c) { (void)c; c->ret = vl(str("en_US")); }
@@ -733,9 +747,35 @@ static void J_process_events(tl_jcall *c)
         tl_log_line("pvz2: UI_ProcessEvents call %d -> %u event(s)", calls, count);
     c->ret = vz(count != 0);
 }
-static void J_blocks(tl_jcall *c) { (void)c; c->ret = vj(1000000); }
-static void J_blocks_free(tl_jcall *c) { (void)c; c->ret = vj(500000); }
-static void J_block_size(tl_jcall *c) { (void)c; c->ret = vj(4096); }
+static bool pvz2_data_statfs(struct statfs *info)
+{
+    const char *dir = tl_data_dir();
+    if (!dir || !*dir || statfs(dir, info) != 0) {
+        tl_log_line("pvz2: filesystem stat failed for game data (errno=%d)", errno);
+        return false;
+    }
+    static atomic_bool logged;
+    if (!atomic_exchange(&logged, true))
+        tl_log_line("pvz2: game-data filesystem blocks=%llu available=%llu block-size=%llu bytes",
+                    (unsigned long long)info->f_blocks, (unsigned long long)info->f_bavail,
+                    (unsigned long long)info->f_bsize);
+    return true;
+}
+static void J_blocks(tl_jcall *c)
+{
+    struct statfs info;
+    c->ret = vj(pvz2_data_statfs(&info) ? (int64_t)info.f_blocks : -1);
+}
+static void J_blocks_free(tl_jcall *c)
+{
+    struct statfs info;
+    c->ret = vj(pvz2_data_statfs(&info) ? (int64_t)info.f_bavail : -1);
+}
+static void J_block_size(tl_jcall *c)
+{
+    struct statfs info;
+    c->ret = vj(pvz2_data_statfs(&info) ? (int64_t)info.f_bsize : -1);
+}
 
 static void J_holder(tl_jcall *c) { (void)c; c->ret = vl(P.holder); }
 static void J_surface(tl_jcall *c) { (void)c; c->ret = vl(P.surface); }
@@ -1879,7 +1919,7 @@ static const tl_jhle k_hle[] = {
     M(APP, "Diag_GetOSVersion", J_os_version),
     M(APP, "Util_GetUUIDString", J_uuid),
     M(APP, "Info_SysGetProductVersion", J_product_version),
-    M(APP, "Info_SysGetProductVersionString", J_empty),
+    M(APP, "Info_SysGetProductVersionString", J_product_version_string),
     M(APP, "Info_SysGetUserCurrencySymbol", J_currency_symbol),
     M(APP, "Info_SysGetUserCurrencyCode", J_currency_code),
     M(APP, "Info_SysGetPackageName", J_package),
@@ -2402,6 +2442,17 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
       snprintf(d, sizeof(d), "%s/sdcard/Android/obb/%s", P.data, PKG); mkdirs(d); }
 
     tl_set_data_dir(P.data);
+    tl_log_line("pvz2: Info_SysGetProductVersion()I -> %d", PVZ2_ANDROID_VERSION_CODE);
+    tl_log_line("pvz2: Info_SysGetProductVersionString() -> %s", PVZ2_ANDROID_VERSION_NAME);
+    struct statfs startup_fs;
+    if (pvz2_data_statfs(&startup_fs)) {
+        tl_log_line("pvz2: Resources_GetFileSystemBlockCount -> %llu",
+                    (unsigned long long)startup_fs.f_blocks);
+        tl_log_line("pvz2: Resources_GetFileSystemBlocksFree -> %llu",
+                    (unsigned long long)startup_fs.f_bavail);
+        tl_log_line("pvz2: Resources_GetFileSystemBlockSize -> %llu bytes",
+                    (unsigned long long)startup_fs.f_bsize);
+    }
     cfg_load();
     tl_nwindow_configure(P.w, P.h, cfg->metal_layer);
     int n = tl_dexidx_open(P.apk);

@@ -166,6 +166,10 @@ The runtime's made-up `/proc/meminfo` and `/proc/self/status` are not what it sh
 - The game's ContentDownloader reads the CDN archive through zlib's `gz*` functions. The
   archive is gzip despite its `.tar` suffix; the HTTP bridge must pass its bytes unchanged.
 
+Android's package metadata in the pinned APK is version code `675`, version name `1.4.0` (separate
+from the mod's `VERSION`). File-system resource getters return block count, available blocks and
+block size for the volume containing the app data, matching Android `StatFs` units.
+
 ## Live CDN and the server clock
 
 The shared `husk-tl-cdn.m` helper fetches HTTPS requests only to
