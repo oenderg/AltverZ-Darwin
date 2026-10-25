@@ -5,6 +5,11 @@
 #import <Foundation/Foundation.h>
 #import <TargetConditionals.h>
 #import <UserNotifications/UserNotifications.h>
+#if TARGET_OS_IPHONE
+#import <UIKit/UIKit.h>
+#else
+#import <AppKit/AppKit.h>
+#endif
 
 #include "husk-tl-pvz2.h"
 
@@ -55,8 +60,17 @@ static void pvz2_notifications_app_became_active(void);
 static dispatch_queue_t pvz2_notification_queue;
 static NSMutableDictionary<NSNumber *, NSDictionary *> *pvz2_pending_reminders;
 static NSMutableDictionary<NSString *, NSString *> *pvz2_channel_sounds;
+static NSMutableSet<NSNumber *> *pvz2_logged_dropped_repeats;
 static PVZ2NotificationDelegate *pvz2_notification_delegate;
-static BOOL pvz2_permission_requested, pvz2_permission_resolved, pvz2_permission_granted;
+static BOOL pvz2_permission_requested, pvz2_permission_status_loaded;
+static BOOL pvz2_permission_resolved, pvz2_permission_granted;
+static NSUInteger pvz2_adds_in_flight;
+#if TARGET_OS_IPHONE
+static UIBackgroundTaskIdentifier pvz2_background_task;
+#endif
+
+static void pvz2_drain_reminders(void);
+static void pvz2_request_authorization_if_needed(void);
 
 static void pvz2_notifications_init(void)
 {
@@ -65,8 +79,44 @@ static void pvz2_notifications_init(void)
         pvz2_notification_queue = dispatch_queue_create("io.reflourished.pvz2.notifications", DISPATCH_QUEUE_SERIAL);
         pvz2_pending_reminders = [NSMutableDictionary dictionary];
         pvz2_channel_sounds = [NSMutableDictionary dictionary];
+        pvz2_logged_dropped_repeats = [NSMutableSet set];
+#if TARGET_OS_IPHONE
+        pvz2_background_task = UIBackgroundTaskInvalid;
+#endif
         pvz2_notification_delegate = [PVZ2NotificationDelegate new];
         UNUserNotificationCenter.currentNotificationCenter.delegate = pvz2_notification_delegate;
+        [UNUserNotificationCenter.currentNotificationCenter getNotificationSettingsWithCompletionHandler:
+            ^(UNNotificationSettings *settings) {
+                dispatch_async(pvz2_notification_queue, ^{
+                    UNAuthorizationStatus status = settings.authorizationStatus;
+                    BOOL granted = status == UNAuthorizationStatusAuthorized ||
+                                   status == UNAuthorizationStatusProvisional;
+#if TARGET_OS_IPHONE
+                    if (@available(iOS 14.0, *))
+                        granted = granted || status == UNAuthorizationStatusEphemeral;
+#endif
+                    pvz2_permission_status_loaded = YES;
+                    if (granted) {
+                        pvz2_permission_resolved = YES;
+                        pvz2_permission_granted = YES;
+                        tl_log_line("pvz2: notification permission already granted at launch");
+                        pvz2_drain_reminders();
+                    } else if (status == UNAuthorizationStatusDenied) {
+                        pvz2_permission_resolved = YES;
+                        pvz2_permission_granted = NO;
+                        tl_log_line("pvz2: notification permission was denied before launch");
+                        pvz2_drain_reminders();
+                    } else if (status == UNAuthorizationStatusNotDetermined) {
+                        pvz2_request_authorization_if_needed();
+                    } else {
+                        pvz2_permission_resolved = YES;
+                        pvz2_permission_granted = NO;
+                        tl_log_line("pvz2: notification permission has an unsupported status (%ld); reminders will not be scheduled",
+                                    (long)status);
+                        pvz2_drain_reminders();
+                    }
+                });
+            }];
     });
 }
 
@@ -121,11 +171,50 @@ static void pvz2_add_request(NSDictionary *reminder, NSString *kind, UNNotificat
     NSInteger identifier = [reminder[@"id"] integerValue];
     UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:pvz2_request_id(identifier, kind)
         content:pvz2_content(reminder) trigger:trigger];
+    pvz2_adds_in_flight++;
     [UNUserNotificationCenter.currentNotificationCenter addNotificationRequest:request
         withCompletionHandler:^(NSError *error) {
-            if (error) tl_log_line("pvz2: reminder %ld failed to reach UserNotifications (%s)",
-                                   (long)identifier, error.localizedDescription.UTF8String);
+            dispatch_async(pvz2_notification_queue, ^{
+                if (error) tl_log_line("pvz2: reminder %ld failed to reach UserNotifications (%s)",
+                                       (long)identifier, error.localizedDescription.UTF8String);
+                if (pvz2_adds_in_flight) pvz2_adds_in_flight--;
+#if TARGET_OS_IPHONE
+                if (!pvz2_adds_in_flight && pvz2_background_task != UIBackgroundTaskInvalid) {
+                    UIBackgroundTaskIdentifier task = pvz2_background_task;
+                    pvz2_background_task = UIBackgroundTaskInvalid;
+                    dispatch_sync(dispatch_get_main_queue(), ^{
+                        [UIApplication.sharedApplication endBackgroundTask:task];
+                    });
+                    tl_log_line("pvz2: background notification scheduling finished");
+                }
+#endif
+            });
         }];
+}
+
+static void pvz2_begin_background_task_if_needed(void)
+{
+#if TARGET_OS_IPHONE
+    if (pvz2_background_task != UIBackgroundTaskInvalid) return;
+    __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        UIApplication *application = UIApplication.sharedApplication;
+        task = [application beginBackgroundTaskWithName:@"PVZ2 reminder scheduling"
+            expirationHandler:^{
+                dispatch_async(pvz2_notification_queue, ^{
+                    if (pvz2_background_task != task) return;
+                    pvz2_background_task = UIBackgroundTaskInvalid;
+                    dispatch_sync(dispatch_get_main_queue(), ^{
+                        [UIApplication.sharedApplication endBackgroundTask:task];
+                    });
+                    tl_log_line("pvz2: background notification scheduling time expired");
+                });
+            }];
+    });
+    pvz2_background_task = task;
+    if (task == UIBackgroundTaskInvalid)
+        tl_log_line("pvz2: could not begin a background task for notification scheduling");
+#endif
 }
 
 static void pvz2_schedule_authorized(NSDictionary *reminder)
@@ -140,18 +229,15 @@ static void pvz2_schedule_authorized(NSDictionary *reminder)
     NSTimeInterval delay = ((NSTimeInterval)fireTimeMs / 1000.0) - NSDate.date.timeIntervalSince1970;
     UNNotificationTrigger *first = delay < 1.0 ?
         [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:1 repeats:NO] : pvz2_absolute_trigger(fireTimeMs);
+    pvz2_begin_background_task_if_needed();
     pvz2_add_request(reminder, @"first", first);
 
     if (interval > 0) {
-        if (interval < 60) {
-            tl_log_line("pvz2: reminder %ld repeat interval %ld s is below Apple's 60 s repeating-trigger minimum; only the first fire is scheduled",
+        NSNumber *key = @(identifier);
+        if (![pvz2_logged_dropped_repeats containsObject:key]) {
+            [pvz2_logged_dropped_repeats addObject:key];
+            tl_log_line("pvz2: reminder %ld repeat interval %ld s was dropped; UserNotifications cannot repeat from this absolute first-fire time",
                         (long)identifier, (long)interval);
-        } else {
-            NSTimeInterval firstRepeatDelay = MAX((NSTimeInterval)interval,
-                delay + (NSTimeInterval)interval);
-            UNNotificationTrigger *repeat = [UNTimeIntervalNotificationTrigger
-                triggerWithTimeInterval:firstRepeatDelay repeats:YES];
-            pvz2_add_request(reminder, @"repeat", repeat);
         }
     }
 }
@@ -180,7 +266,8 @@ static BOOL pvz2_application_is_active(void)
 
 static void pvz2_request_authorization_if_needed(void)
 {
-    if (pvz2_permission_resolved || pvz2_permission_requested || !pvz2_pending_reminders.count ||
+    if (!pvz2_permission_status_loaded || pvz2_permission_resolved || pvz2_permission_requested ||
+        !pvz2_pending_reminders.count ||
         !pvz2_application_is_active()) return;
     pvz2_permission_requested = YES;
     [UNUserNotificationCenter.currentNotificationCenter requestAuthorizationWithOptions:
