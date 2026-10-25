@@ -38,7 +38,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # the tags: the release notes list the changes since the previous one
 
@@ -149,7 +149,7 @@ jobs:
 
       - name: Publish the release
         if: github.event.inputs.publish == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.metadata.outputs.tag }}
           name: "Reflourished-Darwin ${{ steps.metadata.outputs.version }} · PvZ2: Reflourished ${{ steps.metadata.outputs.game }}"
