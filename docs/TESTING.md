@@ -61,6 +61,45 @@ clang -fobjc-arc runtime/tools/regress/test-open-url.m -framework Foundation -o 
 /tmp/test-open-url
 ```
 
+## Import/Export
+
+The game's rows are in title Settings -> Import/Export Files (scroll the settings list to the
+bottom; on a 4:3 window the row is under the performance switches). For a scripted run, two
+environment switches replace only the panel, never the copy:
+
+| Variable | Meaning |
+|---|---|
+| `TL_PVZ2_PICK=<file>` | every import answers with this file, as if the player chose it |
+| `TL_PVZ2_PICK_OUT=<dir>` | every export writes its file or zip into this folder |
+
+Both are inert unless set. Without them the real `NSOpenPanel`/`NSSavePanel` or
+`UIDocumentPickerViewController` is shown, so a normal run always gets the panel.
+
+The log names the operation and both paths, for example
+`pvz2: file picker: exported No_Backup/pp.dat -> .../pp_20261025_183555.dat (9739 bytes)`,
+`pvz2: file picker: imported ... -> .../No_Backup/pp.dat.imported (9739 bytes)` and
+`pvz2: file picker: unzipped ... into .../No_Backup (3 files)`.
+
+What to check:
+
+- **Export Save**: `cmp` the exported `.dat` with
+  `data/sdcard/Android/data/com.ea.game.pvz2_rfl/files/No_Backup/pp.dat` in the same run.
+- **Export Quests**: `unzip -l` the `.zip`; it starts with `activequests/` and its files.
+- **Import Save**: import another profile's `pp.dat`, quit, then start the same data folder
+  again. The next start logs that it read `pp.dat.imported`, and the title shows the imported
+  profile. The imported file is consumed and a new `pp.dat` is written.
+- **Import Quests**: import the exported zip; unzip it elsewhere and `diff -r` the two
+  `activequests` folders (the game may rewrite its quest save on exit, so compare right after
+  the import or use the log's file count).
+- **Import Level**: import any JSON; it lands byte-identical at
+  `No_Backup/CDN.1.4.2/levels/egypt1.json`. No valid level JSON ships with the repo, so the
+  file placement is what a Mac test can show.
+
+On the iOS Simulator, install the app with an OBB and a save, launch with `SIMCTL_CHILD_`
+versions of the switches, and capture the picker with `xcrun simctl io booted screenshot`.
+The Files sheet takes a few seconds to appear; `TL_PVZ2_NOTIFY=log` keeps the notification
+permission alert out of the picture.
+
 ## CDN paths
 
 Use a full test build and a copied save. An online launch should log

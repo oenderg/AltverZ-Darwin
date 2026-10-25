@@ -86,6 +86,14 @@ answers the few calls into those parts). The pieces that matter here:
   tapping a reminder makes its `data.fields` available to the game's intent getter. The Mac host
   installs no hooks on purpose (reminders are a phone habit): it never asks and never schedules,
   and the driver keeps the data as Android does when notifications are not allowed.
+- **Import/Export.** Reflourished's `FilePickerHelper` calls cross a host hook
+  (`runtime/tools/pvz2-file-picker.h`). The shared driver (`husk-tl-pvz2-picker.c`) maps
+  Android's external-files paths into the data folder, queues the work on its own worker so
+  the game keeps drawing, and copies, zips (zlib) or unzips (the runtime's zip reader). The
+  Mac host shows `NSOpenPanel`/`NSSavePanel` as a sheet on the game window; the iOS host
+  shows `UIDocumentPickerViewController`. The host answers with a path or NULL for cancel.
+  `TL_PVZ2_PICK` and `TL_PVZ2_PICK_OUT` answer without a panel for scripted tests. See
+  GAME-NOTES.md for the five calls and their paths.
 - **Input.** Touches and text go into the game's own input queue (`UI_ProcessEvents`), as Android's
   view would deliver them. The keyboard features call the game's own functions instead of faking
   taps: seed packet pick, shovel, collect suns and coins, pause/resume; each is refused unless a

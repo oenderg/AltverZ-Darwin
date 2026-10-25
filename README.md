@@ -36,6 +36,7 @@ and the mod's own content built in.
 * **A real app**
   * Full screen, with sound, saves and the mod's own content built in.
   * Leaving the app pauses the game; coming back shows its pause menu.
+  * Import/Export saves, quests and levels through the game's own menu.
 * **Unlocked frame rate**
   * The game runs at your display's refresh rate: 120 Hz on ProMotion displays.
 * **Touch, mouse and trackpad** work as on Android.

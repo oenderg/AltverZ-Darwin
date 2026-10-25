@@ -83,6 +83,7 @@ void *tl_nwindow_get(void);
 #define PLAYL "com/popcap/SexyAppFramework/GooglePlay/GooglePlayLeaderboard"
 #define NOTIF "com/popcap/SexyAppFramework/AndroidNotification"
 #define UIEV "com/popcap/SexyAppFramework/AndroidUIEventManager"
+#define FP "FilePickerHelper"
 
 /* These are the package fields read by AndroidGameApp from the pinned APK. */
 #define PVZ2_ANDROID_VERSION_CODE 675
@@ -360,6 +361,14 @@ static void J_cloud_silent_sync(tl_jcall *c)
 
 static void J_obb_path(tl_jcall *c) { (void)c; tl_log_line("pvz2: OBB path asked for: %s", P.obb_guest); c->ret = vl(str(P.obb_guest)); }
 static void J_data_folder(tl_jcall *c) { (void)c; c->ret = vl(str(P.files_guest)); }
+
+/* Reflourished's Import/Export menu.  Android posts each of these to its UI
+ * thread and returns; the driver queues the same request for its own worker. */
+static void J_fp_import_file(tl_jcall *c) { tl_pvz2_file_picker_import_file(S(c->args[0].l)); }
+static void J_fp_import_file_to_dir(tl_jcall *c) { tl_pvz2_file_picker_import_file_to_dir(S(c->args[0].l)); }
+static void J_fp_export_file(tl_jcall *c) { tl_pvz2_file_picker_export_file(S(c->args[0].l)); }
+static void J_fp_export_folder(tl_jcall *c) { tl_pvz2_file_picker_export_folder(S(c->args[0].l)); }
+static void J_fp_import_zip(tl_jcall *c) { tl_pvz2_file_picker_import_zip(S(c->args[0].l)); }
 
 static void J_uuid(tl_jcall *c)
 {
@@ -1949,6 +1958,14 @@ static const tl_jhle k_hle[] = {
     M(APP, "Config_ConfigWriteInteger", J_config_write_int),
     M(APP, "Config_ConfigWriteBoolean", J_config_write_bool),
 
+    /* The mod's file picker, answered by the host's own document or save panel. */
+    M(FP, "setActivity", J_void),
+    M(FP, "importFile", J_fp_import_file),
+    M(FP, "importFileToDir", J_fp_import_file_to_dir),
+    M(FP, "exportFile", J_fp_export_file),
+    M(FP, "exportFolder", J_fp_export_folder),
+    M(FP, "importZip", J_fp_import_zip),
+
     /* The view: sizes and the surface the engine draws into. */
     M(VIEW, "Graphics_GetScreenSizeInPixels", J_screen_size),
     M(VIEW, "Graphics_GetScreenSizeInPoints", J_screen_size),
@@ -2450,6 +2467,7 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
     snprintf(P.obb_host, sizeof(P.obb_host), "%s/sdcard/Android/obb/%s/%s", P.data, PKG, OBB_NAME);
     { char d[900];
       snprintf(d, sizeof(d), "%s/sdcard/Android/data/%s/files", P.data, PKG); mkdirs(d);
+      tl_pvz2_file_picker_configure(d);
       snprintf(d, sizeof(d), "%s/sdcard/Android/data/%s/cache", P.data, PKG); mkdirs(d);
       snprintf(d, sizeof(d), "%s/sdcard/Android/obb/%s", P.data, PKG); mkdirs(d); }
 

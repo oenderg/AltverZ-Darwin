@@ -102,6 +102,51 @@ to `nimble-persistence.tsv` in the host data folder with atomic replacement, and
 original Java types at the next process start. `setEncryption` remains a no-op, as in the port
 before persistence was added.
 
+## Import/Export (FilePickerHelper)
+
+The title's Settings -> Import/Export Files menu calls five static methods on
+`FilePickerHelper` through JNI. Android posts each call to its UI thread, opens the system
+document picker and returns. The port queues the same request for a worker
+(`husk-tl-pvz2-picker.c`), so the game keeps drawing, and the host presents its own picker
+(`NSOpenPanel`/`NSSavePanel` on the Mac, `UIDocumentPickerViewController` on iPhone and iPad).
+
+The paths are the ones libRFLib passes, relative to Android's
+`getExternalFilesDir(null)`. Here that is
+`<data>/sdcard/Android/data/com.ea.game.pvz2_rfl/files`.
+
+| Menu row | Call | Path |
+|---|---|---|
+| Import Save | `importFile` | `No_Backup/pp.dat.imported` (the chosen file is copied there) |
+| Export Save | `exportFile` | `No_Backup/pp.dat` (suggested name `pp_<timestamp>.dat`) |
+| Import Quests | `importZip` | `No_Backup` (the zip's entries are extracted there) |
+| Export Quests | `exportFolder` | `No_Backup/activequests` (zipped, suggested `activequests_<timestamp>.zip`, entries `activequests/...`) |
+| Import Level | `importFile` | `No_Backup/CDN.1.4.2/levels/egypt1.json` |
+
+Import Quests follows Android's `importZipToDir`: for each top-level name in the zip it
+deletes that name under `No_Backup` before extracting, so a quests backup replaces
+`activequests` rather than merging into it. Entries with a `..` component or a backslash are
+skipped with a log line; a leading slash is treated as relative to `No_Backup`, as Android's
+`new File(parent, child)` does.
+
+After an import:
+
+- **Save.** The profile loader in libRFLib (`libRFLib+0x404b44`) looks for
+  `<save>.imported`, then `<save>`, then `<save>.bak`. `pp.dat.imported` therefore wins over
+  the current `pp.dat` at the next load. It is not reloaded into a running title screen:
+  the game reads it at the next start, then consumes it and writes a fresh `pp.dat` and
+  `pp.dat.bak`. Restarting (or closing and reopening the app) shows the imported profile.
+- **Quests.** The files are on disk as soon as the copy finishes; the game reads them when
+  it next loads its quest state. Importing while the title is open does not rebuild the
+  open quest UI by itself.
+- **Level.** `egypt1.json` is a level override for Egypt level 1. The game reads the JSON
+  when that level is loaded. The test data and the pinned APK contain no JSON level to
+  show, and the schema is not documented in the repo, so the port proves the byte-exact
+  placement only.
+
+The suggested export name and the zip format match Android's `SimpleDateFormat`
+(`yyyyMMdd_HHmmss`) and `ZipOutputStream`: directories have their own entries, files are
+deflated when that is smaller and stored otherwise, and names are UTF-8.
+
 ## Web links
 
 `Web_SysOpenURL` calls a host hook: AppKit's `NSWorkspace openURL:` on Mac,

@@ -46,6 +46,7 @@
 #include "pvz2-keys.h"
 #include "pvz2-open-url.h"
 #include "pvz2-notifications.h"
+#include "pvz2-file-picker.h"
 
 static bool open_game_url(const char *url)
 {
@@ -1890,6 +1891,7 @@ static NSDictionary *obb_info(void)
             self.window.bounds.size.width, self.window.bounds.size.height);
     PVZ2ViewController *vc = [PVZ2ViewController new];
     g_root_vc = vc;
+    pvz2_file_picker_install(vc);
     self.window.rootViewController = vc;
     [self.window makeKeyAndVisible];
     [self watchOrientation];

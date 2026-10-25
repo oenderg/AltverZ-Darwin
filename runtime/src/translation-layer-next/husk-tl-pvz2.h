@@ -77,6 +77,38 @@ void tl_pvz2_set_notification_hooks(const tl_pvz2_notification_hooks *hooks);
 void tl_pvz2_clear_intent_extra_data(void);
 void tl_pvz2_set_intent_extra_data(const char *key, const char *value);
 
+/* The game's Import/Export menu (FilePickerHelper).  Android posts the picker
+ * to the UI thread and returns; the driver does the same: the request is queued
+ * on a worker and the game keeps drawing.  The host presents its own picker
+ * and calls tl_pvz2_file_picker_answer() with the chosen path, or NULL when the
+ * player cancels.  For exports the driver writes the file (or zip) first and
+ * passes its path as `prepared`; the host copies it where the player wants, or
+ * gives that path straight back if its picker (iOS) already exported it. */
+enum {
+    TL_PVZ2_PICK_IMPORT_FILE = 0,
+    TL_PVZ2_PICK_IMPORT_TO_DIR = 1,
+    TL_PVZ2_PICK_EXPORT_FILE = 2,
+    TL_PVZ2_PICK_EXPORT_FOLDER = 3,
+    TL_PVZ2_PICK_IMPORT_ZIP = 4,
+};
+
+typedef struct {
+    void (*open)(int kind, const char *internal_path, const char *suggested_name,
+                 const char *prepared_path);
+} tl_pvz2_file_picker_hooks;
+
+void tl_pvz2_set_file_picker_hooks(const tl_pvz2_file_picker_hooks *hooks);
+void tl_pvz2_file_picker_answer(const char *path);
+
+/* Test bypass, inert unless the variables are set: TL_PVZ2_PICK answers every
+ * import with that file, TL_PVZ2_PICK_OUT writes every export there. */
+void tl_pvz2_file_picker_configure(const char *files_dir);
+void tl_pvz2_file_picker_import_file(const char *name);
+void tl_pvz2_file_picker_import_file_to_dir(const char *dir);
+void tl_pvz2_file_picker_export_file(const char *source);
+void tl_pvz2_file_picker_export_folder(const char *folder);
+void tl_pvz2_file_picker_import_zip(const char *dest_parent);
+
 void tl_pvz2_set_paused(bool paused);
 
 /* The surface is a new size: the guest is told, the way Android tells it when

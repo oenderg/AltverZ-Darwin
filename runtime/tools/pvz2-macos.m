@@ -48,6 +48,7 @@
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
 #include "pvz2-open-url.h"
+#include "pvz2-file-picker.h"
 
 static bool open_game_url(const char *url)
 {
@@ -2718,6 +2719,7 @@ static void start_updater(void)
         }];
     }
     g_window = self.window;
+    pvz2_file_picker_install(self.window);
     self.window.contentView = view;
     if (!background_launch() && !placed) [self.window center];
     if (background_launch()) {
