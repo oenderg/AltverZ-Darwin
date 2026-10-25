@@ -3177,6 +3177,9 @@ static void guest_collect_sun(void)
 #define GUEST_FAST_FORWARD_STATE   0x19a
 #define PVZ2_POWERUP_STEP          98.0
 #define PVZ2_POWERUP_WIDTH         73.0
+#define PVZ2_POWERUP_HEIGHT        73.0
+#define PVZ2_POWERUP_FIRST_X       19.0
+#define PVZ2_POWERUP_FIRST_Y       2.0
 
 static int g_plant_food_touch_down, g_plant_food_touch_x, g_plant_food_touch_y;
 static int g_powerup_touch_down, g_powerup_touch_x, g_powerup_touch_y;
@@ -3261,10 +3264,14 @@ static void guest_powerup(int index)
                     count, index + 1);
         return;
     }
-    /* The first button's centre, then the same tree's 98/73 spacing. */
-    double step = (double)first[2] * (PVZ2_POWERUP_STEP / PVZ2_POWERUP_WIDTH);
-    double cx = first[0] + first[2] / 2.0 + step * index;
-    double cy = first[1] + first[3] / 2.0;
+    /* The buttons are laid out in the holder: the first at (19, 2), each next
+     * one 98 further right, all 73 by 73. The first button's width gives the
+     * tree's scale; the holder's own rect gives the absolute place, so the
+     * order find_widget happens to return does not matter. */
+    double scale = (double)first[2] / PVZ2_POWERUP_WIDTH;
+    double cx = holder[0] + (PVZ2_POWERUP_FIRST_X + PVZ2_POWERUP_STEP * index +
+                             PVZ2_POWERUP_WIDTH / 2.0) * scale;
+    double cy = holder[1] + (PVZ2_POWERUP_FIRST_Y + PVZ2_POWERUP_HEIGHT / 2.0) * scale;
     double s = guest_surface_scale();
     int x = (int)(cx * s), y = (int)(cy * s);
     g_powerup_touch_x = x;
