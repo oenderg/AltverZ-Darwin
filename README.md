@@ -39,6 +39,7 @@ and the mod's own content built in.
   * Import/Export saves, quests and levels through the game's own menu.
 * **Unlocked frame rate**
   * The game runs at your display's refresh rate: 120 Hz on ProMotion displays.
+  * Turn on **Target 60 FPS** in the game's own settings for that; with it off, the game runs at 60.
 * **Touch, mouse and trackpad** work as on Android.
 * **Keyboard** (Mac, and iPad with a keyboard)
   * `1`-`8` take a seed packet, `S` the shovel.
