@@ -1549,12 +1549,139 @@ static void pace_frame(long frame_ns)
 /* ------------------------------------------------------ Nimble persistence
  *
  * PersistenceService hands each Nimble component a Persistence scoped to
- * "nimble.persistence.<component>".  Values live in memory for this run; writing
- * them to the data directory belongs to the save work. */
+ * "nimble.persistence.<component>". The game currently stores its birthdate as a
+ * String; preserve the common boxed scalar types too so the on-disk form stays typed. */
 typedef struct { char scope[128]; } ps_scope_t;
 typedef struct { char *key; jobj *value; } ps_entry;
 #define PS_CAPACITY 256
-static struct { pthread_mutex_t mu; ps_entry v[PS_CAPACITY]; int n; } PS = { .mu = PTHREAD_MUTEX_INITIALIZER };
+static struct { pthread_mutex_t mu; ps_entry v[PS_CAPACITY]; int n; bool loaded; } PS = { .mu = PTHREAD_MUTEX_INITIALIZER };
+
+static const char *ps_file_path(void)
+{
+    static char path[1200];
+    if (!path[0]) {
+        const char *dir = tl_data_dir();
+        if (!dir || !*dir) return NULL;
+        snprintf(path, sizeof(path), "%s/nimble-persistence.tsv", dir);
+    }
+    return path;
+}
+
+static bool ps_encode_value(jobj *value, char **type_out, char **payload_out)
+{
+    if (!value) return false;
+    const char *type = tl_jni_class_name(value);
+    char payload[128];
+    if (!strcmp(type, "java/lang/String")) {
+        *type_out = strdup(type);
+        const char *text = S(value);
+        *payload_out = strdup(text ? text : "");
+        return *type_out && *payload_out;
+    }
+    if (!strcmp(type, "java/lang/Long")) {
+        int64_t number = tl_jni_call(value, "longValue", "()J", NULL).j;
+        snprintf(payload, sizeof(payload), "%lld", (long long)number);
+    } else if (!strcmp(type, "java/lang/Integer")) {
+        int32_t number = tl_jni_call(value, "intValue", "()I", NULL).i;
+        snprintf(payload, sizeof(payload), "%d", number);
+    } else if (!strcmp(type, "java/lang/Boolean")) {
+        snprintf(payload, sizeof(payload), "%d", tl_jni_call(value, "booleanValue", "()Z", NULL).z ? 1 : 0);
+    } else if (!strcmp(type, "java/lang/Float")) {
+        float number = tl_jni_call(value, "floatValue", "()F", NULL).f;
+        snprintf(payload, sizeof(payload), "%a", (double)number);
+    } else if (!strcmp(type, "java/lang/Double")) {
+        double number = tl_jni_call(value, "doubleValue", "()D", NULL).d;
+        snprintf(payload, sizeof(payload), "%a", number);
+    } else {
+        tl_log_line("pvz2: Nimble persistence type %s stays in memory but is not serializable by the host", type);
+        return false;
+    }
+    *type_out = strdup(type);
+    *payload_out = strdup(payload);
+    return *type_out && *payload_out;
+}
+
+static jobj *ps_decode_value(const char *type, const char *payload)
+{
+    if (!strcmp(type, "java/lang/String")) return tl_jni_new_string(payload);
+    jvalue arg = {0};
+    const char *signature = NULL;
+    if (!strcmp(type, "java/lang/Long")) {
+        arg.j = strtoll(payload, NULL, 10); signature = "(J)Ljava/lang/Long;";
+    } else if (!strcmp(type, "java/lang/Integer")) {
+        arg.i = (int32_t)strtol(payload, NULL, 10); signature = "(I)Ljava/lang/Integer;";
+    } else if (!strcmp(type, "java/lang/Boolean")) {
+        arg.z = atoi(payload) != 0; signature = "(Z)Ljava/lang/Boolean;";
+    } else if (!strcmp(type, "java/lang/Float")) {
+        arg.f = (float)strtod(payload, NULL); signature = "(F)Ljava/lang/Float;";
+    } else if (!strcmp(type, "java/lang/Double")) {
+        arg.d = strtod(payload, NULL); signature = "(D)Ljava/lang/Double;";
+    } else return NULL;
+    return tl_jni_call(tl_jni_class_object(type), "valueOf", signature, &arg).l;
+}
+
+static void ps_load_locked(void)
+{
+    if (PS.loaded) return;
+    PS.loaded = true;
+    const char *path = ps_file_path();
+    if (!path) return;
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char *line = NULL;
+    size_t cap = 0;
+    int loaded = 0;
+    while (PS.n < PS_CAPACITY && getline(&line, &cap, f) >= 0) {
+        line[strcspn(line, "\r\n")] = 0;
+        char *p1 = strchr(line, '\t'); if (!p1) continue; *p1++ = 0;
+        char *p2 = strchr(p1, '\t'); if (!p2) continue; *p2++ = 0;
+        char *key = hex_decode(line), *payload = hex_decode(p2);
+        if (!key || !payload) { free(key); free(payload); continue; }
+        jobj *value = ps_decode_value(p1, payload);
+        free(payload);
+        if (!value) { free(key); continue; }
+        PS.v[PS.n++] = (ps_entry){ key, value };
+        const char *separator = strrchr(key, '\x1f');
+        if (separator && !strcmp(tl_jni_class_name(value), "java/lang/String"))
+            tl_log_line("pvz2: Nimble persistence disk read %.*s.%s = java/lang/String %s",
+                        (int)(separator - key), key, separator + 1, S(value));
+        loaded++;
+    }
+    free(line);
+    fclose(f);
+    tl_log_line("pvz2: Nimble persistence restored %d typed value(s) from the game data folder", loaded);
+}
+
+static void ps_save_locked(void)
+{
+    char temporary[1300];
+    const char *path = ps_file_path();
+    if (!path) return;
+    snprintf(temporary, sizeof(temporary), "%s.tmp.%d", path, getpid());
+    int temporary_fd = open(temporary, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    FILE *f = temporary_fd >= 0 ? fdopen(temporary_fd, "w") : NULL;
+    if (!f) {
+        if (temporary_fd >= 0) close(temporary_fd);
+        tl_log_line("pvz2: Nimble persistence write failed (errno=%d)", errno);
+        return;
+    }
+    bool failed = false;
+    for (int i = 0; i < PS.n; i++) {
+        char *type = NULL, *payload = NULL, *key = hex_encode(PS.v[i].key);
+        bool encoded = ps_encode_value(PS.v[i].value, &type, &payload);
+        char *hex_payload = encoded ? hex_encode(payload) : NULL;
+        if (!key || !encoded || !hex_payload || fprintf(f, "%s\t%s\t%s\n", key,
+                type ? type : "", hex_payload ? hex_payload : "") < 0) failed = true;
+        free(key); free(type); free(payload); free(hex_payload);
+        if (failed) break;
+    }
+    int fd = fileno(f);
+    if (fflush(f) != 0 || fsync(fd) != 0 || ferror(f)) failed = true;
+    if (fclose(f) != 0) failed = true;
+    if (!failed && rename(temporary, path) == 0) return;
+    unlink(temporary);
+    tl_log_line("pvz2: Nimble persistence atomic commit failed (errno=%d)", errno);
+}
 
 static jobj *ps_new(const char *component)
 {
@@ -1562,6 +1689,9 @@ static jobj *ps_new(const char *component)
     ps_scope_t *s = calloc(1, sizeof(*s));
     snprintf(s->scope, sizeof(s->scope), "nimble.persistence.%s", component);
     p->native = s;
+    pthread_mutex_lock(&PS.mu);
+    ps_load_locked();
+    pthread_mutex_unlock(&PS.mu);
     return p;
 }
 
@@ -1572,18 +1702,29 @@ static void ps_set(const char *scope, const char *key, jobj *value)
     char full[512];
     snprintf(full, sizeof(full), "%s\x1f%s", scope, key);
     pthread_mutex_lock(&PS.mu);
+    ps_load_locked();
     int i = 0;
+    bool changed = false;
     while (i < PS.n && strcmp(PS.v[i].key, full)) i++;
     if (i < PS.n) {
         if (PS.v[i].value) tl_jni_unref(PS.v[i].value);
-        PS.v[i].value = value ? tl_jni_ref(value) : NULL;
+        if (value) { PS.v[i].value = tl_jni_ref(value); changed = true; }
+        else {
+            free(PS.v[i].key);
+            memmove(&PS.v[i], &PS.v[i + 1], (size_t)(PS.n - i - 1) * sizeof(PS.v[0]));
+            PS.n--;
+            memset(&PS.v[PS.n], 0, sizeof(PS.v[0]));
+            changed = true;
+        }
     } else if (value && PS.n < PS_CAPACITY) {
         PS.v[PS.n].key = strdup(full);
         PS.v[PS.n].value = tl_jni_ref(value);
         PS.n++;
+        changed = true;
     } else if (value) {
         tl_log_line("pvz2: persistence full, dropped %s", full);
     }
+    if (changed) ps_save_locked();
     pthread_mutex_unlock(&PS.mu);
 }
 
@@ -1593,8 +1734,13 @@ static jobj *ps_get(const char *scope, const char *key)
     snprintf(full, sizeof(full), "%s\x1f%s", scope, key);
     jobj *v = NULL;
     pthread_mutex_lock(&PS.mu);
+    ps_load_locked();
     for (int i = 0; i < PS.n; i++) if (!strcmp(PS.v[i].key, full)) { v = PS.v[i].value ? tl_jni_ref(PS.v[i].value) : NULL; break; }
     pthread_mutex_unlock(&PS.mu);
+    if (v && !strcmp(tl_jni_class_name(v), "java/lang/String"))
+        tl_log_line("pvz2: Nimble persistence read %s.%s = java/lang/String %s", scope, key, S(v));
+    else
+        tl_log_line("pvz2: Nimble persistence read %s.%s = %s", scope, key, v ? tl_jni_class_name(v) : "null");
     return v;
 }
 
@@ -1611,7 +1757,10 @@ static void J_ps_get_value(tl_jcall *c)
 {
     const char *key = S(c->args[0].l);
     jobj *v = ps_get(ps_scope_of(c->self), key);
-    tl_log_line("pvz2: persistence get %s.%s -> %s", ps_scope_of(c->self), key, v ? tl_jni_class_name(v) : "null");
+    if (v && !strcmp(tl_jni_class_name(v), "java/lang/String"))
+        tl_log_line("pvz2: persistence get %s.%s -> java/lang/String %s", ps_scope_of(c->self), key, S(v));
+    else
+        tl_log_line("pvz2: persistence get %s.%s -> %s", ps_scope_of(c->self), key, v ? tl_jni_class_name(v) : "null");
     c->ret = vl(v);
 }
 
