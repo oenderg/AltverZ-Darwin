@@ -200,6 +200,21 @@ Commands separated by `;`, run in order on their own thread:
 | `cursor:x,y` | where the pointer is (the person's mouse is never moved) |
 | `mode:`, `aspect:`, `fit`, `keep` | window-mode tests. **`mode:` and `aspect:` write the app's saved settings** |
 
+## Keyboard shortcuts
+
+Start a level from the map and use the tap script's `press:` to exercise the keys. The log
+names each action and why it was refused:
+
+- `press:` (Space) logs `pvz2: the collect shortcut: ... requested N sun(s) ... N coin(s),
+  N gem(s), N plant food, scanned=N`; no crash with zero drops is a pass.
+- `press:f` logs `pvz2: the fast-forward shortcut: pressed the game's own button (state 0 -> 1)`;
+  press it again for `1 -> 0`. The button's picture changes with it.
+- `press:q` logs `pvz2: the plant food shortcut: picked up from the game's own counter at (x,y)`
+  and then `the touch was let go`; with plant food in stock the cursor carries one.
+- `press:z`, `press:x`, `press:c` log `pvz2: the power-up shortcut: selected power-up N of M`
+  and then `the touch was let go`; click the lawn to use it.
+- Outside a level, paused or behind a popup, each logs `ignored: ...` and does nothing.
+
 ## Reading the result
 
 - Look at the shots yourself. A log that says "drawn" is not a picture of the game.

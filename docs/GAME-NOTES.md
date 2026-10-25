@@ -37,13 +37,26 @@ through a guard that turns a fault into a log line instead of a crash.
 | 0x761074 | the game's release decision for a new cursor (PlantCursor vtable 0x2491a60) | a second press cancels, like a second tap |
 | 0x13ab0a0, vtable 0x24d8b60 | the shovel's pointer-down, and the shovel cursor | S |
 | 0x11beef0, 0x14ea3cc / 0x14ea364 / 0x14ea3b0 / 0x14ea1fc | the iterator over the board's collectables (pool 0x48) | Space |
-| 0x64f998 | a collectable's own "clicked" request (the game picks the flight and awards the value) | Space collects suns (vtable 0x2395208) and real coins (0x23bb9b8) only |
+| 0x64f998 | a collectable's own "clicked" request (the game picks the flight and awards the value) | Space collects suns (vtable 0x2395208), real coins (0x23bb9b8), gems (0x2399d48) and plant food (0x24250b8) only; fake coins (0x23bbc18) and rewards are not accepted |
 | 0x75a96c | a sun's value | the log line |
-| 0x5beb44, 0x5c1788 | find a UI widget by name, and its rect in the app's design space | the pause button (`UIPauseButton`), the shovel, the seed tray |
+| 0x5beb44, 0x5c1788 | find a UI widget by name, and its rect in the app's design space | the pause button (`UIPauseButton`), the shovel, the seed tray, fast-forward, plant food and power-ups |
+| 0x24b2dc0, +0x88 = 0x12300ec, +0x19a | FastForwardButton's vtable, its toggle (flips the byte at +0x19a and tells the game), and that state | F (`UIFastForwardButton`) |
+| 0x24c21b0, +0x90 = 0x1311f90 | PlantfoodUI's vtable and its pointer-down (starts the counter's pickup) | Q (`UIPlantfood`) |
+| 0x249dfa0, +0x90 = 0x1162138 | PowerupTimeUI's vtable and its pointer-down (selects the power-up) | Z, X, C (`UIPowerupHolder`, buttons named `UIPowerup`; 73 px wide, 98 apart, holder 308 wide for three) |
 | 0x24bcf00 | the pause menu (`PauseDialog`); its rect is at +0x44 | Escape on the pause menu taps RESUME (82% across, 90% down) |
 
 - **Android's Back does nothing in a level** in this game, so Escape presses the pause button
   instead (and RESUME on the pause menu). Elsewhere it is Back.
+- **Space's exact vtables are what keep rewards out.** Gems and plant food share the sun's and
+  coin's `Collectable` layout and their `Collectable::OnMouseDown` path (0x64f804 to 0x64f998);
+  their own classes only add the value/type members. Level rewards, presents, stars, keys,
+  notes, sprouts and plant unlocks have different vtables and are never requested. Fake coins
+  are a subclass of real coins but have their own vtable, so a tap's refusal is kept.
+- **Fast-forward is the button's own toggle**, not a pixel: `FastForwardButton` vtable +0x88
+  flips its state byte at +0x19a. Plant food and power-ups are taps on their own widgets, with
+  the down now and the up a frame later. A power-up level with fewer than three buttons is
+  detected from the holder's width compared with one button's (1.5, 2.9 or 4.2 buttons wide), so
+  a key beyond the level's set is refused instead of tapping the lawn.
 - Every action is refused, with a log line saying why, unless the board is live, nothing is paused
   and no modal is up. Never write the game's sun, currency or object state directly: call the game's
   own functions and let it do its bookkeeping.
