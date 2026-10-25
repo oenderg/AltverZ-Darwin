@@ -20,6 +20,15 @@
       "screenshots": [],
       "versions": [
         {
+          "version": "1.2.0",
+          "buildVersion": "10200",
+          "date": "2026-10-25",
+          "localizedDescription": "Import and export your saves, and more keyboard shortcuts. The game's own Import/Export menu (Settings, Import/Export) now works: bring your Android save over, or back it up, through the Files app on iPhone and iPad or a normal file dialog on the Mac.\n\n• More keys: Space now also collects gems and plant food, F toggles fast-forward, Q picks up plant food and Z, X, C pick a power-up. On the Mac you can change them in Settings.\n• iPhone and iPad show the game's own reminders as notifications; the game asks for permission when it first starts, as on Android. The Mac shows none.\n• iPad: in a window next to other apps, a swipe that ends outside the game no longer leaves every tap dead.\n• Links in the game open in your browser.\n• The Mac disk image opens to a new install window, styled like the game.\n• Small fixes so the game sees the same device details as on Android, and keeps its own data between launches.",
+          "downloadURL": "https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.2.0/PvZ2-Reflourished-1.4.2-Darwin-1.2.0-iOS.ipa",
+          "size": 62045339,
+          "minOSVersion": "15.5"
+        },
+        {
           "version": "1.1.0",
           "buildVersion": "10100",
           "date": "2026-10-25",
