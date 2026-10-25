@@ -81,10 +81,11 @@ answers the few calls into those parts). The pieces that matter here:
   back sends the foreground sequence. The game shows its own pause menu after that.
 - **Reminders.** `AndroidNotification` crosses a host hook: the shared C driver stores Android's
   per-ID `userInfo` list and typed Nimble values in the app data folder, while
-  `pvz2-notifications.h` schedules through UserNotifications on iOS and Mac. The permission
-  request comes when the game creates its notification channels at launch (as on Android 13); tapping a reminder makes its
-  `data.fields` available to the game's intent getter. The Mac test switch logs requests without
-  prompting or scheduling them.
+  `pvz2-notifications.h` schedules through UserNotifications on iPhone and iPad. The permission
+  request comes when the game creates its notification channels at launch (as on Android 13);
+  tapping a reminder makes its `data.fields` available to the game's intent getter. The Mac host
+  installs no hooks on purpose (reminders are a phone habit): it never asks and never schedules,
+  and the driver keeps the data as Android does when notifications are not allowed.
 - **Input.** Touches and text go into the game's own input queue (`UI_ProcessEvents`), as Android's
   view would deliver them. The keyboard features call the game's own functions instead of faking
   taps: seed packet pick, shovel, collect suns and coins, pause/resume; each is refused unless a

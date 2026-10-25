@@ -58,6 +58,9 @@ including IDs made by the old constant stub; there is no identity migration.
 
 ## Local reminders
 
+iPhone and iPad only: the Mac shows no reminders (no permission prompt, nothing scheduled; the
+driver still keeps their data, as Android does when notifications are not allowed).
+
 Android's `AndroidNotification.scheduleBasicNotification` stores `source`, `groupid` and the
 game's serialized `userInfo` by notification ID. `fireAt` is an absolute Unix timestamp in
 seconds (`0` means now); a positive `secondsInterval` repeats from that first fire time. If a

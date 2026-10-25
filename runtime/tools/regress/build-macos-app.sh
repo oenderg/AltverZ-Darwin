@@ -92,7 +92,7 @@ clang -g -O1 -fobjc-arc -Wall -Wno-unused-function -Wno-deprecated-declarations 
     -framework CoreGraphics -framework Security -framework QuartzCore -framework Metal \
     -framework IOSurface -framework ImageIO -framework WebKit -framework AppKit \
     -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework Accelerate \
-    -framework Sparkle -framework UserNotifications \
+    -framework Sparkle \
     -o "$APP/Contents/MacOS/PvZ2"
 
 echo "==> the converted guest libraries"

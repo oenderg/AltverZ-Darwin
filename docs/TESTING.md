@@ -23,7 +23,7 @@ What it sets (you can set these yourself when running the binary by hand):
 | `TL_DATA` | the data folder (default: `~/Library/Application Support/PvZ2 Reflourished`) |
 | `TL_PVZ2_CDN=offline` | skip CDN networking and replay the local archive with a fresh device-clock UTC Date |
 | `TL_PVZ2_OPEN_URL=log` | validate game web links and log `pvz2: open URL <url> (test: not opened)` without opening another app; use for every automated link test |
-| `TL_PVZ2_NOTIFY=log` | log reminders with their computed UTC fire time and text; never ask permission or schedule a notification; use on the Mac |
+| `TL_PVZ2_NOTIFY=log` | log reminders with their computed UTC fire time and text; never ask permission or schedule a notification |
 | `TL_PVZ2_NOTIFY=soon` | schedule reminders for real, a minute after the game asks, plus one test reminder a minute after permission is known: to see one arrive on a test device (asks for permission like a normal run) |
 | `TL_PVZ2_MAIN_TAR` | override the writable CDN cache path; skips bundle staging (use a test copy) |
 | `TL_PVZ2_FRAMES`, `TL_PVZ2_FRAME_EVERY` | save only this app's rendered frame as `latest.bmp` in an existing directory, every N frames; works with the lid closed |
@@ -45,8 +45,9 @@ Launch arguments after `--` override the app's settings for that run only, witho
 Reminder logs include the Android notification ID, first-fire delay, repeat interval, title and
 body. `pvz2-reminders.tsv` and `nimble-persistence.tsv` in the test data folder back reminders and
 Nimble values across launches.
-The normal Mac/iOS path uses UserNotifications, so Mac runs must set `TL_PVZ2_NOTIFY=log` to avoid
-permission prompts and banners.
+The Mac app shows no reminders and never asks for permission; `TL_PVZ2_NOTIFY=log` makes it log
+each reminder the game sets. On iOS, the normal path asks for permission at launch and schedules for
+real, so use `soon` (or `log`) on a test device.
 
 ## Web links
 

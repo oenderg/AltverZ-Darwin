@@ -1292,7 +1292,8 @@ static void J_notif_schedule(tl_jcall *c)
     }
 
     if (!g_notification_hooks.schedule) {
-        tl_log_line("pvz2: reminder %d could not be scheduled (no host handler)", id);
+        static bool logged = false;
+        if (!logged) { logged = true; tl_log_line("pvz2: this host shows no reminders; their data is kept"); }
         return;
     }
     if (reminder_soon()) {
