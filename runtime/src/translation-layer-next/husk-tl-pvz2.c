@@ -38,6 +38,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include <uuid/uuid.h>
 #include <mach/mach.h>
 #if !TARGET_OS_IPHONE
 /* The mach_vm calls are not available on iOS (mach_vm.h says so). The app
@@ -284,7 +285,17 @@ static void J_cloud_silent_sync(tl_jcall *c)
 static void J_obb_path(tl_jcall *c) { (void)c; tl_log_line("pvz2: OBB path asked for: %s", P.obb_guest); c->ret = vl(str(P.obb_guest)); }
 static void J_data_folder(tl_jcall *c) { (void)c; c->ret = vl(str(P.files_guest)); }
 
-static void J_uuid(tl_jcall *c) { (void)c; c->ret = vl(str("6a8d1f2c-3b47-4e59-9c0a-pvz2husk01")); }
+static void J_uuid(tl_jcall *c)
+{
+    uuid_t uuid;
+    char value[37];
+    /* Android generates a new v4 UUID per request; the guest persists IDs itself. */
+    uuid_generate_random(uuid);
+    uuid_unparse_lower(uuid, value);
+    const char *trace = getenv("TL_JNI_TRACE");
+    if (trace && atoi(trace) >= 2) tl_log_line("pvz2: UUID %s", value);
+    c->ret = vl(str(value));
+}
 /* The guest's own orientation vocabulary (from its Java, Device_GetCurrentUIOrientation):
  *   4 = landscape, 3 = landscape turned over, 1 = portrait, 2 = portrait turned over.
  * The host tells the guest which one it is in, and the guest re-lays-out. */

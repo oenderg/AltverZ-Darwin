@@ -48,6 +48,14 @@ through a guard that turns a fault into a log line instead of a crash.
   and no modal is up. Never write the game's sun, currency or object state directly: call the game's
   own functions and let it do its bookkeeping.
 
+## Generated IDs
+
+`Util_GetUUIDString` returns a fresh lowercase version-4 UUID per call, like
+Android's `UUID.randomUUID().toString()`. The guest uppercases it where it needs
+to and owns persistence. Existing saves keep their stored PCPID and quest IDs,
+including IDs made by the old constant stub; there is no identity migration.
+`TL_JNI_TRACE=2` logs generated UUIDs for testing.
+
 ## Profile name input
 
 Android's `EditInputConnection` queues text records through `UI_ProcessEvents`: type 6,
