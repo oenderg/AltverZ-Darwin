@@ -20,6 +20,15 @@
       "screenshots": [],
       "versions": [
         {
+          "version": "1.1.0",
+          "buildVersion": "10100",
+          "date": "2026-10-25",
+          "localizedDescription": "Events and limited-time offers now show up. The Halloween event, the weekly challenge, their badges on the map and the shop's rotating limited-time offers were missing on iPhone, iPad and Mac: the game takes its time from Reflourished's content server, and that time never reached it.\n\n• The game now loads Reflourished's live content at start-up, as on Android, so content updates arrive without a new app version.\n• Offline, it uses the content it last downloaded and your device's clock, so events still show.\n• The game's log starts fresh at each launch; the previous run's is kept as pvz2.previous.log.",
+          "downloadURL": "https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.1.0/PvZ2-Reflourished-1.4.2-Darwin-1.1.0-iOS.ipa",
+          "size": 62017577,
+          "minOSVersion": "15.5"
+        },
+        {
           "version": "1.0.0",
           "buildVersion": "10000",
           "date": "2026-10-24",
