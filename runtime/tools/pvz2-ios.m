@@ -643,6 +643,15 @@ static int _lastSafe[2] = { -1, -1 };
     if (!atomic_load(&g_ready)) return;
     CGRect r = [self gameRect];
     if (r.size.width <= 0 || r.size.height <= 0) return;
+    /* The fingers the game has down, and where each last was in the picture. A
+     * touch that starts outside the game's picture (on a black bar) is no touch
+     * at all; but a move or a let-go out there -- a swipe that runs off the
+     * picture or out of a resized window -- still belongs to the finger that went
+     * down inside, and is sent where it last was. A dropped let-go left the game
+     * a finger down for good, and then every later tap did nothing (the Mac
+     * host does the same for the mouse). */
+    static NSMapTable<UITouch *, NSValue *> *down;
+    if (!down) down = [NSMapTable weakToStrongObjectsMapTable];
     int id = 1;
     for (UITouch *t in touches) {
         CGPoint p = [t locationInView:self];
@@ -650,8 +659,14 @@ static int _lastSafe[2] = { -1, -1 };
          * tap lands where the player sees it even with the window resized. */
         double gx, gy;
         if (!tl_viewport_map(p.x, p.y, r.origin.x, r.origin.y, r.size.width, r.size.height,
-                             g_w, g_h, &gx, &gy))
-            continue;   /* a tap in the black bars is not a tap on the game */
+                             g_w, g_h, &gx, &gy)) {
+            NSValue *last = [down objectForKey:t];
+            if (phase == 0 || !last) continue;   /* a tap in the black bars is not a tap on the game */
+            CGPoint lp = last.CGPointValue;
+            gx = lp.x; gy = lp.y;
+        }
+        if (phase == 3 || phase == 4) [down removeObjectForKey:t];
+        else [down setObject:[NSValue valueWithCGPoint:CGPointMake(gx, gy)] forKey:t];
         if (phase == 0) keyboard_touch_began();
         if (atomic_load(&g_packet_in_hand)) {
             /* A packet is in hand (the keyboard took it out of the bank): the
