@@ -48,6 +48,7 @@
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
 #include "pvz2-open-url.h"
+#include "pvz2-notifications.h"
 
 static bool open_game_url(const char *url)
 {
@@ -2737,6 +2738,8 @@ static void start_updater(void)
      * the keyboard, and this is what tells the driver that the guest asked for it. */
     tl_pvz2_set_keyboard_hook(keyboard_shown);
     tl_pvz2_set_open_url_hook(open_game_url);
+    pvz2_notifications_install();
+    tl_pvz2_set_notification_hooks(&pvz2_notification_hooks);
 
     /* The display's own maximum: the game's "Target 60 FPS" switch asks the
      * host for a rate, and the host answers with what the screen can show --
@@ -2961,6 +2964,7 @@ static void start_updater(void)
 - (void)applicationDidBecomeActive:(NSNotification *)notification
 {
     (void)notification;
+    pvz2_notifications_app_became_active();
     tl_log_line("macos: the app is frontmost");
 }
 /* The app is hidden (Cmd-H) and shown again. That is the app going away and

@@ -45,6 +45,7 @@
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
 #include "pvz2-open-url.h"
+#include "pvz2-notifications.h"
 
 static bool open_game_url(const char *url)
 {
@@ -1557,6 +1558,9 @@ static NSDictionary *obb_info(void)
         setvbuf(stderr, NULL, _IOLBF, 0);
     }
 
+    pvz2_notifications_install();
+    tl_pvz2_set_notification_hooks(&pvz2_notification_hooks);
+
 #ifdef AOT_DYLIB_TEST
     /* AOT-DYLIB-LOADER TEST: before anything else, and it never comes back. Built in
      * only with -DAOT_DYLIB_TEST, because the shipping app has a game to start. */
@@ -1689,7 +1693,9 @@ static NSDictionary *obb_info(void)
 
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options
 {
-    (void)session; (void)options;
+    (void)session;
+    if (options.notificationResponse)
+        pvz2_capture_notification_response(options.notificationResponse);
     UIWindowScene *windowScene = (UIWindowScene *)scene;
 
     /* iPadOS 26 and later give every app a window it can resize, and a scene that does not
@@ -2012,6 +2018,7 @@ static NSDictionary *obb_info(void)
 - (void)sceneDidBecomeActive:(UIScene *)scene
 {
     (void)scene;
+    pvz2_notifications_app_became_active();
     metal_paused(false);
     tl_audio_set_paused(false);
     /* The system stops the audio when the app is interrupted, and the game is

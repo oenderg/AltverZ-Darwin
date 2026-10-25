@@ -56,7 +56,7 @@ xcrun --sdk "$SDKNAME" clang -target "$TARGET" ${SDK_ARGS[@]+"${SDK_ARGS[@]}"} -
     -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework Security \
     -framework IOSurface -framework ImageIO -framework AudioToolbox -framework AVFAudio -framework VideoToolbox \
     -framework CoreMedia -framework CoreVideo -framework Accelerate -framework WebKit \
-    -framework CoreMotion \
+    -framework CoreMotion -framework UserNotifications \
     -lz -lm -lresolv -lsqlite3 \
     -o "$APP/PvZ2"
 

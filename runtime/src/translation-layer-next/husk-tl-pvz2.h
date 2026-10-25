@@ -16,6 +16,7 @@
 #define HUSK_TL_PVZ2_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "husk-tl-gameactivity.h"          /* tl_ga_config: the same description of the game and its surface */
 
@@ -48,6 +49,33 @@ void tl_pvz2_keyboard_dismissed(void);
 
 /* The host opens web links on its UI thread and reports whether launch was accepted. */
 void tl_pvz2_set_open_url_hook(bool (*fn)(const char *url));
+
+typedef struct {
+    int identifier;
+    int group_identifier;
+    int64_t fire_time_ms;
+    int seconds_interval;
+    const char *title;
+    const char *body;
+    const char *sound;
+    const char *channel_id;
+    const char *user_info;
+} tl_pvz2_reminder;
+
+typedef struct {
+    void (*schedule)(const tl_pvz2_reminder *reminder);
+    void (*cancel)(int identifier);
+    void (*cancel_all)(const int *identifiers, int count);
+    void (*create_channel)(const char *identifier, const char *name,
+                           const char *description, const char *sound);
+    void (*delete_channel)(const char *identifier);
+    const char *(*timezone)(void);
+} tl_pvz2_notification_hooks;
+
+/* Platform notifications are scheduled by the host, never by the shared driver. */
+void tl_pvz2_set_notification_hooks(const tl_pvz2_notification_hooks *hooks);
+void tl_pvz2_clear_intent_extra_data(void);
+void tl_pvz2_set_intent_extra_data(const char *key, const char *value);
 
 void tl_pvz2_set_paused(bool paused);
 

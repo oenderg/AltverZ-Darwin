@@ -27,6 +27,7 @@
 #include "husk-tl-cdn.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -263,6 +264,67 @@ static void J_keyboard_showing(tl_jcall *c) { c->ret = vz(atomic_load(&g_keyboar
 
 static bool (*g_open_url_hook)(const char *url);
 void tl_pvz2_set_open_url_hook(bool (*fn)(const char *url)) { g_open_url_hook = fn; }
+
+static tl_pvz2_notification_hooks g_notification_hooks;
+void tl_pvz2_set_notification_hooks(const tl_pvz2_notification_hooks *hooks)
+{
+    g_notification_hooks = hooks ? *hooks : (tl_pvz2_notification_hooks){0};
+}
+
+typedef struct { char *key, *value; } intent_extra;
+static struct {
+    pthread_mutex_t mu;
+    intent_extra v[32];
+    int n;
+} INTENT_EXTRAS = { .mu = PTHREAD_MUTEX_INITIALIZER };
+
+void tl_pvz2_clear_intent_extra_data(void)
+{
+    pthread_mutex_lock(&INTENT_EXTRAS.mu);
+    for (int i = 0; i < INTENT_EXTRAS.n; i++) {
+        free(INTENT_EXTRAS.v[i].key);
+        free(INTENT_EXTRAS.v[i].value);
+    }
+    INTENT_EXTRAS.n = 0;
+    pthread_mutex_unlock(&INTENT_EXTRAS.mu);
+}
+
+void tl_pvz2_set_intent_extra_data(const char *key, const char *value)
+{
+    if (!key || !value) return;
+    pthread_mutex_lock(&INTENT_EXTRAS.mu);
+    int i = 0;
+    while (i < INTENT_EXTRAS.n && strcmp(INTENT_EXTRAS.v[i].key, key)) i++;
+    if (i == INTENT_EXTRAS.n) {
+        if (i == (int)(sizeof(INTENT_EXTRAS.v) / sizeof(INTENT_EXTRAS.v[0]))) {
+            pthread_mutex_unlock(&INTENT_EXTRAS.mu);
+            return;
+        }
+        INTENT_EXTRAS.v[i].key = strdup(key);
+        INTENT_EXTRAS.n++;
+    } else {
+        free(INTENT_EXTRAS.v[i].value);
+    }
+    INTENT_EXTRAS.v[i].value = strdup(value);
+    pthread_mutex_unlock(&INTENT_EXTRAS.mu);
+}
+
+static void J_intent_extra_data(tl_jcall *c)
+{
+    const char *key = S(c->args[0].l);
+    if (!key) { c->ret = vl(NULL); return; }
+    char *value = NULL;
+    pthread_mutex_lock(&INTENT_EXTRAS.mu);
+    for (int i = 0; i < INTENT_EXTRAS.n; i++)
+        if (!strcmp(INTENT_EXTRAS.v[i].key, key)) { value = strdup(INTENT_EXTRAS.v[i].value); break; }
+    pthread_mutex_unlock(&INTENT_EXTRAS.mu);
+    c->ret = value ? vl(str(value)) : vl(NULL);
+    if (value) {
+        tl_log_line("pvz2: notification launch extra %s was read", key);
+        free(value);
+    }
+}
+
 static void J_open_url(tl_jcall *c)
 {
     const char *url = S(c->args[0].l);
@@ -901,29 +963,355 @@ static void J_http_set_body(tl_jcall *c)
 }
 /* ---------------------------------------------------------------- reminders
  *
- * The host has no notification centre, so the daily-challenge reminders do
- * not fire. The guest asks the host to schedule them and to tell it what is
- * scheduled; both answers have to be ones the guest can carry on with. The
- * guest's own Java builds the scheduled list as the items' userInfo in
- * brackets -- and "[]" when there is nothing -- so "[]" is what the host
- * answers with. */
+ * Android keeps one notification-list record per ID in SharedPreferences.
+ * The userInfo values are already serialized by the game and are returned as
+ * raw JSON fragments, not JSON-quoted strings. The host owns actual delivery. */
+typedef struct { int id, group_id; char *source, *user_info; } reminder_record;
+#define REMINDER_CAPACITY 512
+static struct {
+    pthread_mutex_t mu;
+    reminder_record v[REMINDER_CAPACITY];
+    int n;
+    bool loaded;
+} REMINDERS = { .mu = PTHREAD_MUTEX_INITIALIZER };
+
+static bool reminder_log_only(void)
+{
+    const char *mode = getenv("TL_PVZ2_NOTIFY");
+    return mode && !strcmp(mode, "log");
+}
+
+static char *hex_encode(const char *s)
+{
+    static const char hex[] = "0123456789abcdef";
+    size_t n = s ? strlen(s) : 0;
+    char *out = malloc(n * 2 + 1);
+    if (!out) return NULL;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        out[i * 2] = hex[c >> 4];
+        out[i * 2 + 1] = hex[c & 15];
+    }
+    out[n * 2] = 0;
+    return out;
+}
+
+static char *hex_decode(const char *s)
+{
+    size_t n = strlen(s);
+    if (n & 1) return NULL;
+    char *out = malloc(n / 2 + 1);
+    if (!out) return NULL;
+    for (size_t i = 0; i < n; i += 2) {
+        int hi = s[i] >= '0' && s[i] <= '9' ? s[i] - '0' :
+                 s[i] >= 'a' && s[i] <= 'f' ? s[i] - 'a' + 10 : -1;
+        int lo = s[i + 1] >= '0' && s[i + 1] <= '9' ? s[i + 1] - '0' :
+                 s[i + 1] >= 'a' && s[i + 1] <= 'f' ? s[i + 1] - 'a' + 10 : -1;
+        if (hi < 0 || lo < 0) { free(out); return NULL; }
+        out[i / 2] = (char)((hi << 4) | lo);
+    }
+    out[n / 2] = 0;
+    return out;
+}
+
+static const char *reminder_file_path(void)
+{
+    static char path[1200];
+    if (!path[0]) {
+        const char *dir = tl_data_dir();
+        if (!dir || !*dir) return NULL;
+        snprintf(path, sizeof(path), "%s/pvz2-reminders.tsv", dir);
+    }
+    return path;
+}
+
+static void reminders_save_locked(void)
+{
+    char temporary[1300];
+    const char *path = reminder_file_path();
+    if (!path) return;
+    snprintf(temporary, sizeof(temporary), "%s.tmp.%d", path, getpid());
+    int temporary_fd = open(temporary, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    FILE *f = temporary_fd >= 0 ? fdopen(temporary_fd, "w") : NULL;
+    if (!f) {
+        if (temporary_fd >= 0) close(temporary_fd);
+        tl_log_line("pvz2: reminder data could not be written (errno=%d)", errno);
+        return;
+    }
+    bool failed = false;
+    for (int i = 0; i < REMINDERS.n; i++) {
+        reminder_record *r = &REMINDERS.v[i];
+        char *source = hex_encode(r->source);
+        char *user_info = r->user_info ? hex_encode(r->user_info) : strdup("-");
+        if (!source || !user_info || fprintf(f, "%d\t%d\t%s\t%s\n", r->id, r->group_id,
+                                             source ? source : "", user_info ? user_info : "-") < 0)
+            failed = true;
+        free(source);
+        free(user_info);
+        if (failed) break;
+    }
+    int fd = fileno(f);
+    if (fflush(f) != 0 || fsync(fd) != 0 || ferror(f)) failed = true;
+    if (fclose(f) != 0) failed = true;
+    if (!failed && rename(temporary, path) == 0) return;
+    unlink(temporary);
+    tl_log_line("pvz2: reminder data could not be committed atomically (errno=%d)", errno);
+}
+
+static void reminders_load_locked(void)
+{
+    if (REMINDERS.loaded) return;
+    REMINDERS.loaded = true;
+    const char *path = reminder_file_path();
+    if (!path) return;
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char *line = NULL;
+    size_t cap = 0;
+    while (REMINDERS.n < REMINDER_CAPACITY && getline(&line, &cap, f) >= 0) {
+        line[strcspn(line, "\r\n")] = 0;
+        char *p1 = strchr(line, '\t'); if (!p1) continue; *p1++ = 0;
+        char *p2 = strchr(p1, '\t'); if (!p2) continue; *p2++ = 0;
+        char *p3 = strchr(p2, '\t'); if (!p3) continue; *p3++ = 0;
+        char *end1 = NULL, *end2 = NULL;
+        long id = strtol(line, &end1, 10), group = strtol(p1, &end2, 10);
+        if (!end1 || *end1 || !end2 || *end2 || id < INT32_MIN || id > INT32_MAX ||
+            group < INT32_MIN || group > INT32_MAX) continue;
+        char *source = hex_decode(p2);
+        char *user_info = strcmp(p3, "-") ? hex_decode(p3) : NULL;
+        if (!source || (strcmp(p3, "-") && !user_info)) { free(source); free(user_info); continue; }
+        REMINDERS.v[REMINDERS.n++] = (reminder_record){ (int)id, (int)group, source, user_info };
+    }
+    free(line);
+    fclose(f);
+}
+
+static int reminder_index_locked(int id)
+{
+    for (int i = 0; i < REMINDERS.n; i++) if (REMINDERS.v[i].id == id) return i;
+    return -1;
+}
+
+static void reminder_store(int id, int group_id, const char *source, const char *user_info)
+{
+    pthread_mutex_lock(&REMINDERS.mu);
+    reminders_load_locked();
+    int i = reminder_index_locked(id);
+    if (i < 0 && REMINDERS.n < REMINDER_CAPACITY) i = REMINDERS.n++;
+    if (i >= 0) {
+        free(REMINDERS.v[i].source);
+        free(REMINDERS.v[i].user_info);
+        REMINDERS.v[i] = (reminder_record){ id, group_id, strdup(source ? source : ""),
+                                            user_info ? strdup(user_info) : NULL };
+        reminders_save_locked();
+    } else {
+        tl_log_line("pvz2: reminder data is full; ID %d was not recorded", id);
+    }
+    pthread_mutex_unlock(&REMINDERS.mu);
+}
+
+static void reminder_remove_ids(const int *ids, int count)
+{
+    pthread_mutex_lock(&REMINDERS.mu);
+    reminders_load_locked();
+    bool changed = false;
+    for (int n = 0; n < count; n++) {
+        int i = reminder_index_locked(ids[n]);
+        if (i < 0) continue;
+        free(REMINDERS.v[i].source);
+        free(REMINDERS.v[i].user_info);
+        memmove(&REMINDERS.v[i], &REMINDERS.v[i + 1], (size_t)(REMINDERS.n - i - 1) * sizeof(REMINDERS.v[0]));
+        REMINDERS.n--;
+        memset(&REMINDERS.v[REMINDERS.n], 0, sizeof(REMINDERS.v[0]));
+        changed = true;
+    }
+    if (changed) reminders_save_locked();
+    pthread_mutex_unlock(&REMINDERS.mu);
+}
+
+static void reminder_remove_source(const char *source)
+{
+    pthread_mutex_lock(&REMINDERS.mu);
+    reminders_load_locked();
+    bool changed = false;
+    for (int i = 0; i < REMINDERS.n;) {
+        if (!strcmp(REMINDERS.v[i].source ? REMINDERS.v[i].source : "", source)) {
+            free(REMINDERS.v[i].source);
+            free(REMINDERS.v[i].user_info);
+            memmove(&REMINDERS.v[i], &REMINDERS.v[i + 1], (size_t)(REMINDERS.n - i - 1) * sizeof(REMINDERS.v[0]));
+            REMINDERS.n--;
+            memset(&REMINDERS.v[REMINDERS.n], 0, sizeof(REMINDERS.v[0]));
+            changed = true;
+        } else i++;
+    }
+    if (changed) reminders_save_locked();
+    pthread_mutex_unlock(&REMINDERS.mu);
+}
+
+static int reminder_clear(int *ids, int capacity)
+{
+    pthread_mutex_lock(&REMINDERS.mu);
+    reminders_load_locked();
+    int count = REMINDERS.n;
+    for (int i = 0; i < REMINDERS.n; i++) {
+        if (ids && i < capacity) ids[i] = REMINDERS.v[i].id;
+        free(REMINDERS.v[i].source);
+        free(REMINDERS.v[i].user_info);
+    }
+    REMINDERS.n = 0;
+    reminders_save_locked();
+    pthread_mutex_unlock(&REMINDERS.mu);
+    return count;
+}
+
+static char *reminders_data(void)
+{
+    pthread_mutex_lock(&REMINDERS.mu);
+    reminders_load_locked();
+    size_t len = 0, cap = 128;
+    char *out = malloc(cap);
+    if (!out) { pthread_mutex_unlock(&REMINDERS.mu); return strdup("[]"); }
+    out[len++] = '[';
+    bool first = true;
+    for (int i = 0; i < REMINDERS.n; i++) {
+        const char *value = REMINDERS.v[i].user_info;
+        if (!value) break;
+        size_t n = strlen(value), need = len + n + (first ? 2 : 3);
+        if (need > cap) {
+            size_t next = cap;
+            while (next < need) next *= 2;
+            char *larger = realloc(out, next);
+            if (!larger) break;
+            out = larger; cap = next;
+        }
+        if (!first) out[len++] = ',';
+        memcpy(out + len, value, n); len += n;
+        first = false;
+    }
+    out[len++] = ']';
+    out[len] = 0;
+    pthread_mutex_unlock(&REMINDERS.mu);
+    return out;
+}
+
+static void log_reminder(int id, int64_t fire_ms, int seconds_interval, const char *title, const char *body)
+{
+    time_t seconds = (time_t)(fire_ms / 1000);
+    struct tm utc;
+    char stamp[32] = "unknown";
+    if (gmtime_r(&seconds, &utc)) strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    int64_t now_ms = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+    int64_t delta = fire_ms > now_ms ? (fire_ms - now_ms + 999) / 1000 : 0;
+    if (seconds_interval > 0)
+        tl_log_line("pvz2: reminder %d at %s (+%lld s) [repeat %d s]: \"%s\" / \"%s\"%s",
+                    id, stamp, (long long)delta, seconds_interval, title ? title : "", body ? body : "",
+                    reminder_log_only() ? " (test: not scheduled)" : "");
+    else
+        tl_log_line("pvz2: reminder %d at %s (+%lld s): \"%s\" / \"%s\"%s",
+                    id, stamp, (long long)delta, title ? title : "", body ? body : "",
+                    reminder_log_only() ? " (test: not scheduled)" : "");
+}
+
 static void J_notif_schedule(tl_jcall *c)
 {
-    static bool logged = false;
-    (void)c;
-    if (!logged) {
-        logged = true;
-        tl_log_line("pvz2: a reminder was scheduled; this host has no notification centre, so it will not fire");
+    const char *title = S(c->args[2].l), *body = S(c->args[3].l);
+    const char *sound = S(c->args[5].l), *source = S(c->args[8].l);
+    const char *channel = S(c->args[11].l);
+    const char *user_info = tl_jni_string(c->args[12].l);
+    int id = c->args[6].i, group_id = c->args[7].i;
+    int fire_at = c->args[9].i, interval = c->args[10].i;
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    int64_t now_ms = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+    int64_t fire_ms = fire_at ? (int64_t)fire_at * 1000 : now_ms;
+    if (interval > 0) {
+        int64_t interval_ms = (int64_t)interval * 1000;
+        if (now_ms > fire_ms)
+            fire_ms = now_ms + (interval_ms - ((now_ms - fire_ms) % interval_ms));
+    } else if (fire_ms < now_ms) {
+        /* Android records first, then forgets an already-expired one-shot. */
+        reminder_store(id, group_id, source, user_info);
+        reminder_remove_ids(&id, 1);
+        tl_log_line("pvz2: reminder %d was already due; Android would not schedule it", id);
+        return;
     }
+
+    reminder_store(id, group_id, source, user_info);
+    if (reminder_log_only()) {
+        log_reminder(id, fire_ms, interval, title, body);
+        return;
+    }
+
+    if (!g_notification_hooks.schedule) {
+        tl_log_line("pvz2: reminder %d could not be scheduled (no host handler)", id);
+        return;
+    }
+    tl_pvz2_reminder reminder = {
+        .identifier = id, .group_identifier = group_id, .fire_time_ms = fire_ms,
+        .seconds_interval = interval, .title = title, .body = body, .sound = sound,
+        .channel_id = channel, .user_info = user_info,
+    };
+    g_notification_hooks.schedule(&reminder);
+    log_reminder(id, fire_ms, interval, title, body);
 }
+
 static void J_notif_scheduled_data(tl_jcall *c)
 {
-    static bool logged = false;
-    if (!logged) {
-        logged = true;
-        tl_log_line("pvz2: the scheduled reminders are asked for; this host has none");
-    }
-    c->ret = vl(str("[]"));
+    char *data = reminders_data();
+    tl_log_line("pvz2: reminder scheduled data -> %s", data);
+    c->ret = vl(str(data));
+    free(data);
+}
+
+static void J_notif_remove_one(tl_jcall *c)
+{
+    int id = c->args[0].i;
+    reminder_remove_ids(&id, 1);
+    if (g_notification_hooks.cancel) g_notification_hooks.cancel(id);
+    tl_log_line("pvz2: cancelled reminder %d", id);
+}
+
+static void J_notif_clear(tl_jcall *c)
+{
+    (void)c;
+    int ids[REMINDER_CAPACITY];
+    int count = reminder_clear(ids, REMINDER_CAPACITY);
+    if (g_notification_hooks.cancel_all) g_notification_hooks.cancel_all(ids, count);
+    tl_log_line("pvz2: cancelled all scheduled reminders (%d ID(s))", count);
+}
+
+static void J_notif_remove_source(tl_jcall *c)
+{
+    const char *source = S(c->args[0].l);
+    reminder_remove_source(source);
+    /* Android removes these records but leaves their AlarmManager entries in place. */
+    tl_log_line("pvz2: removed scheduled reminder data for source %s", source);
+}
+
+static void J_notif_create_channel(tl_jcall *c)
+{
+    const char *id = S(c->args[0].l), *name = S(c->args[1].l);
+    const char *description = S(c->args[2].l), *sound = S(c->args[3].l);
+    if (g_notification_hooks.create_channel)
+        g_notification_hooks.create_channel(id, name, description, sound);
+    tl_log_line("pvz2: created reminder channel %s (sound=%s)", id, sound);
+}
+
+static void J_notif_delete_channel(tl_jcall *c)
+{
+    const char *id = S(c->args[0].l);
+    if (g_notification_hooks.delete_channel) g_notification_hooks.delete_channel(id);
+    tl_log_line("pvz2: deleted reminder channel %s", id);
+}
+
+static void J_notif_timezone(tl_jcall *c)
+{
+    const char *timezone = g_notification_hooks.timezone ? g_notification_hooks.timezone() : NULL;
+    if (!timezone || !*timezone) { tzset(); timezone = tzname[0]; }
+    tl_log_line("pvz2: reminder timezone -> %s", timezone ? timezone : "UTC");
+    c->ret = vl(str(timezone ? timezone : "UTC"));
 }
 /* ---------------------------------------------------------------- the cloud
  *
@@ -1319,18 +1707,20 @@ static const tl_jhle k_hle[] = {
     M(APP, "Device_ExitToHome", J_void),
     M(APP, "Device_ForceRotateToOrientation", J_void),
     M(APP, "Diag_GetDeviceID", J_device_id),
-    /* The calls the game makes that the host answers with nothing: the
-     * splash screen (the host has none), the crash-report check (there is no
-     * crash report), the notification channels (the daily reminders do not
-     * fire), the Nimble component registration (the SDK's own), and the HTTP
-     * transaction's timeout (the host's own wait is bounded already). */
+    /* The calls with no platform work: the splash screen (the host has none),
+     * the crash-report check (there is no crash report), Nimble component
+     * registration (the SDK's own), and the HTTP timeout (the host's wait is bounded). */
     M(APP, "UI_DidRecieveFocus", J_void),
     M(ACT, "getHasCrashReport", J_false),
     M(NOTIF, "<init>", J_void),
-    M(NOTIF, "createNotificationChannel", J_void),
-    M(NOTIF, "deleteNotificationChannel", J_void),
+    M(NOTIF, "createNotificationChannel", J_notif_create_channel),
+    M(NOTIF, "deleteNotificationChannel", J_notif_delete_channel),
+    M(NOTIF, "removeScheduledNotification", J_notif_remove_one),
+    M(NOTIF, "removeAllScheduledNotifications", J_notif_clear),
+    M(NOTIF, "removeScheduledNotificationsBySource", J_notif_remove_source),
     M(NOTIF, "scheduleBasicNotification", J_notif_schedule),
     M(NOTIF, "getScheduledLocalNotificationsData", J_notif_scheduled_data),
+    M(NOTIF, "getTimezone", J_notif_timezone),
     M(TXN, "SetTimeout", J_void),
     M(TXN, "SetRequestBody", J_http_set_body),
     M(CLOUD, "Cloud_RequestAuthCode", J_cloud_request_auth_code),
@@ -1347,7 +1737,7 @@ static const tl_jhle k_hle[] = {
     M(APP, "Info_SysGetActivityName", J_activity_name),
     M(APP, "Info_SysGetUserLocale", J_locale),
     M(APP, "Info_SysGetCountryCodeString", J_country),
-    M(APP, "Info_SysGetIntentExtraDataString", J_empty),
+    M(APP, "Info_SysGetIntentExtraDataString", J_intent_extra_data),
     M(APP, "Web_SysOpenURL", J_open_url),
     M(APP, "Config_ConfigKeyExists", J_config_exists),
     M(APP, "Config_ConfigEraseKey", J_config_erase),

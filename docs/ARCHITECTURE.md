@@ -79,6 +79,12 @@ answers the few calls into those parts). The pieces that matter here:
 - **Lifecycle.** Hiding, minimizing, closing (when kept), a sleeping display or the iOS app
   switcher send the game Android's background sequence (it saves then) and stop drawing; coming
   back sends the foreground sequence. The game shows its own pause menu after that.
+- **Reminders.** `AndroidNotification` crosses a host hook: the shared C driver stores Android's
+  per-ID `userInfo` list and typed Nimble values in the app data folder, while
+  `pvz2-notifications.h` schedules through UserNotifications on iOS and Mac. The permission
+  request waits for a pending reminder and an active app; tapping a reminder makes its
+  `data.fields` available to the game's intent getter. The Mac test switch logs requests without
+  prompting or scheduling them.
 - **Input.** Touches and text go into the game's own input queue (`UI_ProcessEvents`), as Android's
   view would deliver them. The keyboard features call the game's own functions instead of faking
   taps: seed packet pick, shovel, collect suns and coins, pause/resume; each is refused unless a

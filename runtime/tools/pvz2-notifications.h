@@ -1,0 +1,284 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+#ifndef PVZ2_NOTIFICATIONS_H
+#define PVZ2_NOTIFICATIONS_H
+
+#import <Foundation/Foundation.h>
+#import <TargetConditionals.h>
+#import <UserNotifications/UserNotifications.h>
+
+#include "husk-tl-pvz2.h"
+
+void tl_log_line(const char *fmt, ...);
+
+@interface PVZ2NotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
+@end
+
+static void pvz2_capture_notification_fields(NSDictionary *fields)
+{
+    tl_pvz2_clear_intent_extra_data();
+    [fields enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
+        (void)stop;
+        if ([key isKindOfClass:NSString.class] && [value isKindOfClass:NSString.class])
+            tl_pvz2_set_intent_extra_data([key UTF8String], [value UTF8String]);
+    }];
+}
+
+static void pvz2_capture_notification_response(UNNotificationResponse *response)
+{
+    pvz2_capture_notification_fields(response.notification.request.content.userInfo);
+}
+
+static void pvz2_notifications_app_became_active(void);
+
+@implementation PVZ2NotificationDelegate
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+       willPresentNotification:(UNNotification *)notification
+         withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler
+{
+    (void)center; (void)notification;
+    completionHandler(UNNotificationPresentationOptionAlert |
+                      UNNotificationPresentationOptionSound |
+                      UNNotificationPresentationOptionBadge);
+}
+
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+ didReceiveNotificationResponse:(UNNotificationResponse *)response
+          withCompletionHandler:(void (^)(void))completionHandler
+{
+    (void)center;
+    pvz2_capture_notification_response(response);
+    tl_log_line("pvz2: opened local reminder; its data.fields are available to the game");
+    completionHandler();
+}
+@end
+
+static dispatch_queue_t pvz2_notification_queue;
+static NSMutableDictionary<NSNumber *, NSDictionary *> *pvz2_pending_reminders;
+static NSMutableDictionary<NSString *, NSString *> *pvz2_channel_sounds;
+static PVZ2NotificationDelegate *pvz2_notification_delegate;
+static BOOL pvz2_permission_requested, pvz2_permission_resolved, pvz2_permission_granted;
+
+static void pvz2_notifications_init(void)
+{
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        pvz2_notification_queue = dispatch_queue_create("io.reflourished.pvz2.notifications", DISPATCH_QUEUE_SERIAL);
+        pvz2_pending_reminders = [NSMutableDictionary dictionary];
+        pvz2_channel_sounds = [NSMutableDictionary dictionary];
+        pvz2_notification_delegate = [PVZ2NotificationDelegate new];
+        UNUserNotificationCenter.currentNotificationCenter.delegate = pvz2_notification_delegate;
+    });
+}
+
+static NSString *pvz2_string(const char *s)
+{
+    return s ? [NSString stringWithUTF8String:s] : nil;
+}
+
+static NSString *pvz2_request_id(NSInteger identifier, NSString *kind)
+{
+    return [NSString stringWithFormat:@"pvz2.reminder.%ld.%@", (long)identifier, kind];
+}
+
+static UNNotificationTrigger *pvz2_absolute_trigger(int64_t fireTimeMs)
+{
+    NSDate *date = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fireTimeMs / 1000.0];
+    NSCalendar *calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+    NSTimeZone *utc = [NSTimeZone timeZoneForSecondsFromGMT:0];
+    calendar.timeZone = utc;
+    NSDateComponents *parts = [calendar components:NSCalendarUnitYear | NSCalendarUnitMonth |
+        NSCalendarUnitDay | NSCalendarUnitHour | NSCalendarUnitMinute | NSCalendarUnitSecond
+        fromDate:date];
+    parts.calendar = calendar;
+    parts.timeZone = utc;
+    return [UNCalendarNotificationTrigger triggerWithDateMatchingComponents:parts repeats:NO];
+}
+
+static UNMutableNotificationContent *pvz2_content(NSDictionary *reminder)
+{
+    UNMutableNotificationContent *content = [UNMutableNotificationContent new];
+    content.title = reminder[@"title"] ?: @"";
+    content.body = reminder[@"body"] ?: @"";
+    content.threadIdentifier = [NSString stringWithFormat:@"PVZ2.%@", reminder[@"group"] ?: @0];
+    id userInfo = reminder[@"userInfo"];
+    content.userInfo = [userInfo isKindOfClass:NSString.class] ? @{ @"userInfo": userInfo, @"notificationType": @"LN" } :
+                                  @{ @"notificationType": @"LN" };
+
+    NSString *channel = reminder[@"channel"];
+    NSString *sound = channel.length ? pvz2_channel_sounds[channel] : nil;
+    if (!sound) sound = reminder[@"sound"];
+    if (sound.length) {
+        if (!sound.pathExtension.length) sound = [sound stringByAppendingPathExtension:@"caf"];
+        content.sound = [UNNotificationSound soundNamed:sound];
+    } else {
+        content.sound = UNNotificationSound.defaultSound;
+    }
+    return content;
+}
+
+static void pvz2_add_request(NSDictionary *reminder, NSString *kind, UNNotificationTrigger *trigger)
+{
+    NSInteger identifier = [reminder[@"id"] integerValue];
+    UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:pvz2_request_id(identifier, kind)
+        content:pvz2_content(reminder) trigger:trigger];
+    [UNUserNotificationCenter.currentNotificationCenter addNotificationRequest:request
+        withCompletionHandler:^(NSError *error) {
+            if (error) tl_log_line("pvz2: reminder %ld failed to reach UserNotifications (%s)",
+                                   (long)identifier, error.localizedDescription.UTF8String);
+        }];
+}
+
+static void pvz2_schedule_authorized(NSDictionary *reminder)
+{
+    NSInteger identifier = [reminder[@"id"] integerValue];
+    int64_t fireTimeMs = [reminder[@"fireTimeMs"] longLongValue];
+    NSInteger interval = [reminder[@"interval"] integerValue];
+    NSString *onceID = pvz2_request_id(identifier, @"first");
+    NSString *repeatID = pvz2_request_id(identifier, @"repeat");
+    [UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:@[onceID, repeatID]];
+
+    NSTimeInterval delay = ((NSTimeInterval)fireTimeMs / 1000.0) - NSDate.date.timeIntervalSince1970;
+    UNNotificationTrigger *first = delay < 1.0 ?
+        [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:1 repeats:NO] : pvz2_absolute_trigger(fireTimeMs);
+    pvz2_add_request(reminder, @"first", first);
+
+    if (interval > 0) {
+        if (interval < 60) {
+            tl_log_line("pvz2: reminder %ld repeat interval %ld s is below Apple's 60 s repeating-trigger minimum; only the first fire is scheduled",
+                        (long)identifier, (long)interval);
+        } else {
+            NSTimeInterval firstRepeatDelay = MAX((NSTimeInterval)interval,
+                delay + (NSTimeInterval)interval);
+            UNNotificationTrigger *repeat = [UNTimeIntervalNotificationTrigger
+                triggerWithTimeInterval:firstRepeatDelay repeats:YES];
+            pvz2_add_request(reminder, @"repeat", repeat);
+        }
+    }
+}
+
+static void pvz2_drain_reminders(void)
+{
+    if (!pvz2_permission_resolved) return;
+    NSArray<NSDictionary *> *scheduled = pvz2_pending_reminders.allValues;
+    [pvz2_pending_reminders removeAllObjects];
+    if (!pvz2_permission_granted) {
+        for (NSDictionary *r in scheduled)
+            tl_log_line("pvz2: reminder %ld not scheduled (notification permission denied)", (long)[r[@"id"] integerValue]);
+        return;
+    }
+    for (NSDictionary *r in scheduled) pvz2_schedule_authorized(r);
+}
+
+static BOOL pvz2_application_is_active(void)
+{
+#if TARGET_OS_IPHONE
+    return UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+#else
+    return NSApp.isActive;
+#endif
+}
+
+static void pvz2_request_authorization_if_needed(void)
+{
+    if (pvz2_permission_resolved || pvz2_permission_requested || !pvz2_pending_reminders.count ||
+        !pvz2_application_is_active()) return;
+    pvz2_permission_requested = YES;
+    [UNUserNotificationCenter.currentNotificationCenter requestAuthorizationWithOptions:
+        (UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge)
+        completionHandler:^(BOOL granted, NSError *error) {
+            dispatch_async(pvz2_notification_queue, ^{
+                pvz2_permission_resolved = YES;
+                pvz2_permission_granted = granted && !error;
+                if (error) tl_log_line("pvz2: notification authorization failed (%s)", error.localizedDescription.UTF8String);
+                pvz2_drain_reminders();
+            });
+        }];
+}
+
+static void pvz2_schedule_reminder(const tl_pvz2_reminder *reminder)
+{
+    NSDictionary *item = @{
+        @"id": @(reminder->identifier), @"group": @(reminder->group_identifier),
+        @"fireTimeMs": @(reminder->fire_time_ms), @"interval": @(reminder->seconds_interval),
+        @"title": pvz2_string(reminder->title) ?: @"", @"body": pvz2_string(reminder->body) ?: @"",
+        @"sound": pvz2_string(reminder->sound) ?: @"", @"channel": pvz2_string(reminder->channel_id) ?: @"",
+        @"userInfo": pvz2_string(reminder->user_info) ?: [NSNull null],
+    };
+    dispatch_async(pvz2_notification_queue, ^{
+        NSNumber *key = item[@"id"];
+        pvz2_pending_reminders[key] = item;
+        if (pvz2_permission_resolved) { pvz2_drain_reminders(); return; }
+        pvz2_request_authorization_if_needed();
+    });
+}
+
+static void pvz2_notifications_app_became_active(void)
+{
+    dispatch_async(pvz2_notification_queue, ^{ pvz2_request_authorization_if_needed(); });
+}
+
+static void pvz2_cancel_reminder(int identifier)
+{
+    dispatch_async(pvz2_notification_queue, ^{
+        [pvz2_pending_reminders removeObjectForKey:@(identifier)];
+        [UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:@[
+            pvz2_request_id(identifier, @"first"), pvz2_request_id(identifier, @"repeat")]];
+    });
+}
+
+static void pvz2_cancel_all_reminders(const int *identifiers, int count)
+{
+    NSMutableArray<NSNumber *> *keys = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
+    NSMutableArray<NSString *> *requestIDs = [NSMutableArray arrayWithCapacity:(NSUInteger)count * 2];
+    for (int i = 0; i < count; i++) {
+        NSNumber *key = @(identifiers[i]);
+        [keys addObject:key];
+        [requestIDs addObject:pvz2_request_id(identifiers[i], @"first")];
+        [requestIDs addObject:pvz2_request_id(identifiers[i], @"repeat")];
+    }
+    NSArray<NSNumber *> *savedKeys = [keys copy];
+    NSArray<NSString *> *savedRequestIDs = [requestIDs copy];
+    dispatch_async(pvz2_notification_queue, ^{
+        [pvz2_pending_reminders removeObjectsForKeys:savedKeys];
+        [UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:savedRequestIDs];
+    });
+}
+
+static void pvz2_create_notification_channel(const char *identifier, const char *name,
+                                             const char *description, const char *sound)
+{
+    (void)name; (void)description;
+    NSString *key = pvz2_string(identifier) ?: @"";
+    NSString *value = pvz2_string(sound) ?: @"";
+    dispatch_async(pvz2_notification_queue, ^{ pvz2_channel_sounds[key] = value; });
+}
+
+static void pvz2_delete_notification_channel(const char *identifier)
+{
+    NSString *key = pvz2_string(identifier) ?: @"";
+    dispatch_async(pvz2_notification_queue, ^{ [pvz2_channel_sounds removeObjectForKey:key]; });
+}
+
+static const char *pvz2_notification_timezone(void)
+{
+    static char name[128];
+    NSString *timezone = NSTimeZone.localTimeZone.name;
+    snprintf(name, sizeof(name), "%s", timezone.UTF8String ?: "UTC");
+    return name;
+}
+
+static void pvz2_notifications_install(void)
+{
+    pvz2_notifications_init();
+}
+
+static const tl_pvz2_notification_hooks pvz2_notification_hooks = {
+    .schedule = pvz2_schedule_reminder,
+    .cancel = pvz2_cancel_reminder,
+    .cancel_all = pvz2_cancel_all_reminders,
+    .create_channel = pvz2_create_notification_channel,
+    .delete_channel = pvz2_delete_notification_channel,
+    .timezone = pvz2_notification_timezone,
+};
+
+#endif

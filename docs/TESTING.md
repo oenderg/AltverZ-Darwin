@@ -23,6 +23,7 @@ What it sets (you can set these yourself when running the binary by hand):
 | `TL_DATA` | the data folder (default: `~/Library/Application Support/PvZ2 Reflourished`) |
 | `TL_PVZ2_CDN=offline` | skip CDN networking and replay the local archive with a fresh device-clock UTC Date |
 | `TL_PVZ2_OPEN_URL=log` | validate game web links and log `pvz2: open URL <url> (test: not opened)` without opening another app; use for every automated link test |
+| `TL_PVZ2_NOTIFY=log` | log reminders with their computed UTC fire time and text; never ask permission or schedule a notification; use on the Mac |
 | `TL_PVZ2_MAIN_TAR` | override the writable CDN cache path; skips bundle staging (use a test copy) |
 | `TL_PVZ2_FRAMES`, `TL_PVZ2_FRAME_EVERY` | save only this app's rendered frame as `latest.bmp` in an existing directory, every N frames; works with the lid closed |
 | `TL_PVZ2_LOG` | where the log goes |
@@ -39,6 +40,12 @@ What it sets (you can set these yourself when running the binary by hand):
 Launch arguments after `--` override the app's settings for that run only, without changing them:
 `-resizeMode Fixed|Adapt`, `-fixedAspect display|game|16:9|...`, `-renderSharp YES|NO`,
 `-closeAction quit|pause`, `-confirmQuit NO`. Pass them in tests: your own settings may differ.
+
+Reminder logs include the Android notification ID, first-fire delay, repeat interval, title and
+body. `pvz2-reminders.tsv` and `nimble-persistence.tsv` in the test data folder back reminders and
+Nimble values across launches.
+The normal Mac/iOS path uses UserNotifications, so Mac runs must set `TL_PVZ2_NOTIFY=log` to avoid
+permission prompts and banners.
 
 ## Web links
 

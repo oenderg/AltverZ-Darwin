@@ -56,6 +56,44 @@ to and owns persistence. Existing saves keep their stored PCPID and quest IDs,
 including IDs made by the old constant stub; there is no identity migration.
 `TL_JNI_TRACE=2` logs generated UUIDs for testing.
 
+## Local reminders
+
+Android's `AndroidNotification.scheduleBasicNotification` stores `source`, `groupid` and the
+game's serialized `userInfo` by notification ID. `fireAt` is an absolute Unix timestamp in
+seconds (`0` means now); a positive `secondsInterval` repeats from that first fire time. If a
+repeating time is already past, Android advances it to the next interval boundary. A past
+one-shot is discarded. The receiver uses `title`, `message`, and its channel's sound, and puts
+`userInfo` plus `notificationType=LN` in `data.fields` for the activity. The scheduled-data getter
+returns those raw `userInfo` fragments joined with commas inside `[...]`, including `[]` when
+empty; they are already serialized JSON, so they are not quoted again.
+
+The driver keeps that list atomically in `pvz2-reminders.tsv` under the app data folder. Removing
+one ID or all IDs cancels their pending local notifications and removes the list entries. The
+Android `removeScheduledNotificationsBySource` implementation only removes matching list entries;
+it does not cancel the AlarmManager requests, so the port preserves that behavior. The Android
+group ID maps to Apple's notification thread; channel IDs select channel sound. Android's
+channel names/descriptions, activity class, action and drawable icon have no direct UserNotifications
+equivalent; the notification opens the app and its `data.fields` are restored through
+`Info_SysGetIntentExtraDataString`.
+The game's observed channels have empty sound names and use the system default. A named Android
+raw sound is passed to Apple as a `.caf` resource name, but custom sound playback is unverified
+because the app build does not bundle a converted sound resource.
+
+The first actual schedule requests alert, sound and badge authorization while the app is active,
+not at launch. A denial leaves the reminder unscheduled and is logged. `TL_PVZ2_NOTIFY=log` stores
+the reminder data and logs the computed UTC fire time and text, but neither prompts nor schedules.
+Apple's repeating time-interval trigger requires at least 60 seconds; shorter Android repeat
+intervals can only receive the first fire on these hosts.
+
+## Nimble persistence
+
+Nimble's `Persistence` stores Java-serialized `Serializable` values per
+`nimble.persistence.<component>` scope and delays disk writes by 500 ms. The active game path stores
+the birthdate as `java/lang/String`. The driver writes supported strings and boxed scalar values
+to `nimble-persistence.tsv` in the host data folder with atomic replacement, and restores their
+original Java types at the next process start. `setEncryption` remains a no-op, as in the port
+before persistence was added.
+
 ## Web links
 
 `Web_SysOpenURL` calls a host hook: AppKit's `NSWorkspace openURL:` on Mac,
