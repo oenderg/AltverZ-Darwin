@@ -39,6 +39,15 @@ static const char *const pvz2_default_slot_keys[PVZ2_SLOT_COUNT] = {
 };
 #define PVZ2_DEFAULT_SHOVEL_KEY "S"
 
+/* The other in-level shortcuts' keys, out of the box: fast-forward, picking
+ * up plant food, and the level's power-up buttons from left to right. */
+#define PVZ2_DEFAULT_FAST_FORWARD_KEY "F"
+#define PVZ2_DEFAULT_PLANT_FOOD_KEY   "Q"
+#define PVZ2_POWERUP_COUNT            3
+static const char *const pvz2_default_powerup_keys[PVZ2_POWERUP_COUNT] = {
+    "Z", "X", "C"
+};
+
 /* Where the seed bank is, in the game's own 1748x804. */
 #define PVZ2_PACKET_X     56.0
 #define PVZ2_PACKET_Y    129.0

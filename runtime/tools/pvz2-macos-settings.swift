@@ -4,7 +4,8 @@
 // watches them, so a change acts at once -- there is no "save".
 //
 //   General   the window: Fixed (one shape) or Adapt, the shape, and what closing it does
-//   Keyboard  the key for each seed packet, the shovel and collecting (click a field, press a key)
+//   Keyboard  the key for each seed packet, the shovel, collecting, fast-forward,
+//             plant food and the power-ups (click a field, press a key)
 //   About     the version, updates, and where the saves and the log are
 //
 // The host opens it with [NSClassFromString(@"PVZ2Settings") show].
@@ -23,8 +24,15 @@ private enum Key {
     static let defaultShovel = "S"
     static let collect = "collectSunKey"
     static let defaultCollect = "Space"
+    static let fastForward = "fastForwardKey"
+    static let defaultFastForward = "F"
+    static let plantFood = "plantFoodKey"
+    static let defaultPlantFood = "Q"
+    static let powerups = (1...3).map { "powerup\($0)Key" }
+    static let defaultPowerups = ["Z", "X", "C"]
     /// Every shortcut and its default, for the one-key-one-shortcut rule.
-    static let all = zip(slots + [shovel, collect], defaultSlots + [defaultShovel, defaultCollect]).map { ($0, $1) }
+    static let all = zip(slots + [shovel, collect, fastForward, plantFood] + powerups,
+                         defaultSlots + [defaultShovel, defaultCollect, defaultFastForward, defaultPlantFood] + defaultPowerups).map { ($0, $1) }
     static let closeAction = "closeAction"
     static let confirmQuit = "confirmQuit"
     static let renderSharp = "renderSharp"
@@ -362,13 +370,32 @@ private struct KeyboardPane: View {
     var body: some View {
         Pane {
             Section {
-                ForEach(0..<8, id: \.self) { i in
-                    KeyRow(label: "Seed packet \(i + 1)", key: Key.slots[i], fallback: Key.defaultSlots[i])
+                KeyRow(label: "Collect sun, coins, gems and plant food", key: Key.collect, fallback: Key.defaultCollect)
+            } header: {
+                Text("Collecting")
+            } footer: {
+                Text("Every sun, coin, gem and plant food drop flies to its counter, as if clicked.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                KeyRow(label: "Fast-forward", key: Key.fastForward, fallback: Key.defaultFastForward)
+                KeyRow(label: "Plant food", key: Key.plantFood, fallback: Key.defaultPlantFood)
+            } header: {
+                Text("Playing")
+            } footer: {
+                Text("Fast-forward presses the game's own button. Plant food is picked up from the counter.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                ForEach(0..<3, id: \.self) { i in
+                    KeyRow(label: "Power-up \(i + 1)", key: Key.powerups[i], fallback: Key.defaultPowerups[i])
                 }
             } header: {
-                Text("Seed packets")
+                Text("Power-ups")
             } footer: {
-                Text("A key takes that seed packet in hand; click the lawn to plant it. The same key again puts it back.")
+                Text("The level's power-up buttons, left to right: a key selects one, then click the lawn.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -382,11 +409,13 @@ private struct KeyboardPane: View {
                     .foregroundStyle(.secondary)
             }
             Section {
-                KeyRow(label: "Collect sun and coins", key: Key.collect, fallback: Key.defaultCollect)
+                ForEach(0..<8, id: \.self) { i in
+                    KeyRow(label: "Seed packet \(i + 1)", key: Key.slots[i], fallback: Key.defaultSlots[i])
+                }
             } header: {
-                Text("Collecting")
+                Text("Seed packets")
             } footer: {
-                Text("Every sun and coin on the lawn flies to its counter, as if you had clicked each one.")
+                Text("A key takes that seed packet in hand; click the lawn to plant it. The same key again puts it back.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

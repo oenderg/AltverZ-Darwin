@@ -894,8 +894,30 @@ static int native_seed_pick_mode(void)
     sc.discoverabilityTitle = @"Shovel";
     [cmds addObject:sc];
     UIKeyCommand *collect = [UIKeyCommand keyCommandWithInput:@" " modifierFlags:0 action:@selector(pvz2_shortcut:)];
-    collect.discoverabilityTitle = @"Collect suns and coins";
+    collect.discoverabilityTitle = @"Collect suns, coins, gems and plant food";
     [cmds addObject:collect];
+    /* The other in-level keys: fast-forward, plant food, and the level's
+     * power-up buttons from left to right. */
+    char fastLower = (char)tolower((unsigned char)PVZ2_DEFAULT_FAST_FORWARD_KEY[0]);
+    UIKeyCommand *fast = [UIKeyCommand keyCommandWithInput:[NSString stringWithFormat:@"%c", fastLower]
+                                             modifierFlags:0
+                                                    action:@selector(pvz2_shortcut:)];
+    fast.discoverabilityTitle = @"Fast-forward";
+    [cmds addObject:fast];
+    char foodLower = (char)tolower((unsigned char)PVZ2_DEFAULT_PLANT_FOOD_KEY[0]);
+    UIKeyCommand *food = [UIKeyCommand keyCommandWithInput:[NSString stringWithFormat:@"%c", foodLower]
+                                             modifierFlags:0
+                                                    action:@selector(pvz2_shortcut:)];
+    food.discoverabilityTitle = @"Plant food";
+    [cmds addObject:food];
+    for (int i = 0; i < PVZ2_POWERUP_COUNT; i++) {
+        char lower = (char)tolower((unsigned char)pvz2_default_powerup_keys[i][0]);
+        UIKeyCommand *power = [UIKeyCommand keyCommandWithInput:[NSString stringWithFormat:@"%c", lower]
+                                                  modifierFlags:0
+                                                         action:@selector(pvz2_shortcut:)];
+        power.discoverabilityTitle = [NSString stringWithFormat:@"Power-up %d", i + 1];
+        [cmds addObject:power];
+    }
     /* Escape, as on the Mac: the pause button in a level, Back anywhere else. */
     UIKeyCommand *back = [UIKeyCommand keyCommandWithInput:UIKeyInputEscape modifierFlags:0 action:@selector(pvz2_shortcut:)];
     back.discoverabilityTitle = @"Pause / Back";
@@ -917,6 +939,24 @@ static int native_seed_pick_mode(void)
         return;
     }
     if ([cmd.input isEqualToString:@" "]) { tl_pvz2_request_collect_sun(); return; }
+    if (!chars) return;
+    if (strcasecmp(chars, PVZ2_DEFAULT_FAST_FORWARD_KEY) == 0) {
+        tl_pvz2_request_fast_forward();
+        tl_log_line("ios: the shortcut asks the game's own fast-forward button");
+        return;
+    }
+    if (strcasecmp(chars, PVZ2_DEFAULT_PLANT_FOOD_KEY) == 0) {
+        tl_pvz2_request_plant_food();
+        tl_log_line("ios: the shortcut asks the game's own plant food counter");
+        return;
+    }
+    for (int i = 0; i < PVZ2_POWERUP_COUNT; i++) {
+        if (chars && strcasecmp(chars, pvz2_default_powerup_keys[i]) == 0) {
+            tl_pvz2_request_powerup(i);
+            tl_log_line("ios: the shortcut for power-up %d", i + 1);
+            return;
+        }
+    }
     int slot = pvz2_slot_for_key(chars, pvz2_default_slot_keys, PVZ2_DEFAULT_SHOVEL_KEY);
     if (slot < 0) return;
     double x, y;

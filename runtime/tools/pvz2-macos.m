@@ -2282,6 +2282,27 @@ static bool pointer_in_game(double *gx, double *gy)
             tl_pvz2_request_collect_sun();
             return;
         }
+        NSString *fastForwardKey = setting_key(@"fastForwardKey") ?: @(PVZ2_DEFAULT_FAST_FORWARD_KEY);
+        if (name && fastForwardKey.length && [fastForwardKey caseInsensitiveCompare:name] == NSOrderedSame) {
+            tl_pvz2_request_fast_forward();
+            tl_log_line("macos: the shortcut asks the game's own fast-forward button");
+            return;
+        }
+        NSString *plantFoodKey = setting_key(@"plantFoodKey") ?: @(PVZ2_DEFAULT_PLANT_FOOD_KEY);
+        if (name && plantFoodKey.length && [plantFoodKey caseInsensitiveCompare:name] == NSOrderedSame) {
+            tl_pvz2_request_plant_food();
+            tl_log_line("macos: the shortcut asks the game's own plant food counter");
+            return;
+        }
+        for (int i = 0; i < PVZ2_POWERUP_COUNT; i++) {
+            NSString *stored = setting_key([NSString stringWithFormat:@"powerup%dKey", i + 1]);
+            NSString *powerupKey = stored ?: @(pvz2_default_powerup_keys[i]);
+            if (name && powerupKey.length && [powerupKey caseInsensitiveCompare:name] == NSOrderedSame) {
+                tl_pvz2_request_powerup(i);
+                tl_log_line("macos: the shortcut for power-up %d", i + 1);
+                return;
+            }
+        }
         int slot = shortcut_slot(name);
         if (slot >= 0) {
             double x, y, sx, sy;

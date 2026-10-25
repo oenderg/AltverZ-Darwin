@@ -157,9 +157,22 @@ void tl_pvz2_touch_injected(int phase, int id, float x, float y);
 void tl_pvz2_set_seed_pick(int on);
 void tl_pvz2_request_seed_pick(int slot);
 
-/* Collect the current suns and real coins through their native click/flight
- * path, on the game thread. Ignored outside unpaused, unobscured live play. */
+/* Collect the current suns, real coins, gems and plant food through their
+ * native click/flight path, on the game thread. Ignored outside unpaused,
+ * unobscured live play. */
 void tl_pvz2_request_collect_sun(void);
+
+/* The game's own fast-forward button: its press handler toggles the game's
+ * speed. Done on the game thread, in live play only. */
+void tl_pvz2_request_fast_forward(void);
+
+/* Pick up one plant food from the counter, as a tap on it does, so the next
+ * click on a plant uses it. Done on the game thread, in live play only. */
+void tl_pvz2_request_plant_food(void);
+
+/* Select a power-up (0 is the leftmost button of the level's own set), as a
+ * tap on its button does; the next click on the lawn uses it. */
+void tl_pvz2_request_powerup(int index);
 
 /* Escape: the game's pause button in live play, Android's Back anywhere else. */
 void tl_pvz2_request_escape(void);

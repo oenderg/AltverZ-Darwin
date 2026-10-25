@@ -2838,10 +2838,34 @@ static atomic_int g_seed_pick_pending;   /* a slot is waiting */
 static atomic_int g_seed_pick_slot;
 static atomic_int g_seed_pick_on;         /* the switch: 0 off, 1 on */
 static atomic_int g_collect_sun_pending;
+static atomic_int g_fast_forward_pending;
+static atomic_int g_plant_food_pending;
+static atomic_int g_powerup_pending;
+static atomic_int g_powerup_index;
 
 void tl_pvz2_request_collect_sun(void)
 {
     atomic_store(&g_collect_sun_pending, 1);
+}
+
+void tl_pvz2_request_fast_forward(void)
+{
+    atomic_store(&g_fast_forward_pending, 1);
+}
+
+void tl_pvz2_request_plant_food(void)
+{
+    atomic_store(&g_plant_food_pending, 1);
+}
+
+void tl_pvz2_request_powerup(int index)
+{
+    if (index < 0 || index >= 3) {
+        tl_log_line("pvz2: the power-up shortcut: ignored: there is no power-up %d", index + 1);
+        return;
+    }
+    atomic_store(&g_powerup_index, index);
+    atomic_store(&g_powerup_pending, 1);
 }
 
 /* Escape: in live play the game's own pause button, pressed the way a finger
@@ -2997,11 +3021,17 @@ ignored:
 /* Board::GetCollectingSun (aa35e4) uses the guest's snapshot iterator over
  * pool 0x48, then resolves each managed reference. Use that same iterator,
  * including its destructor: it keeps the pool stable across callbacks.
- * CollectableSun and real CollectableCoin both dispatch pointer-down through
- * 64f804 -> vtable+198 (64f998). The latter emits the native collect request;
+ *
+ * CollectableSun (vtable 0x2395208), real CollectableCoin (0x23bb9b8),
+ * CollectableGem (0x2399d48) and CollectablePlantfood (0x24250b8) all use the
+ * same Collectable layout and the same base pointer-down path: 64f804 ->
+ * vtable+0x198 (64f998). The latter emits the native collect request;
  * Board::OnCollectableClicked (a9c5cc) chooses the counter and flight, and
- * a9d838 awards its value on arrival. Never write sun/currency or object state.
- * Exact vtables exclude rewards, fake coins and other interactive objects. */
+ * a9d838 awards its value on arrival. The gem's and plant food's vtable slots
+ * from +0x20 to +0x138 are identical to the sun's; their own classes only add
+ * their value/type members. Never write sun/currency/plant-food counters or
+ * object state. Exact vtables exclude rewards, fake coins and other
+ * interactive objects: CollectableCoinFake is 0x23bbc18 and is not accepted. */
 #define GUEST_COLLECTABLE_ITERATOR 0x11beef0
 #define GUEST_ITERATOR_HAS_NEXT    0x14ea3cc
 #define GUEST_ITERATOR_REFERENCE   0x14ea364
@@ -3011,6 +3041,8 @@ ignored:
 #define GUEST_SUN_VALUE            0x75a96c
 #define GUEST_SUN_VTABLE           0x2395208
 #define GUEST_COIN_VTABLE          0x23bb9b8
+#define GUEST_GEM_VTABLE           0x2399d48
+#define GUEST_PLANTFOOD_VTABLE     0x24250b8
 
 static uint64_t guest_collectable_from_ref(uint64_t registry, uint64_t *ref, bool *ok)
 {
@@ -3052,7 +3084,9 @@ static void guest_collect_sun(void)
     }
     uint64_t sun_vtable = (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(GUEST_SUN_VTABLE);
     uint64_t coin_vtable = (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(GUEST_COIN_VTABLE);
-    if (!sun_vtable || !coin_vtable) return;
+    uint64_t gem_vtable = (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(GUEST_GEM_VTABLE);
+    uint64_t plantfood_vtable = (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(GUEST_PLANTFOOD_VTABLE);
+    if (!sun_vtable || !coin_vtable || !gem_vtable || !plantfood_vtable) return;
     bool ok = false;
     uint64_t registry = guest_call2(guest_code(GUEST_UI_REGISTRY), 0, 0, &ok);
     if (!ok || !registry) return;
@@ -3061,7 +3095,7 @@ static void guest_collect_sun(void)
     uint64_t iterator[4] __attribute__((aligned(16))) = { 0 };
     guest_call_x8(guest_code(GUEST_COLLECTABLE_ITERATOR), 0, 0x48, iterator, &ok);
     if (!ok) return;
-    int suns = 0, coins = 0, value = 0, seen = 0;
+    int suns = 0, coins = 0, gems = 0, plantfood = 0, value = 0, seen = 0;
     int32_t sun_before = 0;
     guest_read_bytes(board + 0x184, &sun_before, sizeof sun_before);
     while (ok && seen < 4096) {
@@ -3091,8 +3125,9 @@ static void guest_collect_sun(void)
             /* Pointer dispatch refuses disabled objects (80); the board's
              * collect callback refuses 40. State 1 is already collecting;
              * flag 10 marks a retired object. Repeated Space cannot award twice. */
-            if ((vtable == sun_vtable || vtable == coin_vtable) &&
-                !(flags & 0xd0) && state != 1) {
+            bool accepted = vtable == sun_vtable || vtable == coin_vtable ||
+                            vtable == gem_vtable || vtable == plantfood_vtable;
+            if (accepted && !(flags & 0xd0) && state != 1) {
                 int amount = 0;
                 if (vtable == sun_vtable) {
                     amount = (int)guest_call2(guest_code(GUEST_SUN_VALUE), item, 0, &ok);
@@ -3102,16 +3137,142 @@ static void guest_collect_sun(void)
                 if (!ok) break;
                 /* The callback may retire the object; never dereference it again. */
                 if (vtable == sun_vtable) { suns++; value += amount; }
-                else coins++;
+                else if (vtable == coin_vtable) coins++;
+                else if (vtable == gem_vtable) gems++;
+                else plantfood++;
             }
         }
         guest_call2(guest_code(GUEST_ITERATOR_NEXT), (uint64_t)(uintptr_t)iterator, 0, &ok);
     }
     bool destroy_ok = false;
     guest_call2(guest_code(GUEST_ITERATOR_DESTROY), (uint64_t)(uintptr_t)iterator, 0, &destroy_ok);
-    tl_log_line("pvz2: the collect shortcut: sun before=%d; requested %d sun(s), value=%d, %d coin(s), scanned=%d%s",
-                sun_before, suns, value, coins, seen,
+    tl_log_line("pvz2: the collect shortcut: sun before=%d; requested %d sun(s), value=%d, %d coin(s), %d gem(s), %d plant food, scanned=%d%s",
+                sun_before, suns, value, coins, gems, plantfood, seen,
                 ok && destroy_ok && seen < 4096 ? " (the native flight awards on arrival)" : " (stopped: native state unavailable)");
+}
+
+/* ---- fast-forward, plant food and power-ups -----------------------------
+ *
+ * All three are HUD widgets the game creates itself; their names and places
+ * are in the level's saved UI tree (save_UIWidgets.rton of a Modern Day
+ * level): UIFastForwardButton, UIPlantfood, and three UIPowerup buttons under
+ * UIPowerupHolder. The classes behind them:
+ *
+ *   FastForwardButton  vtable 0x24b2dc0. Its vtable +0x88 (0x12300ec) is the
+ *                      game's own toggle: it flips the byte at +0x19a (the
+ *                      button's on/off state) and tells the game/audio. Calling
+ *                      it is the press, without guessing a pixel.
+ *   PlantfoodUI        vtable 0x24c21b0. Its pointer-down (+0x90, 0x1311f90)
+ *                      starts the same pickup a finger on the counter does.
+ *   PowerupTimeUI      vtable 0x249dfa0. Its pointer-down (+0x90, 0x1162138)
+ *                      selects the power-up; the next lawn click uses it.
+ *
+ * The power-up buttons are all named UIPowerup. Their reference layout in the
+ * holder is 73 px wide, 98 px apart (x 19, 117, 215; holder 308 wide for the
+ * three). The holder's width compared with one button's tells how many this
+ * level has, whatever scale the app's design space is using.
+ */
+#define GUEST_FAST_FORWARD_VTABLE  0x24b2dc0
+#define GUEST_FAST_FORWARD_TOGGLE  0x88
+#define GUEST_FAST_FORWARD_STATE   0x19a
+#define PVZ2_POWERUP_STEP          98.0
+#define PVZ2_POWERUP_WIDTH         73.0
+
+static int g_plant_food_touch_down, g_plant_food_touch_x, g_plant_food_touch_y;
+static int g_powerup_touch_down, g_powerup_touch_x, g_powerup_touch_y;
+
+/* A named widget's rect, in the app's own design space. */
+static bool guest_widget_rect(const char *name, int *rect)
+{
+    rect[0] = rect[1] = rect[2] = rect[3] = 0;
+    void *widget = guest_find_widget(name);
+    return widget && guest_anchored_rect(widget, rect) && rect[2] > 0 && rect[3] > 0;
+}
+
+/* A named widget's centre, in the app's own design space. */
+static bool guest_widget_center(const char *name, double *cx, double *cy)
+{
+    int rect[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
+    if (!guest_widget_rect(name, rect)) return false;
+    *cx = rect[0] + rect[2] / 2.0;
+    *cy = rect[1] + rect[3] / 2.0;
+    return true;
+}
+
+static void guest_fast_forward(void)
+{
+    if (!guest_live_shortcut_board("the fast-forward shortcut")) return;
+    void *widget = guest_find_widget("UIFastForwardButton");
+    void *want = tl_aot_guest_data_ptr_any(GUEST_FAST_FORWARD_VTABLE);
+    uint64_t vtable = 0, fn = 0;
+    int8_t before = -1, after = -1;
+    if (!widget || !want ||
+        !guest_read_bytes((uint64_t)(uintptr_t)widget, &vtable, sizeof vtable) ||
+        vtable != (uint64_t)(uintptr_t)want ||
+        !guest_read_bytes(vtable + GUEST_FAST_FORWARD_TOGGLE, &fn, sizeof fn) || !fn) {
+        tl_log_line("pvz2: the fast-forward shortcut: ignored: the game's own button is not reachable");
+        return;
+    }
+    guest_read_bytes((uint64_t)(uintptr_t)widget + GUEST_FAST_FORWARD_STATE, &before, sizeof before);
+    bool ok = false;
+    guest_call2((void *)(uintptr_t)fn, (uint64_t)(uintptr_t)widget, 0, &ok);
+    guest_read_bytes((uint64_t)(uintptr_t)widget + GUEST_FAST_FORWARD_STATE, &after, sizeof after);
+    tl_log_line("pvz2: the fast-forward shortcut: %s the game's own button (state %d -> %d)",
+                ok ? "pressed" : "could not press", (int)before, (int)after);
+}
+
+static void guest_plant_food(void)
+{
+    if (!guest_live_shortcut_board("the plant food shortcut")) return;
+    double cx, cy;
+    if (!guest_widget_center("UIPlantfood", &cx, &cy)) {
+        tl_log_line("pvz2: the plant food shortcut: ignored: the game's own counter is not reachable");
+        return;
+    }
+    double s = guest_surface_scale();
+    int x = (int)(cx * s), y = (int)(cy * s);
+    g_plant_food_touch_x = x;
+    g_plant_food_touch_y = y;
+    g_plant_food_touch_down = 1;
+    tl_pvz2_touch(0, 1, (float)x, (float)y);
+    tl_log_line("pvz2: the plant food shortcut: picked up from the game's own counter at (%d,%d)", x, y);
+}
+
+static void guest_powerup(int index)
+{
+    if (index < 0 || index >= 3) return;
+    if (!guest_live_shortcut_board("the power-up shortcut")) return;
+    int holder[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
+    int first[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
+    void *holder_widget = guest_find_widget("UIPowerupHolder");
+    if (!holder_widget || !guest_anchored_rect(holder_widget, holder) ||
+        holder[2] <= 0 || !guest_widget_rect("UIPowerup", first)) {
+        tl_log_line("pvz2: the power-up shortcut: ignored: this level has no power-up buttons");
+        return;
+    }
+    /* The reference layout is 73 px wide, 98 px apart, holder 308 px for the
+     * three. Both rects come from the same tree, so their ratio is independent
+     * of the app's design scale: one button makes the holder 1.5 buttons wide,
+     * two 2.9, three 4.2. */
+    double ratio = (double)holder[2] / (double)first[2];
+    int count = ratio > 3.5 ? 3 : ratio > 2.2 ? 2 : 1;
+    if (index >= count) {
+        tl_log_line("pvz2: the power-up shortcut: ignored: this level has %d power-up(s), not %d",
+                    count, index + 1);
+        return;
+    }
+    /* The first button's centre, then the same tree's 98/73 spacing. */
+    double step = (double)first[2] * (PVZ2_POWERUP_STEP / PVZ2_POWERUP_WIDTH);
+    double cx = first[0] + first[2] / 2.0 + step * index;
+    double cy = first[1] + first[3] / 2.0;
+    double s = guest_surface_scale();
+    int x = (int)(cx * s), y = (int)(cy * s);
+    g_powerup_touch_x = x;
+    g_powerup_touch_y = y;
+    g_powerup_touch_down = 1;
+    tl_pvz2_touch(0, 1, (float)x, (float)y);
+    tl_log_line("pvz2: the power-up shortcut: selected power-up %d of %d at (%d,%d)",
+                index + 1, count, x, y);
 }
 
 /* The card of a slot, the game's own way. */
@@ -4357,6 +4518,23 @@ static void *gl_main(void *arg)
         if (atomic_exchange(&g_seed_pick_pending, 0))
             guest_seed_pick(atomic_load(&g_seed_pick_slot));
         if (atomic_exchange(&g_collect_sun_pending, 0)) guest_collect_sun();
+        if (atomic_exchange(&g_fast_forward_pending, 0)) guest_fast_forward();
+        /* The plant food and power-up presses are taps: the down now, the up
+         * a frame later, as a finger does. */
+        if (g_plant_food_touch_down) {
+            g_plant_food_touch_down = 0;
+            tl_pvz2_touch(3, 1, (float)g_plant_food_touch_x, (float)g_plant_food_touch_y);
+            tl_log_line("pvz2: the plant food shortcut: the touch was let go");
+        } else if (atomic_exchange(&g_plant_food_pending, 0)) {
+            guest_plant_food();
+        }
+        if (g_powerup_touch_down) {
+            g_powerup_touch_down = 0;
+            tl_pvz2_touch(3, 1, (float)g_powerup_touch_x, (float)g_powerup_touch_y);
+            tl_log_line("pvz2: the power-up shortcut: the touch was let go");
+        } else if (atomic_exchange(&g_powerup_pending, 0)) {
+            guest_powerup(atomic_load(&g_powerup_index));
+        }
         if (g_pause_touch_down) {
             g_pause_touch_down = 0;
             tl_pvz2_touch(3, 1, (float)g_pause_touch_x, (float)g_pause_touch_y);
