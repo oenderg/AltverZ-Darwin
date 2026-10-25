@@ -389,8 +389,11 @@ private struct KeyboardPane: View {
                     .foregroundStyle(.secondary)
             }
             Section {
-                ForEach(0..<3, id: \.self) { i in
-                    KeyRow(label: "Power-up \(i + 1)", key: Key.powerups[i], fallback: Key.defaultPowerups[i])
+                // Rows are identified by their settings key: plain indexes would repeat the
+                // seed packets' 0, 1, 2 in the same list, and the list then draws a row
+                // outside its section.
+                ForEach(Array(Key.powerups.enumerated()), id: \.element) { i, key in
+                    KeyRow(label: "Power-up \(i + 1)", key: key, fallback: Key.defaultPowerups[i])
                 }
             } header: {
                 Text("Power-ups")
@@ -409,8 +412,8 @@ private struct KeyboardPane: View {
                     .foregroundStyle(.secondary)
             }
             Section {
-                ForEach(0..<8, id: \.self) { i in
-                    KeyRow(label: "Seed packet \(i + 1)", key: Key.slots[i], fallback: Key.defaultSlots[i])
+                ForEach(Array(Key.slots.enumerated()), id: \.element) { i, key in
+                    KeyRow(label: "Seed packet \(i + 1)", key: key, fallback: Key.defaultSlots[i])
                 }
             } header: {
                 Text("Seed packets")
