@@ -57,6 +57,42 @@ and the mod's own content built in.
   * iPhone and iPad get updates through AltStore and SideStore with this repository's source.
   * Your saves stay, and a full app needs no second 1.3 GB download.
 
+<details>
+<summary><b>Screenshots</b></summary>
+<br>
+
+<table>
+  <tr>
+    <td align="center" valign="top">
+      <img src="docs/screenshots/mac-gameplay.webp" height="115" alt="PvZ2: Reflourished in a Mac window: Far Future Day 22 with plants, zombies and the performance overlay"><br>
+      <sub><b>Mac</b> - with the performance overlay.</sub>
+    </td>
+    <td align="center" valign="top">
+      <img src="docs/screenshots/iphone.webp" height="115" alt="PvZ2: Reflourished in landscape on an iPhone, its seed packets clear of the Dynamic Island"><br>
+      <sub><b>iPhone</b> - clear of the Dynamic Island.</sub>
+    </td>
+    <td align="center" valign="top">
+      <img src="docs/screenshots/ipad-window.webp" height="115" alt="PvZ2: Reflourished's Almanac in a window on an iPad, next to Safari"><br>
+      <sub><b>iPad</b> - in a window, next to your other apps.</sub>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td align="center" valign="top">
+      <img src="docs/screenshots/mac-settings.webp" height="250" alt="The Mac app's own Settings window: window mode, aspect ratio, closing and sharpness"><br>
+      <sub><b>Settings</b> - window shape, sharpness, keys.</sub>
+    </td>
+    <td align="center" valign="top">
+      <img src="docs/screenshots/mac-dmg.webp" height="250" alt="The Mac disk image window: drag PvZ2 Reflourished onto the Applications folder"><br>
+      <sub><b>Install</b> - drag it to Applications.</sub>
+    </td>
+  </tr>
+</table>
+
+</details>
+
 ## Install
 
 Every [release](https://github.com/oenderg/Reflourished-Darwin/releases/latest) has two
@@ -116,7 +152,7 @@ The results land in `out/`. Add `--ios` or `--mac` to build just one of them; le
 
 ## Known issues
 
-* Not tested on iPhone yet.
+* Tested on one iPhone so far.
 
 ## How it works
 
