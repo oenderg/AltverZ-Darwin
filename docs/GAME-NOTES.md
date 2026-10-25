@@ -79,9 +79,10 @@ The game's observed channels have empty sound names and use the system default. 
 raw sound is passed to Apple as a `.caf` resource name, but custom sound playback is unverified
 because the app build does not bundle a converted sound resource.
 
-At launch, the host reads notification authorization without prompting. If the status is still
-undetermined, the first actual schedule requests alert, sound and badge authorization while the app
-is active. A denial leaves the reminder unscheduled and is logged. On iOS, a short background task
+At launch, the host reads notification authorization. If it is still undetermined, the host asks
+for alert, sound and badge authorization once the game creates its notification channels (at
+launch, while the app is active): Android 13 asks at that moment for apps that target SDK 31, as
+this one does. A reminder scheduled before the answer waits for it. A denial leaves the reminder unscheduled and is logged. On iOS, a short background task
 keeps asynchronous notification adds alive until UserNotifications accepts or rejects them.
 `TL_PVZ2_NOTIFY=log` stores the reminder data and logs the computed UTC fire time and text, but
 neither prompts nor schedules.

@@ -82,7 +82,7 @@ answers the few calls into those parts). The pieces that matter here:
 - **Reminders.** `AndroidNotification` crosses a host hook: the shared C driver stores Android's
   per-ID `userInfo` list and typed Nimble values in the app data folder, while
   `pvz2-notifications.h` schedules through UserNotifications on iOS and Mac. The permission
-  request waits for a pending reminder and an active app; tapping a reminder makes its
+  request comes when the game creates its notification channels at launch (as on Android 13); tapping a reminder makes its
   `data.fields` available to the game's intent getter. The Mac test switch logs requests without
   prompting or scheduling them.
 - **Input.** Touches and text go into the game's own input queue (`UI_ProcessEvents`), as Android's

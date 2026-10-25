@@ -64,6 +64,9 @@ static NSMutableSet<NSNumber *> *pvz2_logged_dropped_repeats;
 static PVZ2NotificationDelegate *pvz2_notification_delegate;
 static BOOL pvz2_permission_requested, pvz2_permission_status_loaded;
 static BOOL pvz2_permission_resolved, pvz2_permission_granted;
+/* The game wants notifications: it created its channels at launch (Android 13 asks right then for
+ * apps like this one) or scheduled a reminder. */
+static BOOL pvz2_permission_wanted;
 static NSUInteger pvz2_adds_in_flight;
 #if TARGET_OS_IPHONE
 static UIBackgroundTaskIdentifier pvz2_background_task;
@@ -107,6 +110,7 @@ static void pvz2_notifications_init(void)
                         tl_log_line("pvz2: notification permission was denied before launch");
                         pvz2_drain_reminders();
                     } else if (status == UNAuthorizationStatusNotDetermined) {
+                        tl_log_line("pvz2: notification permission not asked yet");
                         pvz2_request_authorization_if_needed();
                     } else {
                         pvz2_permission_resolved = YES;
@@ -242,6 +246,22 @@ static void pvz2_schedule_authorized(NSDictionary *reminder)
     }
 }
 
+/* TL_PVZ2_NOTIFY=soon: one extra reminder a minute after permission is known, so delivery and the
+ * tap back into the game can be seen on a device whatever the profile has to remind about. */
+static void pvz2_schedule_test_reminder_once(void)
+{
+    static BOOL done;
+    const char *mode = getenv("TL_PVZ2_NOTIFY");
+    if (done || !mode || strcmp(mode, "soon")) return;
+    done = YES;
+    NSDictionary *test = @{ @"id": @(-1), @"group": @0,
+        @"fireTimeMs": @((int64_t)((NSDate.date.timeIntervalSince1970 + 60) * 1000)), @"interval": @0,
+        @"title": @"Plants vs Zombies 2", @"body": @"Test reminder (TL_PVZ2_NOTIFY=soon)",
+        @"sound": @"", @"channel": @"", @"userInfo": [NSNull null] };
+    pvz2_schedule_authorized(test);
+    tl_log_line("pvz2: test reminder scheduled a minute from now");
+}
+
 static void pvz2_drain_reminders(void)
 {
     if (!pvz2_permission_resolved) return;
@@ -253,6 +273,7 @@ static void pvz2_drain_reminders(void)
         return;
     }
     for (NSDictionary *r in scheduled) pvz2_schedule_authorized(r);
+    pvz2_schedule_test_reminder_once();
 }
 
 static BOOL pvz2_application_is_active(void)
@@ -266,16 +287,20 @@ static BOOL pvz2_application_is_active(void)
 
 static void pvz2_request_authorization_if_needed(void)
 {
+    const char *mode = getenv("TL_PVZ2_NOTIFY");
+    if (mode && !strcmp(mode, "log")) return;  /* tests: never a prompt on the tester's screen */
     if (!pvz2_permission_status_loaded || pvz2_permission_resolved || pvz2_permission_requested ||
-        !pvz2_pending_reminders.count ||
+        !pvz2_permission_wanted ||
         !pvz2_application_is_active()) return;
     pvz2_permission_requested = YES;
+    tl_log_line("pvz2: asking for notification permission");
     [UNUserNotificationCenter.currentNotificationCenter requestAuthorizationWithOptions:
         (UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge)
         completionHandler:^(BOOL granted, NSError *error) {
             dispatch_async(pvz2_notification_queue, ^{
                 pvz2_permission_resolved = YES;
                 pvz2_permission_granted = granted && !error;
+                tl_log_line("pvz2: notification permission %s", pvz2_permission_granted ? "granted" : "refused");
                 if (error) tl_log_line("pvz2: notification authorization failed (%s)", error.localizedDescription.UTF8String);
                 pvz2_drain_reminders();
             });
@@ -294,6 +319,7 @@ static void pvz2_schedule_reminder(const tl_pvz2_reminder *reminder)
     dispatch_async(pvz2_notification_queue, ^{
         NSNumber *key = item[@"id"];
         pvz2_pending_reminders[key] = item;
+        pvz2_permission_wanted = YES;
         if (pvz2_permission_resolved) { pvz2_drain_reminders(); return; }
         pvz2_request_authorization_if_needed();
     });
@@ -337,7 +363,11 @@ static void pvz2_create_notification_channel(const char *identifier, const char 
     (void)name; (void)description;
     NSString *key = pvz2_string(identifier) ?: @"";
     NSString *value = pvz2_string(sound) ?: @"";
-    dispatch_async(pvz2_notification_queue, ^{ pvz2_channel_sounds[key] = value; });
+    dispatch_async(pvz2_notification_queue, ^{
+        pvz2_channel_sounds[key] = value;
+        pvz2_permission_wanted = YES;
+        pvz2_request_authorization_if_needed();
+    });
 }
 
 static void pvz2_delete_notification_channel(const char *identifier)

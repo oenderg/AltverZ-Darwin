@@ -1021,6 +1021,13 @@ static bool reminder_log_only(void)
     return mode && !strcmp(mode, "log");
 }
 
+/* TL_PVZ2_NOTIFY=soon: schedule for real, but a minute from now, to see one arrive on a device. */
+static bool reminder_soon(void)
+{
+    const char *mode = getenv("TL_PVZ2_NOTIFY");
+    return mode && !strcmp(mode, "soon");
+}
+
 static char *hex_encode(const char *s)
 {
     static const char hex[] = "0123456789abcdef";
@@ -1287,6 +1294,10 @@ static void J_notif_schedule(tl_jcall *c)
     if (!g_notification_hooks.schedule) {
         tl_log_line("pvz2: reminder %d could not be scheduled (no host handler)", id);
         return;
+    }
+    if (reminder_soon()) {
+        fire_ms = now_ms + 60 * 1000;
+        tl_log_line("pvz2: reminder %d moved to a minute from now (test)", id);
     }
     tl_pvz2_reminder reminder = {
         .identifier = id, .group_identifier = group_id, .fire_time_ms = fire_ms,
