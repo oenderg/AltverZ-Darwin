@@ -61,6 +61,175 @@ through a guard that turns a fault into a log line instead of a crash.
   and no modal is up. Never write the game's sun, currency or object state directly: call the game's
   own functions and let it do its bookkeeping.
 
+## Test hooks (test builds only)
+
+The driver's `TL_PVZ2_STATE`, `TL_PVZ2_PRESS` and `TL_PVZ2_GOTO` switches (TESTING.md) read the UI
+and press by name. They are inert without the variables, and every read/call runs on the game
+thread in the frame loop, after the frame. The addresses are 1.4.2-only, like every other address
+here; the live values were read in the test runs named in the evidence folder (see TESTING.md).
+
+| Address / offset | What it is |
+|---|---|
+| 0x25a4e50 | the driver global -> `AndroidAppDriver` |
+| driver +0x88 | `LawnApp` (`+0x98` is `AndroidGraphicsDriver`, not the app) |
+| LawnApp + 0x380 | `Sexy::WidgetManager` |
+| LawnApp + 0xaf8, +0xb00 | the `TransitionOverlayWidget`, and `MainMenu` (non-null on the title) |
+| WidgetManager +0xe0 | the base modal widget (null when nothing covers the screen) |
+| WidgetManager +0xc8 | the keyboard focus widget, not the modal |
+| 0xce4d8c | `LawnApp::GetBoard`; board +0xe0 is its state (3 = intro, 5 = playing) |
+| 0x5beb44 | find a UI widget by the game's own name (the string object described below) |
+| 0x5c1788 | a widget's anchored rect (out pointer in x8, widget in x0) |
+
+The widget tree (`Sexy::Widget`, read live; the RTTI class comes from `vtable[-1]` -> typeinfo +8):
+
+- `widget+0x00`: vtable; `vtable[-1]` is the typeinfo, `typeinfo+8` the class name. Names are
+  Itanium RTTI (`8MainMenu`, `N4Sexy13WidgetManagerE`, `25PVZ2UIScrollingPaneWidget`).
+- `widget+0x08` / `+0x10`: the child list's **sentinel** (`prev` / `next`); the sentinel is
+  `widget+0x08` itself. A node is `{prev, next, Widget*}` with the child at `node+0x10`, and
+  `node+0x08` is the next node. Walk until the node is `widget+0x08`.
+- `widget+0x20`: the `WidgetManager`; `widget+0x28`: the parent `WidgetContainer` (null at the top).
+- `widget+0x40` / `+0x48` / `+0x50`: the rect, `x = high32(+0x40)`, `y = low32(+0x48)`,
+  `w = high32(+0x48)`, `h = low32(+0x50)`, in the game's design space (3339x1536). A child's rect
+  is relative to its parent; add the parents for the screen position.
+- `widget+0x58..+0x6f`: flag bytes. `+0x64` is 1 on buttons and 0 on containers, `+0x65` is 1 on
+  the enabled title buttons and 0 on the two disabled ones, and `+0x68` is 1 on every visible
+  widget. The exact names are not proved yet, so the dump reports the raw bytes.
+- Labels: the strings a widget points at, one object down (an image path
+  `images\\1536\\initial\\UI\\Generic\\PurpleButton`, a sound event
+  `Play_UI_Menu_Button_Profile_Play_Press`, or a text). They identify a button when the game's own
+  name is not known.
+
+The screens in 1.4.2: the title is `MainMenu`; the world map is a top-level `UniverseMap` with
+`UniverseWorldButton`s whose labels are `Play_UI_Map_Select_<world>_Press` (egypt, pirate, ...);
+a level has a top-level `Board` and the board state at +0xe0. The title's play button carries
+`Play_UI_Menu_Button_Profile_Play_Press`, the profile button `Play_UI_Button_Click_Press`, the two
+settings buttons `Play_UI_Button_Settings_Press`, and the profile dialog's close button
+`Play_UI_Button_X_Close_Press`.
+
+A press is a touch at the middle of the widget's anchored rect, converted to the surface with the
+app's own design height (the same `P.h / design_h` the shovel uses), through `tl_pvz2_touch`: the
+game's normal input path, no handler called behind its back. A widget with no layout entry falls
+back to its own rect (parents added); a parent with no rect (a layout holder such as
+`Widget_ButtonList`) contributes nothing and does not stop the walk, so a button inside a dialog
+gets the dialog's origin added too. The surface changes size once, after start-up (the host sets
+it to the display's scale), so the scale must be read at the moment of the press, never cached.
+
+### Starting a level
+
+The map's own level start was traced live (a watchpoint on `LawnApp+0x9a8`, runs 43/44, and the
+level intros in runs 63/83/84). The pieces the jump uses:
+
+| Address / offset | What it is |
+|---|---|
+| 0x2574520 | the global that holds the `GameStateMgr` pointer |
+| GameStateMgr +0x1348 | a libc++ `std::string`: the level name the start reads |
+| GameStateMgr +0x1200 / +0x1208 / +0x1340 | screen/state ints (map 5/11/9, level 5/10/2) |
+| GameStateMgr +0x13c0 | the byte the level-start handler tests (0 on a normal start) |
+| 0x5afa28 | libc++ `std::string::assign(const char*, size_t)` |
+| 0x940ce0 | `LawnApp`'s board create: `new Board`, `LawnApp+0x9a8 = board`, widget setup |
+| 0xaa9870 | `Board::LoadLevel(const std::string&)`: copies the name to the board |
+| Board +0xe8 | the board's own copy of the level name (a `std::string`) |
+| 0xcb26b4 | `GameStateMgr` vtable slot 29, the update the map calls to start |
+
+The map's own path (the state handler at `0xcb26b4` -> `0x940ce0` -> `0xaa9870`) also performs the
+screen transition that takes the map widget off the manager's list. The test hook now uses the
+game's own developer start command first (below): it performs that transition itself, so no map unlinking is needed.
+The direct two calls remain as a fallback and still need `test_remove_map_widgets`.
+
+**The developer-command start is the general jump.** Its run method
+loads the name through the game's own level loader and takes the map off the screen through the normal
+transition. It works from the title and from the map, and it knows levels outside the current
+world's registry: runs 130/131 started `egypt2` and `modern1` from the event save's title, and run
+110 started `egypt2` from its map (frames 110 and 130 show the Egypt and Modern Day lawns). The
+event level `lod/holidayevents26/halloween/lod_halloween_005` also starts; its intro's CONTINUE is
+a `PVZ2UIButton`, and pressing it with `click:PVZ2UIButton` reaches board state 5 (runs 121/122).
+
+**Limitation of the fallback only:** `Board::LoadLevel` resolves the name in the world's current
+level registry, which holds only the level the world is on. On the level save that is
+`lod/holidayevents26/halloween/lod_halloween_005`; other event paths (001..004) and normal names
+(`egypt1`, `egypt2`) returned no definition and faulted the guest call (runs 65/67/71/73/94). The
+developer-command start avoids this registry.
+
+## The game's built-in developer commands (test hooks)
+
+`libPVZ2` has a developer command system behind the game's developer menu; the binary names them with its own prefix. A command is a small object: a factory allocates 0x80 bytes (vtable, +0x20 =
+0xff, +0x60 a libc++ `std::string` for the argument), and a run method acts on it. The base-class vtable is at 0x2388978; each class registers itself
+at start-up from `0x58ec80` through `[class vtable + 0x40]` with its RTTI name. The globals
+`0x258d3e0..0x258d428` hold the **class objects**, not instances; a test constructs its own
+instance with the factory and runs it on the game thread, exactly where the game's developer menu
+runs.
+
+| Developer command | Factory (1.4.2) | Run | Argument / result |
+|---|---|---|---|
+| the developer start command | 0x11ccbb0 | 0x11ccc20 | the level name; schedules the game's start |
+| the collectable spawn command | 0x11cc514 | 0x11cc2e8 | a collectable type key; calls `0xaaf5d8(board, key, -1)` |
+| the zombie spawn command | 0x11cbcc8 | 0x11cbd38 | a zombie type key; calls `0xaafe4c(board, key, -1)` |
+| the seed-packet command | 0x11cc6bc | 0x11cc584 | a plant/seed-packet key; calls `0xaa4180` |
+| the seed-packet XP command | 0x11cc894 | 0x11cc730 | the same, plus the XP amount |
+| the plant unlock command | 0x11cb980 | not mapped | a plant name |
+| the costume toggle command | 0x11cb59c | not mapped | costume/plant/layer fields |
+| the creature spawn command | 0x11cc278 | not mapped | a creature name |
+| the save-load command | 0x11cca74 | not mapped | the save name |
+
+Other registered developer commands cover player segments, plant selection, spawning plants on the cursor, plant boosts, sprout IDs and hot-UI loading; the UI-line classes are the UI-line developer commands. The strings
+also name static helpers (world unlock, extended unlock, quest, version and narrative), but they are
+not command objects and are not exposed.
+
+**The argument is the level's own key, not a class name.** The collect and zombie actions pass
+the argument through a per-level type table (collectables: the global at `0x256d0f98`; zombies:
+`0x256a620`), then call the spawn function with the resulting `String` ID. A table holds only the
+types the current level declares. On the 005 event level the collectable table holds the five
+Piñata Party dinos -- `dinoankylo`, `dinoptero`, `dinostego`, `dinoraptor`, `dinotyranno` -- and
+the zombie table holds the level's `ZombieTypes` list -- `halloween`, `halloween_armor1`,
+`halloween_armor2`, `halloween_breakdancer`, `halloween_octopus`.
+
+**What is proved:** `startlevel` (above). `zombie halloween` spawns: the board's object list at
+`board+0x128` goes 0 -> 3 and frame 167 shows the added halloween zombies (run 167). Every one of
+the five dino collectable keys spawns: the list grows by 6-9 per key (0 -> 27 for four keys) and
+frame 169 shows the dino collectables (runs 161/166/169). `coin`, `gem`, `plantfood`, `sun` and `coin_silver` return no
+object on 005 because that level declares none of them (run 160); the normal-level table is the
+one to use once its running board is reachable, but that board is behind the seed chooser (open,
+below). The spawn objects append to the same list, so the list count is the cheapest proof when
+the camera shows another part of the lawn.
+
+The generic type directory behind the spawn functions is
+`0x14ead90` -> `0x14f39cc` -> `0x14f31a4` -> `0x14ede00`; the per-level tables above are the
+ones to inspect for a key, and a class name like `CollectableGem` is not a key. The arguments are
+now passed unchanged; the old friendly mapping (`gem` -> `CollectableGem`) is gone.
+
+`rock` finds the live `SeedChooser` (vtable `0x23b7db0`) by scanning the heap around the
+board, fills the required slots with `0x977468(chooser, entry)` from the `+0x208` list, and
+queues a touch at the centre of the Let's Rock button (`chooser+0x248`, app-space rect
+`2884,1381,435,130`, converted to surface pixels). The chooser's own update then calls
+`0x976aa0`, `0x976c7c`, `0x976d90`, `0x976e84`; the board reaches state 5 without a write.
+The selected/required counts are `+0x238`/`+0x23c`; modern1 and egypt2 need 7. Runs 238/239
+are the running-lawn frames. The old state write at `0xaa473c` is not used.
+`seedpacket` / `seedpacketxp` build and run, but do not fill that count; they are collectable
+seed packets, not chooser entries.
+
+**Collectable drops (open).** The normal collectable spawn is `0xaaf94c(board, key, column,
+row)`: it resolves the level's type key through the level table. The modern1 and egypt2 tables
+do not hold `coin`, `gem` or `plantfood`, which is why `collect` returns objects 0 -> 0. The
+falling sky sun has its own caller: `0xab5ae8` passes the owner's loot string at `+0x3c0` to
+`0xaa3bc0`, which creates a sun through the factory at `0x8ae4cc` with class id `0x48`, then
+positions it from `+0x440/+0x444/+0x448/+0x44c`; the class id is hardcoded for sun. The
+collectable classes and factory registrations are `CollectableCoin` 0x9c8f7c/0x559328,
+`CollectableGem` 0x78f374/0x54b4a8 and `CollectablePlantfood` 0xcef9a8/0x56e988. Their
+coin/gem/plantfood creator wrappers and class ids are not mapped, so no game-path drop is
+exposed yet. Hand-built board entries were tried and drew nothing (frame 237); that path was
+discarded.
+No
+direct add-sun/coins/gems/plant-food/power-up-stock and no kill-all/win-level command class was
+found; the game's static helpers has static helpers such as `CompleteAllArcadeLevels` and `NonFatalError`, but no
+exposed "win" object.
+
+The seed chooser (the intro a level shows before its waves) is drawn by the board's own UI, not a
+`WidgetContainer` in the app tree, so `TL_PVZ2_STATE` does not list its "LET'S ROCK!" button and
+`click:` cannot press it yet. The event level's intro dialog **is** a widget: `click:PVZ2UIButton`
+presses its CONTINUE and reaches state 5. The in-level HUD and seed chooser are a separate
+`WidgetManager` at `Board+0x20`; it holds six top-level widgets and no seed chooser in 1.4.2.
+
+
 ## Generated IDs
 
 `Util_GetUUIDString` returns a fresh lowercase version-4 UUID per call, like

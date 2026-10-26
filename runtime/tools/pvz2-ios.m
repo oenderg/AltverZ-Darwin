@@ -400,6 +400,37 @@ static void *tapper(void *arg)
             char *text = strdup(tok + 6);
             dispatch_sync(dispatch_get_main_queue(), ^{ test_text(text); });
             free(text);
+        } else if (!strncmp(tok, "click:", 6)) {
+            /* A widget by the game's own name, class or label: the driver finds
+             * it on the game thread and taps the middle of its rect. */
+            tl_log_line("ios: the script clicks \"%s\"", tok + 6);
+            tl_pvz2_test_press(tok + 6);
+            sleep(1);
+        } else if (!strncmp(tok, "goto:", 5)) {
+            /* The same destination language as TL_PVZ2_GOTO. */
+            tl_log_line("ios: the script goes to \"%s\"", tok + 5);
+            tl_pvz2_test_goto(tok + 5);
+            sleep(1);
+        } else if (!strncmp(tok, "devcmd:", 7)) {
+            /* The game's built-in developer command object, run by the driver. */
+            tl_log_line("ios: the script runs devcmd \"%s\"", tok + 7);
+            tl_pvz2_test_devcmd(tok + 7);
+            sleep(1);
+        } else if (!strncmp(tok, "until:", 6)) {
+            /* Wait for the driver to say it is on a screen. */
+            const char *want = tok + 6;
+            char st[96] = "";
+            int waited = 0;
+            while (waited < 60) {
+                if (tl_pvz2_test_state(st, sizeof st) &&
+                    (!strcmp(st, want) ||
+                     (!strncmp(want, "modal:", 6) && !strncmp(st, want, strlen(want))) ||
+                     !strcmp(want, "state:*")))
+                    break;
+                sleep(1);
+                waited++;
+            }
+            tl_log_line("ios: until %s -> %s after %d s", want, st, waited);
         } else if (!strcmp(tok, "keyboard:hide")) {
             dispatch_sync(dispatch_get_main_queue(), ^{ test_keyboard_hide(); });
         } else if (!strcmp(tok, "return")) {

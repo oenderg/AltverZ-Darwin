@@ -61,6 +61,46 @@ found. Check every vtable and offset by reading live objects in a test run befor
 The driver guards every call it makes into the game, so a wrong address shows up as a refused action
 and a log line, not as a crash. Look for those in the log.
 
+The test hooks in `husk-tl-pvz2.c` add their own 1.4.2 addresses (GAME-NOTES.md, "Test hooks"):
+the driver global and the LawnApp/WidgetManager offsets, the widget list and rect fields, the
+board getter and the widget/rect lookups. They are reads and guest calls on the game thread, so a
+wrong one is a refused or empty dump rather than a crash; check the class names and rects against
+a frame before trusting a dump.
+
+The level jump adds more (GAME-NOTES.md, "Starting a level"): the `GameStateMgr` global
+`0x2574520`, its level-name string at `+0x1348`, libc++'s `std::string::assign` at `0x5afa28`,
+`LawnApp`'s board create at `0x940ce0`, `Board::LoadLevel` at `0xaa9870`, and the board's name at
+`+0xe8`. The hook now tries the game's own developer start command first (factory `0x11ccbb0`, run `0x11ccc20`); the two
+direct calls are its fallback.
+
+The built-in developer commands (GAME-NOTES.md, "The game's built-in developer commands") add the
+base-class vtable `0x2388978`, the class registration at `0x58ec80`, and the
+factories/runs for
+the collectable spawn command (`0x11cc514`/`0x11cc2e8`), the zombie spawn command
+(`0x11cbcc8`/`0x11cbd38`), the seed-packet command
+(`0x11cc6bc`/`0x11cc584`) and the seed-packet XP command
+(`0x11cc894`/`0x11cc730`). A developer command object is 0x80 bytes, its argument is a libc++
+`std::string` at `+0x60`, and the run happens on the game thread. Re-read a live object's vtable and its
+argument before trusting a factory, and check the log's `ran`/`faulted` line.
+
+The spawn actions add the per-level type tables (collectables at global `0x256d0f98`, zombies at
+`0x256a620`), the tree find at `0xa6f684`, the spawn functions `0xaaf5d8` (collectable) and
+`0xaafe4c` (zombie), and the board object list at `board+0x128` / `+0x130` whose count the hook
+logs. The argument is the level's own key, not a class name: on the 005 level the collectable keys
+are the five dino names (`dinoankylo`, `dinoptero`, `dinostego`, `dinoraptor`, `dinotyranno`) and
+the zombie keys are the level's `ZombieTypes` (`halloween`, `halloween_armor1/2`,
+`halloween_breakdancer`, `halloween_octopus`). A key from another level is not in the table;
+inspect the level's table or its level file, and do not guess class names.
+
+`0xaa473c` is a bare playing-state setter (`str w8=5` at `board+0xe0`); it was used by an
+earlier version of the test hook and is not the normal path. The normal path is the chooser's
+Let's Rock button: fill via `0x977468(chooser, entry)`, then touch the centre of the button's
+own rect; the chooser's update calls `0x976aa0`, `0x976c7c`, `0x976d90`, `0x976e84` and the
+board reaches state 5 by itself. The selected/required counts are `+0x238`/`+0x23c`.
+
+The same warning as the level jump applies: a wrong factory, run or argument can fault the guest
+call and kill the test run, so use a copied save and `TL_PVZ2_FRAMES` on the first try.
+
 ## 5. Test
 
 A full build (`./build.sh --apk new.apk`, no `--quick`), then on the Mac ([TESTING.md](TESTING.md)):

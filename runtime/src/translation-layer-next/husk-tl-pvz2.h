@@ -16,6 +16,7 @@
 #define HUSK_TL_PVZ2_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "husk-tl-gameactivity.h"          /* tl_ga_config: the same description of the game and its surface */
@@ -195,6 +196,17 @@ void tl_pvz2_request_low_memory(void);
  * the converted libraries, or where the app object cannot be read -- and the
  * host then uses its measured numbers. */
 bool tl_pvz2_ui_geometry(int *tray, int *shovel);
+
+/* ---------------------------------------------------------------- test hooks
+ * Test-only, and inert unless TL_PVZ2_STATE, TL_PVZ2_PRESS or TL_PVZ2_GOTO is
+ * set.  The state is "title", "map", "level", "modal:<class>" or "screen"; the
+ * dump file has the clickable tree; a press is by the game's own widget name. */
+bool tl_pvz2_test_state(char *out, size_t n);
+void tl_pvz2_test_press(const char *name);
+void tl_pvz2_test_goto(const char *dest);
+/* Test only: run one of the game's built-in developer command objects
+ * (see TESTING.md). */
+void tl_pvz2_test_devcmd(const char *command);
 
 #ifdef __cplusplus
 }

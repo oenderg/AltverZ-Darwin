@@ -30,6 +30,10 @@ What it sets (you can set these yourself when running the binary by hand):
 | `TL_PVZ2_LOG` | where the log goes |
 | `TL_PVZ2_IMPORT_FROM=<domain>` | import settings once from this domain; background tests otherwise skip import. Use a test bundle ID and test domains only. |
 | `TL_PVZ2_TAP`, `TL_PVZ2_TAP_DELAY` | the tap script, and the seconds before it starts (default 3) |
+| `TL_PVZ2_STATE` | write the current screen, modal and every clickable widget as one JSON line to this file, on change (test builds only) |
+| `TL_PVZ2_PRESS` | press one widget by name or label 6 s after the game has started, once (for a one-line test) |
+| `TL_PVZ2_GOTO` | `map` (the world map) by the game's own button after the game has started; `almanac`, `store` and `settings` are attempted with their map buttons; `level:<name>` starts a level |
+| `TL_PVZ2_DEVCMD` | the game's built-in developer commands, `;` separated, run after start-up (e.g. `startlevel egypt2`); a level start gets 5 s before the next command |
 | `TL_PVZ2_QUIET=1` | a test window: small, in the corner, never takes the focus, never remembered |
 | `TL_KEEP_RUNNING_IN_BACKGROUND=1` | keep drawing while another app is in front |
 | `TL_AUDIO_MUTE=1` | play at a device's pace without sound |
@@ -195,6 +199,10 @@ Commands separated by `;`, run in order on their own thread:
 | `x,y` | a tap at the surface's pixel (x, y). The surface is the window's size in pixels: a Fixed-mode test window at the game's shape (`-fixedAspect game`) is 874x402 points, so 1748x804 on a Retina display and 874x402 on a standard one (halve the numbers there) |
 | `drag:x1,y1,x2,y2` | a drag, in the same pixels |
 | `w:x,y`, `wp:x,y` | a tap in window points, or at a percentage of the window |
+| `click:<name or label>` | press a widget by the game's own name, its class, or a label it carries (`click:Profile_Play`, `click:PVZ2UIButton#1`, `click:PurpleButton`). The driver finds it on the game thread and taps the middle of its rect: no coordinates in the script |
+| `goto:<dest>` | the `TL_PVZ2_GOTO` destination language: `goto:map`, `goto:level:<name>` |
+| `devcmd:<command> [args]` | one of the game's built-in developer commands on the game thread (see "The game's built-in developer commands") |
+| `until:<state>` | wait (up to 60 s) for `title`, `map`, `level`, `modal:<class>` or `screen`; needs `TL_PVZ2_STATE` |
 | `wait:N` | wait N seconds (taps themselves take about 2 s each) |
 | `press:<chars>` | type those keys through the real keyboard path (`press:1s` = key 1, then S; a space is Space) |
 | `escape` | the Escape key's action (pause / resume / Back) |
@@ -221,6 +229,118 @@ names each action and why it was refused:
 - `press:z`, `press:x`, `press:c` log `pvz2: the power-up shortcut: selected power-up N of M`
   and then `the touch was let go`; click the lawn to use it.
 - Outside a level, paused or behind a popup, each logs `ignored: ...` and does nothing.
+### Driving the game by name
+
+`TL_PVZ2_STATE=<file>` makes the driver write the current screen and its clickable widgets
+as one JSON line whenever they change:
+
+```sh
+TL_PVZ2_STATE=/tmp/pvz2-state.jsonl scripts/test-run.sh --save "$SAVE" --seconds 20 \
+  --tap "wait:14;click:Profile_Play;until:map" -- -resizeMode Fixed -fixedAspect game
+```
+
+The line has `state` (`title`, `map`, `level`, `level:<board state>`, `modal:<class>`, `screen`),
+`mainmenu`, `transition`, `modal`, and `widgets`: `{d, cls, rect, surf, flags, labels}` for every
+WidgetContainer child, depth first. `rect` is the game's design space (3339x1536); `surf` is the
+same rect in surface pixels, already scaled for the run (the surface is 874x402 or 1748x804
+depending on the display, and the scale is taken each time). `labels` are the strings the widget
+points at (an image path, a sound event such as `Play_UI_Menu_Button_Profile_Play_Press`, or a
+text); they are what makes `click:` work when the game's own widget name is not known.
+
+`click:` matches, in order: the game's own widget name (the lookup the keyboard shortcuts use),
+then the RTTI class name or any label, case-insensitively; `Class#N` picks the Nth match. The
+press is a touch at the centre of the widget's anchored rect through the normal input queue, so
+the game's own handlers run exactly as for a finger. It is refused (with a log line) when the
+widget has no rect.
+
+`TL_PVZ2_GOTO=map` presses the title's own play button after start-up; with a profile that was
+saved on the world map this lands on the map (`until:map`). `TL_PVZ2_GOTO=level:<name>` starts the
+game's own developer start command
+with the name: its factory builds the command object, the name goes into its argument string, and
+its run schedules the game's own level start. That is the same object the game's developer menu
+uses, so the game loads the level and takes the map off the screen through its normal transition. It loads levels from other worlds, too. On the event save,
+`egypt2` and `modern1` both start from the title (frames in the evidence folder):
+
+```sh
+TL_PVZ2_GOTO='level:modern1' scripts/test-run.sh --save "$SAVE" --seconds 40 \
+  -- -resizeMode Fixed -fixedAspect game
+```
+
+If the developer command cannot be built or run (a new game build, a bad name), the hook falls back to
+the two calls the map makes: it sets the level name in `GameStateMgr`, creates the board and calls
+`Board::LoadLevel`, then unlinks the map widgets. That fallback only resolves levels in the current
+world's registry, which on the event save is the event's own path
+`lod/holidayevents26/halloween/lod_halloween_005`; other names can fault. With either path,
+`level_name` in the state line is the board's own name (from `board+0xe8`) and is the check that
+the jump loaded what it asked for.
+
+The event level's intro has a `PVZ2UIButton` (CONTINUE); pressing it reaches board state 5:
+
+```sh
+TL_PVZ2_GOTO='level:lod/holidayevents26/halloween/lod_halloween_005' \
+  scripts/test-run.sh --save "$SAVE" --seconds 45 \
+  --tap "wait:22;click:PVZ2UIButton;until:level;wait:8" -- -resizeMode Fixed -fixedAspect game
+```
+
+The seed chooser on a normal level is drawn by the board's own UI, not a `WidgetContainer` in the
+state tree, so its "LET'S ROCK!" button is not listed and `click:` cannot press it yet (open).
+The tap script also has `goto:<dest>` and `devcmd:<command>` steps, so both can run after the game
+is already up.
+
+### The game's built-in developer commands
+
+`TL_PVZ2_DEVCMD` and a tap `devcmd:` step build one of the game's developer command objects (the
+binary names them the developer-command classes), put the argument in its `std::string`, and run the game's own method
+on the game thread, in the frame loop. Each command is logged with its object and
+`ran`/`faulted`; nothing runs when the switch is absent.
+
+| Command | Does | Example |
+|---|---|---|
+| `startlevel <name>` | the game's own level start; works from the title or the map, and for another world | `devcmd:startlevel egypt2` |
+| `collect <type>` | drops a collectable | `devcmd:collect dinoankylo` |
+| `zombie <type>` | spawns a zombie | `devcmd:zombie halloween` |
+| `seedpacket <plant>` | a collectable seed packet | `devcmd:seedpacket sunflower` |
+| `seedpacketxp <plant>` | the same, with XP | `devcmd:seedpacketxp sunflower` |
+| `rock` | fills the seed chooser and presses its Let's Rock button; takes no argument | `devcmd:rock` |
+
+The argument is the **level's own type key**, not a class name. The collectable table on the 005
+event level holds `dinoankylo`, `dinoptero`, `dinostego`, `dinoraptor`, `dinotyranno`; its zombie
+table holds the level's `ZombieTypes`: `halloween`, `halloween_armor1`, `halloween_armor2`,
+`halloween_breakdancer`, `halloween_octopus`. The action looks the key up in that table and spawns
+the resulting object. `gem`, `coin`, `plantfood` and `sun` return no object on 005 because that
+level declares no such collectable; the normal-level tables are reachable with `devcmd:rock`,
+but they still hold no coin, gem or plantfood keys. Start the 005 level and run the commands
+after the board is playing (state `level`, board state 5):
+
+```sh
+TL_PVZ2_GOTO='level:lod/holidayevents26/halloween/lod_halloween_005' \
+  scripts/test-run.sh --save "$SAVE" --seconds 50 \
+  --tap "wait:26;click:PVZ2UIButton;until:level;devcmd:collect dinoankylo;wait:2;devcmd:zombie halloween;wait:6" \
+  -- -resizeMode Fixed -fixedAspect game
+```
+
+`TL_PVZ2_DEVCMD='startlevel egypt2'` starts that level from the title at about 10 s (run 131). The
+commands run in order; a `startlevel` gets five seconds before the next one. Every command logs its
+object, `ran`/`faulted`, and the board's object count (`objects N -> M`); a spawn changes the
+count even when the camera is showing another part of the lawn.
+
+`rock` finds the live `SeedChooser` by its vtable, fills its required slots through the
+chooser's own add method (`0x977468(chooser, entry)`), then queues the same touch a player makes
+at the centre of the Let's Rock button's own rect. The game's own UI path runs the chooser's
+four start functions (`0x976aa0`, `0x976c7c`, `0x976d90`, `0x976e84`); the board changes from
+state 3 to 5 by itself. It does not write `board+0xe0`. Runs 238 (modern1) and 239 (egypt2)
+show the running lawn with the chooser gone and a zombie walking.
+
+**What is proved:** `startlevel` (egypt2, modern1, the 005 event level; frames 110/130).
+`zombie halloween` spawns on 005 (objects 0 -> 3; frame 167) and every one of the five dino
+collectable keys spawns (the list grows by 6-9 per key; frame 169). `coin`, `gem`, `plantfood`, `sun` and
+`coin_silver` return no object on 005 (run 160); the normal-level tables that hold them need the
+seed chooser (open). The `seedpacket`/`seedpacketxp` objects run, but their effect is not isolated
+yet. There is no exposed command object for adding sun, coins, gems or plant food directly, for
+power-up stock, or for killing all zombies/winning a level; the developer command system's static
+helpers are not command objects. `LET'S ROCK!` is handled by `devcmd:rock` above.
+
+
 
 ## Reading the result
 

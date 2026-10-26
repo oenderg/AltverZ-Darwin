@@ -877,6 +877,47 @@ static void *tapper(void *arg)
             continue;
         }
         if (!strncmp(tok, "drag:", 5)) { do_drag(tok + 5); continue; }
+        if (!strncmp(tok, "click:", 6)) {
+            /* A widget by the game's own name, not a pixel: the driver finds it
+             * on the game thread and taps the middle of its rect. */
+            tl_log_line("macos: the script clicks \"%s\"", tok + 6);
+            tl_pvz2_test_press(tok + 6);
+            sleep(1);
+            continue;
+        }
+        if (!strncmp(tok, "goto:", 5)) {
+            /* The same destination language as TL_PVZ2_GOTO ("map",
+             * "level:<name>"): the driver waits for the screen it needs. */
+            tl_log_line("macos: the script goes to \"%s\"", tok + 5);
+            tl_pvz2_test_goto(tok + 5);
+            sleep(1);
+            continue;
+        }
+        if (!strncmp(tok, "devcmd:", 7)) {
+            /* The game's built-in developer command object, run on the game thread
+             * by the driver (e.g. "devcmd:collect gem", "devcmd:zombie ZombieBasic"). */
+            tl_log_line("macos: the script runs devcmd \"%s\"", tok + 7);
+            tl_pvz2_test_devcmd(tok + 7);
+            sleep(1);
+            continue;
+        }
+        if (!strncmp(tok, "until:", 6)) {
+            /* Wait for the game to say it is on a screen: title, map, level,
+             * modal:<class>, screen.  The state is published by the driver. */
+            const char *want = tok + 6;
+            char st[96] = "";
+            int waited = 0;
+            while (waited < 60) {
+                if (tl_pvz2_test_state(st, sizeof st) &&
+                    (!strcmp(st, want) || (!strncmp(want, "modal:", 6) && !strncmp(st, want, strlen(want))) ||
+                     !strcmp(want, "state:*")))
+                    break;
+                sleep(1);
+                waited++;
+            }
+            tl_log_line("macos: until %s -> %s after %d s", want, st, waited);
+            continue;
+        }
         if (!strncmp(tok, "key:", 4)) {
             int code = atoi(tok + 4);
             tl_log_line("macos: key %d", code);
