@@ -12,6 +12,6 @@ For updates, add this source in AltStore or SideStore (Sources → +) and instal
 
 **Mac** (Apple silicon, macOS 12 or later): open the DMG and drag the app onto Applications.
 The first time, macOS refuses to open it because it is not notarized: click **Done**, then **Open Anyway** in System Settings → Privacy & Security.
-After that the app updates itself (PvZ2 Reflourished → Check for Updates…).
+After that the app updates itself (PvZ2 AltVerZ > Check for Updates…).
 
 Your saves stay when you update. Found a bug? [Open an issue](https://github.com/{repo}/issues/new/choose) with the app's log (on the Mac: Settings → About → Log).

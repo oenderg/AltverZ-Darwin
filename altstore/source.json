@@ -1,52 +1,24 @@
 {
-  "name": "PvZ2 Reflourished",
-  "identifier": "com.oenderg.reflourished",
-  "subtitle": "PvZ2: Reflourished for iPhone and iPad",
-  "description": "iPhone and iPad builds of PvZ2: Reflourished, straight from the project's GitHub releases: the Android mod converted ahead of time into native Apple code, with no jailbreak and no emulator.",
-  "iconURL": "https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/docs/banner/icon.png",
-  "website": "https://github.com/oenderg/Reflourished-Darwin",
-  "tintColor": "4CAF50",
+  "name": "PvZ2 AltVerZ",
+  "identifier": "com.oenderg.altverz",
+  "subtitle": "PvZ2: AltVerZ for iPhone and iPad",
+  "description": "iPhone and iPad builds of PvZ2: AltVerZ, straight from the project's GitHub releases: the Android mod converted ahead of time into native Apple code, with no jailbreak and no emulator.",
+  "iconURL": "https://github.com/oenderg.png?size=512",
+  "website": "https://github.com/oenderg/AltverZ-Darwin",
+  "tintColor": "7B4FD8",
   "apps": [
     {
-      "name": "PvZ2 Reflourished",
-      "bundleIdentifier": "io.github.oenderg.reflourished-darwin",
+      "name": "PvZ2 AltVerZ",
+      "bundleIdentifier": "io.github.oenderg.altverz-darwin",
       "developerName": "oenderg",
-      "subtitle": "Plants vs. Zombies 2, Reflourished",
-      "localizedDescription": "PvZ2: Reflourished, the Plants vs. Zombies 2 mod, on iPhone and iPad. No jailbreak and no emulator: the game's Android code is converted ahead of time into ordinary, signed Apple code, so it runs full screen at your display's refresh rate, with sound, saves and the mod's own content built in. The app downloads the game's data (about 1.3 GB) on its first launch, so keep it open on Wi-Fi until the game starts.",
-      "developerWebsite": "https://github.com/oenderg/Reflourished-Darwin",
-      "iconURL": "https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/docs/banner/icon.png",
-      "tintColor": "4CAF50",
+      "subtitle": "Plants vs. Zombies 2, AltVerZ",
+      "localizedDescription": "PvZ2: AltVerZ, the Plants vs. Zombies 2 mod, on iPhone and iPad. No jailbreak and no emulator: the game's Android code is converted ahead of time into ordinary, signed Apple code, so it runs full screen at your display's refresh rate, with sound, saves and the mod's own content built in. This is an early build, so expect bugs. The app downloads the game's data (about 1.1 GB) on its first launch, so keep it open on Wi-Fi until the game starts.",
+      "developerWebsite": "https://github.com/oenderg/AltverZ-Darwin",
+      "iconURL": "https://github.com/oenderg.png?size=512",
+      "tintColor": "7B4FD8",
       "category": "games",
       "screenshots": [],
-      "versions": [
-        {
-          "version": "1.2.0",
-          "buildVersion": "10200",
-          "date": "2026-10-25",
-          "localizedDescription": "Import and export your saves, and more keyboard shortcuts. The game's own Import/Export menu (Settings, Import/Export) now works: bring your Android save over, or back it up, through the Files app on iPhone and iPad or a normal file dialog on the Mac.\n\n• More keys: Space now also collects gems and plant food, F toggles fast-forward, Q picks up plant food and Z, X, C pick a power-up. On the Mac you can change them in Settings.\n• iPhone and iPad show the game's own reminders as notifications; the game asks for permission when it first starts, as on Android. The Mac shows none.\n• iPad: in a window next to other apps, a swipe that ends outside the game no longer leaves every tap dead.\n• Links in the game open in your browser.\n• The Mac disk image opens to a new install window, styled like the game.\n• Small fixes so the game sees the same device details as on Android, and keeps its own data between launches.",
-          "downloadURL": "https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.2.0/PvZ2-Reflourished-1.4.2-Darwin-1.2.0-iOS.ipa",
-          "size": 62045339,
-          "minOSVersion": "15.5"
-        },
-        {
-          "version": "1.1.0",
-          "buildVersion": "10100",
-          "date": "2026-10-25",
-          "localizedDescription": "Events and limited-time offers now show up. The Halloween event, the weekly challenge, their badges on the map and the shop's rotating limited-time offers were missing on iPhone, iPad and Mac: the game takes its time from Reflourished's content server, and that time never reached it.\n\n• The game now loads Reflourished's live content at start-up, as on Android, so content updates arrive without a new app version.\n• Offline, it uses the content it last downloaded and your device's clock, so events still show.\n• The game's log starts fresh at each launch; the previous run's is kept as pvz2.previous.log.",
-          "downloadURL": "https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.1.0/PvZ2-Reflourished-1.4.2-Darwin-1.1.0-iOS.ipa",
-          "size": 62017577,
-          "minOSVersion": "15.5"
-        },
-        {
-          "version": "1.0.0",
-          "buildVersion": "10000",
-          "date": "2026-10-24",
-          "localizedDescription": "The first release: PvZ2: Reflourished 1.4.2, running natively on iPhone, iPad and Mac. No jailbreak, no JIT, no emulator.\n\n• Plays at your display's refresh rate: 120 Hz on ProMotion iPads.\n• Touch, mouse and trackpad, plus keyboard shortcuts on the Mac and on an iPad with a keyboard: 1-8 seed packets, S shovel, Space collects sun and coins, Esc pauses.\n• On the Mac, the window takes any size, or any shape from 4:3 to 21:9, and you can pick your own keys in Settings.\n• The Mac app updates itself, and iPhone / iPad get updates through the AltStore and SideStore source.",
-          "downloadURL": "https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.0.0/PvZ2-Reflourished-1.4.2-Darwin-1.0.0-iOS.ipa",
-          "size": 62009112,
-          "minOSVersion": "15.5"
-        }
-      ],
+      "versions": [],
       "appPermissions": {
         "entitlements": [
           {
@@ -59,7 +31,7 @@
           },
           {
             "name": "com.apple.developer.kernel.increased-memory-limit",
-            "description": "The game and its 1.3 GB of data like more memory than the default allowance. It works without it."
+            "description": "The game and its 1.1 GB of data like more memory than the default allowance. It works without it."
           },
           {
             "name": "com.apple.developer.kernel.extended-virtual-addressing",
