@@ -227,7 +227,9 @@ names each action and why it was refused:
 - `press:q` logs `pvz2: the plant food shortcut: picked up from the game's own counter at (x,y)`
   and then `the touch was let go`; with plant food in stock the cursor carries one.
 - `press:z`, `press:x`, `press:c` log `pvz2: the power-up shortcut: selected power-up N of M`
-  and then `the touch was let go`; click the lawn to use it.
+  and then `the touch was let go`; click the lawn to use it. Only a level that offers power-ups
+  has the buttons: Reflourished's adventure levels do, AltVerZ's do not, and AltVerZ's
+  Vasebreaker levels do. Elsewhere the keys log `ignored: this level has no power-up buttons`.
 - Outside a level, paused or behind a popup, each logs `ignored: ...` and does nothing.
 ### Driving the game by name
 
