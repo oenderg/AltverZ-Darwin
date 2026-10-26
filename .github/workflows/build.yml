@@ -115,6 +115,7 @@ jobs:
           VARIANTS: ${{ github.event.inputs.variants }}
         run: |
           set -euo pipefail
+          . scripts/profile.sh
           case "$PLATFORMS" in
             "iPhone/iPad") platforms=(--ios) ;;
             "Mac") platforms=(--mac) ;;
