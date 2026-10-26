@@ -18,7 +18,17 @@
       "tintColor": "7B4FD8",
       "category": "games",
       "screenshots": [],
-      "versions": [],
+      "versions": [
+        {
+          "version": "0.1.0",
+          "buildVersion": "100",
+          "date": "2026-10-26",
+          "localizedDescription": "The first AltVerZ build, and an early one: expect bugs. PvZ2 AltVerZ 1.8.3f runs natively on iPhone, iPad and Mac, with no jailbreak, no JIT and no emulator.\n\n• The Mac build is the tested one: the title screen, the world map, the Store, the Almanac and levels work, including with a save moved over from Android.\n• iPhone and iPad builds have had only light testing. Treat them as a preview.\n• The game's own content, AltVerZ's War world and its levels are there.\n\nKnown gaps\n\n• AltVerZ has no Import/Export screen, so moving a save over is a file copy. The README has the folders.\n• The Mac app is not notarized: the first time, macOS refuses to open it until you allow it in System Settings > Privacy & Security.\n• The Mac app checks this repository's update feed. Later builds will show up there; this one is the first.\n• This is a prerelease. It is marked as such on GitHub and is not a stable build.",
+          "downloadURL": "https://github.com/oenderg/AltverZ-Darwin/releases/download/v0.1.0/PvZ2-AltVerZ-1.8.3f-Darwin-0.1.0-iOS.ipa",
+          "size": 49651379,
+          "minOSVersion": "15.5"
+        }
+      ],
       "appPermissions": {
         "entitlements": [
           {
