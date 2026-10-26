@@ -2,7 +2,7 @@
 
 {downloads}
 
-Not sure? Take the small one. It downloads the game's data (1.3 GB) the first time it opens, so keep it open on Wi-Fi until the game starts. The **Full** files have the data inside, for a first launch without internet.
+Not sure? Take the small one. It downloads the game's data (about 1.1 GB) the first time it opens, so keep it open on Wi-Fi until the game starts. The **Full** files have the data inside, for a first launch without internet.
 
 ## Install
 

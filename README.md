@@ -67,9 +67,9 @@ platform:
 
 | File | What it is |
 |---|---|
-| `PvZ2-AltVerZ-<game>-Darwin-<version>-iOS.ipa` | iPhone and iPad, slim (about 60 MB) |
+| `PvZ2-AltVerZ-<game>-Darwin-<version>-iOS.ipa` | iPhone and iPad, slim (about 50 MB) |
 | `PvZ2-AltVerZ-<game>-Darwin-<version>-iOS-Full.ipa` | iPhone and iPad, with the game's data inside (about 1.1 GB) |
-| `PvZ2-AltVerZ-<game>-Darwin-<version>-Mac.dmg` | Mac, slim |
+| `PvZ2-AltVerZ-<game>-Darwin-<version>-Mac.dmg` | Mac, slim (about 55 MB) |
 | `PvZ2-AltVerZ-<game>-Darwin-<version>-Mac-Full.dmg` | Mac, with the game's data inside |
 
 A slim app downloads the game's data (about 1.1 GB) the first time it opens and checks it, so keep

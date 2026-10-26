@@ -13,7 +13,8 @@
 # (the IPA is about 60 MB, the Mac disk image about 65 MB): they download it themselves
 # on their first launch. --quick reuses the game's converted code from the last
 # build in the same --out and skips the disk image: the fast loop while working
-# on runtime/. VERSION sets our version; data/game-1.4.2.json sets the game version.
+# on runtime/. The profile's app_version (or VERSION) sets our version; its game data
+# file sets the game version.
 # --reuse-converted reuses the converted code but still makes the disk image (release variants).
 # scripts/package-release.sh gives the IPA and DMG their versioned release names.
 # APP_BUILD overrides the build number (default: major*10000 + minor*100 + patch).
@@ -23,7 +24,7 @@
 #   <artifact>-sim.app             for the iOS Simulator (Apple silicon, --ios-sim)
 #   <app name>.app                 for the Mac (Apple silicon)
 #   <artifact>.dmg                 the same app in a disk image, ready to share
-# The profile names them: PvZ2-Reflourished / PvZ2-AltVerZ.
+# The profile names them: PvZ2-AltVerZ / PvZ2-Reflourished.
 #
 # Needs: a Mac with Xcode (and its iOS platform for --ios), python3, about 8 GB free.
 set -euo pipefail
