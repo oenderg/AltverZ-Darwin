@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Plants vs. Zombies 2: Reflourished -- the translation-layer driver.
+ * Plants vs. Zombies 2 mods -- the translation-layer driver (one profile at a time).
  *
  * Why a driver at all: the game is not a NativeActivity and not an engine Husk
  * already knows.  Its Java shell (PvZ2GameActivity -> SexyAppFrameworkActivity)
@@ -16,21 +16,24 @@
  *   - FrameworkInfo_SysGetMainExpansionFilePath must return the .obb path with
  *     a leading '/', because the engine treats anything else as a resource name
  *     to be looked up through the Java asset API (PvZ 2 RE, framework_activity).
- *   - The engine patches libPVZ2.so at start-up (libRFLib's A64HookFunction),
- *     so code-write emulation has to be on before libRFLib's constructors run.
- *   - The Reflourished library's constructors run after the game's JNI_OnLoad,
+ *   - The engine patches libPVZ2.so at start-up (the mod library's
+ *     A64HookFunction), so code-write emulation has to be on before its
+ *     constructors run.
+ *   - The mod library's constructors run after the game's JNI_OnLoad,
  *     not with the game's own initialisers (the Switch port does the same).
  */
 
 #define _DARWIN_C_SOURCE
 #include "husk-tl-pvz2.h"
 #include "husk-tl-cdn.h"
+#include "pvz2-profile.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <setjmp.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,7 +73,7 @@ const char *tl_data_dir(void);
 void tl_nwindow_configure(int w, int h, void *layer);
 void *tl_nwindow_get(void);
 
-#define PKG "com.ea.game.pvz2_rfl"
+#define PKG PVZ2_PROFILE_PKG
 #define APP "com/popcap/SexyAppFramework/AndroidGameApp"
 #define ACT "com/popcap/SexyAppFramework/SexyAppFrameworkActivity"
 #define ACT2 "com/popcap/PvZ2/PvZ2GameActivity"
@@ -86,8 +89,8 @@ void *tl_nwindow_get(void);
 #define FP "FilePickerHelper"
 
 /* These are the package fields read by AndroidGameApp from the pinned APK. */
-#define PVZ2_ANDROID_VERSION_CODE 675
-#define PVZ2_ANDROID_VERSION_NAME "1.4.0"
+#define PVZ2_ANDROID_VERSION_CODE PVZ2_PROFILE_VERSION_CODE
+#define PVZ2_ANDROID_VERSION_NAME PVZ2_PROFILE_VERSION_NAME
 
 #define OBB_NAME "main.675." PKG ".obb"
 
@@ -362,8 +365,9 @@ static void J_cloud_silent_sync(tl_jcall *c)
 static void J_obb_path(tl_jcall *c) { (void)c; tl_log_line("pvz2: OBB path asked for: %s", P.obb_guest); c->ret = vl(str(P.obb_guest)); }
 static void J_data_folder(tl_jcall *c) { (void)c; c->ret = vl(str(P.files_guest)); }
 
-/* Reflourished's Import/Export menu.  Android posts each of these to its UI
- * thread and returns; the driver queues the same request for its own worker. */
+/* The mod's Import/Export menu (Reflourished's FilePickerHelper; AltVerZ never
+ * calls it). Android posts each of these to its UI thread and returns; the
+ * driver queues the same request for its own worker. */
 static void J_fp_import_file(tl_jcall *c) { tl_pvz2_file_picker_import_file(S(c->args[0].l)); }
 static void J_fp_import_file_to_dir(tl_jcall *c) { tl_pvz2_file_picker_import_file_to_dir(S(c->args[0].l)); }
 static void J_fp_export_file(tl_jcall *c) { tl_pvz2_file_picker_export_file(S(c->args[0].l)); }
@@ -799,7 +803,7 @@ static void J_set_scale(tl_jcall *c)
 }
 static void J_get_scale(tl_jcall *c) { jvalue v; v.f = P.scale; c->ret = v; }
 
-/* AssetManager lookups: Reflourished keeps its resources in the OBB, so a miss
+/* AssetManager lookups: the mod keeps its resources in the OBB, so a miss
  * here is not fatal; answer "not in the APK" cleanly. */
 static void J_asset_info(tl_jcall *c) { tl_log_line("pvz2: asset info \"%s\"", S(c->args[0].l)); c->ret = vl(NULL); }
 static void J_asset_size(tl_jcall *c) { tl_log_line("pvz2: asset size \"%s\"", S(c->args[0].l)); c->ret = vj(-1); }
@@ -988,7 +992,7 @@ static void J_http_start(tl_jcall *c)
         http_complete(token, NULL);
     } else {
         const char *path = getenv("TL_PVZ2_MAIN_TAR");
-        if (!path) { snprintf(local, sizeof local, "%s/No_Backup/1.4.2.main.tar", P.data); path = local; }
+        if (!path) { snprintf(local, sizeof local, "%s/No_Backup/%s", P.data, PVZ2_PROFILE_CDN_ARCHIVE); path = local; }
         tl_cdn_fetch(url, method, body, length, path, token, http_complete);
     }
     free(body);
@@ -1877,6 +1881,74 @@ static void J_log_component(tl_jcall *c) { (void)c; c->ret = vl(tl_jni_new_objec
 static void J_network_component(tl_jcall *c) { (void)c; c->ret = vl(tl_jni_new_object(tl_jni_class("com/ea/nimble/INetwork"))); }
 static void J_network_status(tl_jcall *c) { (void)c; c->ret = vl(tl_jni_new_object(tl_jni_class("com/ea/nimble/Network$Status"))); }
 
+/* ------------------------------------------- AltVerZ's Java (libSnowie only)
+ *
+ * libSnowie asks Java for one thing the engine does not: the mod's feature map.
+ * Its CRefManualSymbolBuilder replacement calls
+ *
+ *     ActivityThread.currentApplication().getClassLoader()
+ *         .loadClass("com.snowie.SnowieConfig").GetGameFeatureMap()
+ *
+ * and then reads each element's name (String) and id (int). The two entries are
+ * AltVerZ's custom worlds; without them the worlds are not registered (the code
+ * returns quietly), the game would still start, but its own content would be
+ * missing. ActivityThread and Application do not exist in this Java world, so
+ * they are answered here; loadClass is the generic layer's, and the List methods
+ * are answered for the list this file builds. */
+typedef struct { jobj **items; uint32_t n; } plist;
+
+static void J_list_size(tl_jcall *c)
+{
+    plist *l = c->self ? c->self->native : NULL;
+    c->ret = vi(l ? (int)l->n : 0);
+}
+static void J_list_get(tl_jcall *c)
+{
+    plist *l = c->self ? c->self->native : NULL;
+    int i = c->args[0].i;
+    if (!l || i < 0 || (uint32_t)i >= l->n) {
+        tl_jni_throw("java/lang/IndexOutOfBoundsException", "");
+        c->ret.l = NULL;
+        return;
+    }
+    c->ret = vl(tl_jni_ref(l->items[i]));
+}
+static jobj *snowie_feature(const char *name, int id)
+{
+    jobj *o = tl_jni_new_object(tl_jni_class("com/snowie/SnowieConfig$Feature"));
+    tl_jni_set_field(o, "name", "Ljava/lang/String;", vl(str(name)));
+    jvalue v = vi(id);
+    tl_jni_set_field(o, "id", "I", v);
+    return o;
+}
+static void J_snowie_feature_map(tl_jcall *c)
+{
+    static const struct { const char *name; int id; } features[] = {
+        { "war_stargate_start", 123 },      /* com.snowie.SnowieConfig.GetGameFeatureMap */
+        { "world_trophy_war", 124 },
+    };
+    jobj *list = tl_jni_new_object(tl_jni_class("java/util/ArrayList"));
+    plist *l = calloc(1, sizeof(*l));
+    l->items = calloc(sizeof(features) / sizeof(features[0]), sizeof(jobj *));
+    for (size_t i = 0; i < sizeof(features) / sizeof(features[0]); i++)
+        l->items[l->n++] = snowie_feature(features[i].name, features[i].id);
+    list->native = l;
+    tl_log_line("pvz2: SnowieConfig.GetGameFeatureMap() -> %u features", l->n);
+    c->ret = vl(list);
+}
+static void J_current_application(tl_jcall *c)
+{
+    static jobj *app;
+    if (!app) app = tl_jni_new_object(tl_jni_class("android/app/Application"));
+    c->ret = vl(app);
+}
+static void J_application_class_loader(tl_jcall *c)
+{
+    static jobj *loader;
+    if (!loader) loader = tl_jni_new_object(tl_jni_class("java/lang/ClassLoader"));
+    c->ret = vl(loader);
+}
+
 /* ------------------------------------------------------------------- tables */
 
 #define M(cls, name, fn) { cls, name, NULL, fn }
@@ -2083,6 +2155,15 @@ static const tl_jhle k_hle[] = {
     M("com/ea/nimble/SynergyEnvironment", "getEaDeviceId", J_empty),
     M("com/ea/nimble/Log", "getThresholdLevel", J_ignore),
     M("com/ea/nimble/Identity", "getAuthenticator", J_ignore),
+
+    /* AltVerZ's feature map (libSnowie). Harmless when no mod asks for it. */
+    M("android/app/ActivityThread", "currentApplication", J_current_application),
+    M("android/app/Application", "getClassLoader", J_application_class_loader),
+    M("com/snowie/SnowieConfig", "GetGameFeatureMap", J_snowie_feature_map),
+    M("java/util/List", "size", J_list_size),
+    M("java/util/List", "get", J_list_get),
+    M("java/util/ArrayList", "size", J_list_size),
+    M("java/util/ArrayList", "get", J_list_get),
     { NULL, NULL, NULL, NULL },
 };
 
@@ -2531,6 +2612,15 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
     tl_jni_declare("com/ea/nimble/Log", "java/lang/Object");
     tl_jni_declare("com/ea/nimble/Identity", "java/lang/Object");
     tl_jni_declare("com/ea/nimble/bridge/BaseNativeCallback", "java/lang/Object");
+    /* AltVerZ's one Java path: an Application and its class loader, the mod's config
+     * class, and the List of features it returns. */
+    tl_jni_declare("android/app/Application", "java/lang/Object");
+    tl_jni_declare("android/app/ActivityThread", "java/lang/Object");
+    tl_jni_declare("java/lang/ClassLoader", "java/lang/Object");
+    tl_jni_declare("java/util/List", "java/lang/Object");
+    tl_jni_declare("java/util/ArrayList", "java/util/List");
+    tl_jni_declare("com/snowie/SnowieConfig", "java/lang/Object");
+    tl_jni_declare("com/snowie/SnowieConfig$Feature", "java/lang/Object");
     tl_jni_register_hle(k_hle);
 
     P.activity = tl_jni_new_object(tl_jni_class(ACT2));
@@ -2579,18 +2669,26 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
     onload(nimble);
     if (onload(game) < 0) tl_log_line("pvz2: libPVZ2 has no JNI_OnLoad");
 
-    /* Reflourished's own library: loaded and initialised after the game's
-     * JNI_OnLoad, so that the functions it hooks are registered. */
-    /* Reflourished's own library is the mod, and it installs its hooks by storing branches
-     * into the game. A converted library's code is signed and read-only, so A64HookFunction
-     * is redirected to the shim: it records what was asked for (site and replacement) and
-     * returns, and the game runs on the original code until the hooks are baked in. The
-     * library itself is still loaded -- the game expects it, and its constructors run. */
+    /* The mod's own library, after the game's JNI_OnLoad so the functions it hooks
+     * exist. It installs its hooks by storing branches into the game; a converted
+     * library's code is signed and read-only, so A64HookFunction is redirected to the
+     * shim: it fills a baked site's slot and records a site the bake does not answer.
+     * The library is still loaded and its constructors run, because it keeps state the
+     * game calls back into.
+     *
+     * The two mods differ here in exactly one way: libSnowie has a JNI_OnLoad that
+     * re-runs libPVZ2's constructors and registers itself, as Android's
+     * System.loadLibrary would; libRFLib has none. */
     if (getenv("TL_AOT_NO_MOD"))
-        tl_log_line("pvz2: libRFLib.so not loaded (TL_AOT_NO_MOD)");
+        tl_log_line("pvz2: %s not loaded (TL_AOT_NO_MOD)", PVZ2_PROFILE_MOD_LIBRARY);
     else {
-        tl_lib *rfl = load("libRFLib.so");
-        if (rfl) tl_ld_init(rfl);
+        tl_lib *mod = load(PVZ2_PROFILE_MOD_LIBRARY);
+        if (mod) {
+            if (!tl_ld_init(mod)) tl_log_line("pvz2: %s constructors failed", PVZ2_PROFILE_MOD_LIBRARY);
+#if PVZ2_PROFILE_MOD_JNI_ONLOAD
+            if (onload(mod) < 0) tl_log_line("pvz2: %s has no JNI_OnLoad", PVZ2_PROFILE_MOD_LIBRARY);
+#endif
+        }
     }
     if (getenv("TL_PVZ2_PROBE")) {
         tl_ld_probe(game, 0x166bf4c, probe_changed);
@@ -2938,6 +3036,32 @@ static uint64_t guest_call2(void *fn, uint64_t a0, uint64_t a1, bool *ok)
                          : "+r"(x0), "+r"(x16), "+r"(x1)
                          :
                          : "x2","x3","x4","x5","x6","x7","x8","x9","x10","x11","x12",
+                           "x13","x14","x15","x17","memory","cc");
+        guest_guard_leave();
+        *ok = true;
+        return x0;
+    }
+    guest_guard_leave();
+    tl_log_line("pvz2: the guest's own call faulted (signal %d); there is no answer",
+                (int)g_guest_fault);
+    return 0;
+}
+
+/* Three arguments: std::string::assign(dest, src, size). */
+static uint64_t guest_call3(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, bool *ok)
+{
+    register void *x16 __asm__("x16") = fn;
+    register uint64_t x0 __asm__("x0") = a0;
+    register uint64_t x1 __asm__("x1") = a1;
+    register uint64_t x2 __asm__("x2") = a2;
+    *ok = false;
+    if (!fn) return 0;
+    guest_guard_enter();
+    if (sigsetjmp(g_guest_jmp, 1) == 0) {
+        __asm__ volatile("blr %1"
+                         : "+r"(x0), "+r"(x16), "+r"(x1), "+r"(x2)
+                         :
+                         : "x3","x4","x5","x6","x7","x8","x9","x10","x11","x12",
                            "x13","x14","x15","x17","memory","cc");
         guest_guard_leave();
         *ok = true;
@@ -4094,6 +4218,1088 @@ bool tl_pvz2_ui_geometry(int *tray, int *shovel)
     return true;
 }
 
+/* ---------------------------------------------------------------- test hooks
+ *
+ * TEST-ONLY.  The route's tests used to tap screen coordinates, which is slow
+ * and breaks the moment a layout moves.  Three things make a test drive the
+ * game by what is on its screen instead:
+ *
+ *   - the state: title, the world map, a level, and the modal in front of it;
+ *   - the clickable widgets: every WidgetContainer child, with its RTTI class
+ *     name and its rect in the game's own design space;
+ *   - a press by name: the game's own widget-by-name lookup (guest 0x5beb44),
+ *     then a touch at the centre of its rect through the normal input queue --
+ *     no new code path into the game's logic.
+ *
+ * The UI lives on the GL thread, so every read and every press happens in the
+ * frame loop below, after the frame has been drawn.  Nothing here runs unless
+ * TL_PVZ2_STATE, TL_PVZ2_PRESS, TL_PVZ2_GOTO or TL_PVZ2_DEVCMD is set, so a
+ * player's build is the same code with these switches off.
+ *
+ * The widget tree (Reflourished 1.4.2; all offsets verified live):
+ *   widget+0x08  the child list's sentinel prev  (the sentinel is widget+0x08)
+ *   widget+0x10  the sentinel next -> the first child node
+ *   node+0x08    next node; node+0x10  the child widget
+ *   widget+0x20  the WidgetManager; widget+0x28  the parent container
+ *   widget+0x40  rect: x = high32, y = low32 of +0x48, w = high32 of +0x48,
+ *                h = low32 of +0x50
+ *   widget+0x00  vtable; vtable[-1] -> typeinfo; +0x08 -> the class name
+ */
+#define GUEST_TEST_DRIVER_GLOBAL 0x25a4e50
+#define GUEST_TEST_BOARD_GETTER  0xce4d8c
+/* The GameStateMgr singleton holds the level name at +0x1348.  The name is
+ * what LawnApp's board-create and Board::LoadLevel take; both are the calls
+ * the map's own level start makes (0xcb26b4 -> 0x940ce0, 0xaa9870). */
+#define GUEST_TEST_STATE_GLOBAL  0x2574520
+#define GUEST_TEST_STRING_ASSIGN 0x5afa28
+#define GUEST_TEST_BOARD_CREATE  0x940ce0
+#define GUEST_TEST_BOARD_LOAD    0xaa9870
+#define TEST_STATE_MAX           8192
+
+static char g_test_state[96] = "unknown";
+static pthread_mutex_t g_test_lock = PTHREAD_MUTEX_INITIALIZER;
+static char g_test_press[96];
+static int g_test_press_pending;
+static char g_test_goto[96];
+static int g_test_goto_phase;
+static double g_test_goto_at;
+static char g_test_devcmd[256];
+static int g_test_devcmd_pending;
+static char g_test_devcmd_env[512];
+static int g_test_devcmd_env_seen;
+static int g_test_devcmd_env_pos;
+static double g_test_devcmd_env_next;
+static unsigned long g_test_dump_seq;
+
+static uint64_t test_u64(uint64_t addr)
+{
+    uint64_t v = 0;
+    return guest_read_bytes(addr, &v, sizeof v) ? v : 0;
+}
+
+static int32_t test_i32(uint64_t addr)
+{
+    int32_t v = 0;
+    return guest_read_bytes(addr, &v, sizeof v) ? v : 0;
+}
+
+/* A guest C string (RTTI names are plain C strings in the mapped image). */
+static bool test_cstr(uint64_t addr, char *out, size_t n)
+{
+    if (!addr || n == 0) return false;
+    size_t i = 0;
+    for (; i + 1 < n; i++) {
+        char c = 0;
+        if (!guest_read_bytes(addr + i, &c, 1)) break;
+        out[i] = c;
+        if (!c) return true;
+    }
+    out[i] = 0;
+    return i > 0;
+}
+
+/* A libc++ std::string (the layout the game's Board and GameStateMgr use):
+ * the first byte's low bit selects the long form, where +8 is the size and
+ * +0x10 the data; otherwise the size is the byte's upper seven bits and the
+ * characters start at +1. */
+static bool test_guest_string(uint64_t str, char *out, size_t n)
+{
+    if (!str || n == 0) return false;
+    uint8_t flag = 0;
+    if (!guest_read_bytes(str, &flag, 1)) return false;
+    uint64_t data = str + 1;
+    uint64_t size = flag >> 1;
+    if (flag & 1) {
+        size = test_u64(str + 8);
+        data = test_u64(str + 0x10);
+    }
+    if (!data) return false;
+    size_t take = size < n - 1 ? (size_t)size : n - 1;
+    if (!guest_read_bytes(data, out, take)) return false;
+    out[take] = 0;
+    return true;
+}
+
+/* Itanium RTTI names in this game come in two shapes: a plain name with a
+ * length prefix ("8MainMenu", "25PVZ2UIScrollingPaneWidget"), or a nested one
+ * ("N4Sexy13WidgetManagerE").  Turn both into something a person can read;
+ * anything else is returned as it is. */
+static void test_class_name(uint64_t widget, char *out, size_t n)
+{
+    out[0] = 0;
+    uint64_t vt = test_u64(widget);
+    if (!vt) return;
+    uint64_t ti = test_u64(vt - 8);
+    if (!ti) return;
+    char raw[160];
+    if (!test_cstr(test_u64(ti + 8), raw, sizeof raw)) return;
+    if (raw[0] == 'N') {
+        /* N <source-name> ... E, with __ndk1 and other namespaces skipped only
+         * until the last component: reading every length is enough for the
+         * classes this game uses. */
+        size_t o = 0, i = 1;
+        while (raw[i] && raw[i] != 'E') {
+            if (raw[i] >= '0' && raw[i] <= '9') {
+                char *end = NULL;
+                unsigned long l = strtoul(raw + i, &end, 10);
+                if (!end || !*end || l == 0 || l > 120) break;
+                if (o && o + 2 < n) out[o++] = ':';
+                if (o) { if (o + 1 < n) out[o++] = ':'; }
+                const char *s = end;
+                size_t take = l;
+                if (o + take >= n) take = n - o - 1;
+                memcpy(out + o, s, take);
+                o += take;
+                out[o] = 0;
+                i = (size_t)(end - raw) + l;
+                if (raw[i] == 'I') break;  /* template args: stop at the name */
+            } else {
+                i++;
+            }
+        }
+        if (o) return;
+    }
+    if (raw[0] >= '1' && raw[0] <= '9') {
+        char *end = NULL;
+        unsigned long l = strtoul(raw, &end, 10);
+        if (end && l > 0 && l <= strlen(end)) {
+            snprintf(out, n, "%.*s", (int)l, end);
+            return;
+        }
+    }
+    snprintf(out, n, "%s", raw);
+}
+
+static uint64_t test_driver(void)
+{
+    uint64_t *global = tl_aot_guest_data_ptr_any(GUEST_TEST_DRIVER_GLOBAL);
+    return global ? *global : 0;
+}
+
+static uint64_t test_app(void)
+{
+    uint64_t driver = test_driver();
+    return driver ? test_u64(driver + 0x88) : 0;
+}
+
+static uint64_t test_manager(void)
+{
+    uint64_t app = test_app();
+    return app ? test_u64(app + 0x380) : 0;
+}
+
+static uint64_t test_board(void)
+{
+    bool ok = false;
+    return guest_call2(guest_code(GUEST_TEST_BOARD_GETTER), 0, 0, &ok);
+}
+
+/* The child list, walked without touching a widget's own code: the sentinel
+ * lives in the container, so a list that is being rebuilt cannot run away. */
+static int test_children(uint64_t widget, uint64_t *out, int max)
+{
+    uint64_t sentinel = widget + 8;
+    uint64_t node = test_u64(widget + 0x10);
+    int n = 0;
+    for (int guard = 0; node && node != sentinel && n < max && guard < 4096; guard++) {
+        uint64_t child = test_u64(node + 0x10);
+        if (child) out[n++] = child;
+        node = test_u64(node + 8);
+    }
+    return n;
+}
+
+static bool test_rect(uint64_t widget, int out[4])
+{
+    uint64_t a = test_u64(widget + 0x40), b = test_u64(widget + 0x48), c = test_u64(widget + 0x50);
+    if (!a && !b && !c) return false;
+    out[0] = (int)(uint32_t)(a >> 32);
+    out[1] = (int)(uint32_t)b;
+    out[2] = (int)(uint32_t)(b >> 32);
+    out[3] = (int)(uint32_t)c;
+    return out[2] > 0 && out[3] > 0;
+}
+
+/* A widget's rect in the game's design space: the widget's own rect is
+ * relative to its parent, so the parents are added until the top.  A parent
+ * with no rect (a layout holder such as Widget_ButtonList) contributes
+ * nothing but must not stop the walk: the dialog above it still does. */
+static bool test_abs_rect(uint64_t widget, int out[4])
+{
+    int x = 0, y = 0, w = 0, h = 0;
+    uint64_t cur = widget;
+    for (int depth = 0; depth < 12 && cur; depth++) {
+        int r[4];
+        if (test_rect(cur, r)) {
+            x += r[0]; y += r[1];
+            if (cur == widget) { w = r[2]; h = r[3]; }
+        } else if (cur == widget) {
+            return false;
+        }
+        cur = test_u64(cur + 0x28);
+    }
+    out[0] = x; out[1] = y; out[2] = w; out[3] = h;
+    return w > 0 && h > 0;
+}
+
+static const char *test_state_name_into(char *out, size_t n)
+{
+    /* Called on the game thread only. */
+    uint64_t app = test_app();
+    uint64_t manager = test_manager();
+    uint64_t board = test_board();
+    if (board) {
+        int32_t state = test_i32(board + 0xe0);
+        snprintf(out, n, state == 5 ? "level" : "level:%d", state);
+        return out;
+    }
+    if (app && test_u64(app + 0xb00)) snprintf(out, n, "title");
+    else if (manager) {
+        uint64_t modal = test_u64(manager + 0xe0);
+        if (modal) {
+            char cn[96];
+            test_class_name(modal, cn, sizeof cn);
+            snprintf(out, n, "modal:%s", cn);
+        } else {
+            /* The world map is a top-level widget of its own class. */
+            uint64_t top[96];
+            int n2 = test_children(manager, top, 96);
+            int map = 0;
+            for (int i = 0; i < n2 && !map; i++) {
+                char cn[96];
+                test_class_name(top[i], cn, sizeof cn);
+                if (strstr(cn, "WorldMap")) map = 1;
+            }
+            snprintf(out, n, "%s", map ? "map" : "screen");
+        }
+    } else snprintf(out, n, "unknown");
+    return out;
+}
+
+static const char *test_state_name(void)
+{
+    return test_state_name_into(g_test_state, sizeof g_test_state);
+}
+
+bool tl_pvz2_test_state(char *out, size_t n)
+{
+    if (!out || n == 0) return false;
+    pthread_mutex_lock(&g_test_lock);
+    snprintf(out, n, "%s", g_test_state);
+    pthread_mutex_unlock(&g_test_lock);
+    return strcmp(out, "unknown") != 0;
+}
+
+void tl_pvz2_test_press(const char *name)
+{
+    if (!name || !*name) return;
+    pthread_mutex_lock(&g_test_lock);
+    snprintf(g_test_press, sizeof g_test_press, "%s", name);
+    g_test_press_pending = 1;
+    pthread_mutex_unlock(&g_test_lock);
+}
+
+void tl_pvz2_test_goto(const char *dest)
+{
+    if (!dest || !*dest) return;
+    pthread_mutex_lock(&g_test_lock);
+    snprintf(g_test_goto, sizeof g_test_goto, "%s", dest);
+    g_test_goto_phase = 0;
+    g_test_goto_at = 0;
+    pthread_mutex_unlock(&g_test_lock);
+}
+
+/* Test only: queue one of the game's own developer commands for the next frame.
+ * The command object is built and run on the game thread by test_devcmd_exec,
+ * exactly like TL_PVZ2_DEVCMD. */
+void tl_pvz2_test_devcmd(const char *command)
+{
+    if (!command || !*command) return;
+    pthread_mutex_lock(&g_test_lock);
+    snprintf(g_test_devcmd, sizeof g_test_devcmd, "%s", command);
+    g_test_devcmd_pending = 1;
+    pthread_mutex_unlock(&g_test_lock);
+}
+
+/* Press one widget by name, on the game thread.  The rect is the game's own
+ * anchored rect when it has one (it needs the layout map), and the widget's
+ * own rect otherwise. */
+static bool test_string_has(uint64_t addr, const char *want)
+{
+    char s[128];
+    if (!test_cstr(addr, s, sizeof s)) return false;
+    return strcasestr(s, want) != NULL;
+}
+
+/* A widget's labels: the strings it points at, and the strings its members
+ * point at (an image path lives one object down).  This is what makes a press
+ * by "PurpleButton" (the PLAY button's image) possible when the game's own
+ * name is not among the layout's names. */
+static bool test_widget_has_label(uint64_t widget, const char *want)
+{
+    for (int off = 0; off < 0x300; off += 8) {
+        uint64_t v = test_u64(widget + off);
+        if (!v || v < 0x1000000) continue;
+        if (test_string_has(v, want)) return true;
+        for (int j = 0; j < 0x80; j += 8) {
+            uint64_t w = test_u64(v + j);
+            if (w && w > 0x1000000 && test_string_has(w, want)) return true;
+        }
+    }
+    return false;
+}
+
+static bool test_match_widget(uint64_t widget, const char *want, int *seen, int want_index)
+{
+    int r[4];
+    if (!test_rect(widget, r) || r[2] <= 0 || r[3] <= 0) return false;
+    char cn[128];
+    test_class_name(widget, cn, sizeof cn);
+    bool hit = strcasestr(cn, want) != NULL || test_widget_has_label(widget, want);
+    if (!hit) return false;
+    if (*seen == want_index) return true;
+    (*seen)++;
+    return false;
+}
+
+static bool test_find_by_label(const char *want, uint64_t *out)
+{
+    char base[96];
+    snprintf(base, sizeof base, "%s", want);
+    int want_index = 0;
+    char *hash = strrchr(base, '#');
+    if (hash && hash[1]) { want_index = atoi(hash + 1); *hash = 0; }
+    uint64_t manager = test_manager();
+    if (!manager) return false;
+    int seen = 0;
+    uint64_t top[128];
+    int n = test_children(manager, top, 128);
+    /* Iterative walk, depth first, the same order as the dump. */
+    uint64_t stack[256];
+    int sp = 0;
+    for (int i = n - 1; i >= 0; i--) if (sp < 256) stack[sp++] = top[i];
+    while (sp > 0) {
+        uint64_t w = stack[--sp];
+        if (test_match_widget(w, base, &seen, want_index)) { *out = w; return true; }
+        uint64_t kids[32];
+        int k = test_children(w, kids, 32);
+        for (int i = k - 1; i >= 0; i--) if (sp < 256) stack[sp++] = kids[i];
+    }
+    return false;
+}
+
+static bool test_press_widget(const char *name)
+{
+    void *widget = guest_find_widget(name);
+    bool by_name = widget != NULL;
+    if (!widget) {
+        uint64_t w = 0;
+        if (!test_find_by_label(name, &w)) {
+            tl_log_line("pvz2: test: there is no widget or label \"%s\"", name);
+            return false;
+        }
+        widget = (void *)(uintptr_t)w;
+    }
+    int rect[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
+    bool anchored = guest_anchored_rect(widget, rect);
+    if (!anchored || rect[2] <= 0 || rect[3] <= 0) {
+        if (!test_abs_rect((uint64_t)(uintptr_t)widget, rect) &&
+            !test_rect((uint64_t)(uintptr_t)widget, rect)) {
+            tl_log_line("pvz2: test: \"%s\" has no rect", name);
+            return false;
+        }
+    }
+    double s = guest_surface_scale();
+    if (!(s > 0.0)) s = 1.0;
+    int x = (int)((rect[0] + rect[2] / 2.0) * s);
+    int y = (int)((rect[1] + rect[3] / 2.0) * s);
+    char cn[96];
+    test_class_name((uint64_t)(uintptr_t)widget, cn, sizeof cn);
+    tl_log_line("pvz2: test: press \"%s\" -> %s at %d,%d (its rect %d,%d %dx%d, %s, %s)",
+                name, cn, x, y, rect[0], rect[1], rect[2], rect[3],
+                anchored ? "anchored" : "widget", by_name ? "by name" : "by class/label");
+    tl_pvz2_touch(0, 1, (float)x, (float)y);
+    tl_pvz2_touch(3, 1, (float)x, (float)y);
+    return true;
+}
+
+/* The dump.  One JSON line per change: the state, the modal, and every widget
+ * in the tree with its class, its rect in the game's own space and in surface
+ * pixels, and its flag bytes.  A reader can diff two dumps and see what
+ * changed; a tap script can wait for "state". */
+static void test_append(char **p, char *end, const char *fmt, ...)
+{
+    if (*p >= end) return;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(*p, (size_t)(end - *p), fmt, ap);
+    va_end(ap);
+    if (n > 0) *p += n;
+}
+
+static void test_json_escape(char *dst, size_t n, const char *src)
+{
+    size_t o = 0;
+    for (size_t i = 0; src[i] && o + 2 < n; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '"' || c == '\\') { dst[o++] = '\\'; dst[o++] = (char)c; }
+        else if (c < 32) { if (o + 6 < n) o += (size_t)snprintf(dst + o, n - o, "\\u%04x", c); }
+        else dst[o++] = (char)c;
+    }
+    dst[o] = 0;
+}
+
+static void test_walk(char **p, char *end, uint64_t widget, int depth, double scale,
+                      int ox, int oy, unsigned long *hash, int *count)
+{
+    if (!widget || depth > 8 || *count > 300) return;
+    char cn[128];
+    test_class_name(widget, cn, sizeof cn);
+    int r[4] = { 0, 0, 0, 0 };
+    bool has = test_rect(widget, r);
+    int ax = ox + (has ? r[0] : 0), ay = oy + (has ? r[1] : 0);
+    uint8_t flags[24] = { 0 };
+    guest_read_bytes(widget + 0x58, flags, sizeof flags);
+    (*hash) = (*hash) * 33 + (unsigned long)widget + (unsigned long)strlen(cn);
+    (*count)++;
+    test_append(p, end,
+                "%s{\"d\":%d,\"cls\":\"%s\",\"rect\":[%d,%d,%d,%d],"
+                "\"surf\":[%d,%d,%d,%d],\"flags\":\"",
+                *count > 1 ? "," : "", depth, cn,
+                has ? ax : 0, has ? ay : 0, has ? r[2] : 0, has ? r[3] : 0,
+                (int)(ax * scale), (int)(ay * scale),
+                (int)(r[2] * scale), (int)(r[3] * scale));
+    for (size_t i = 0; i < sizeof flags; i++) test_append(p, end, "%02x", flags[i]);
+    test_append(p, end, "\",\"labels\":[");
+    int labels = 0;
+    for (int off = 0; off < 0x300 && labels < 4; off += 8) {
+        uint64_t v = test_u64(widget + off);
+        if (!v || v < 0x1000000) continue;
+        char s[96];
+        if (!test_cstr(v, s, sizeof s)) continue;
+        size_t l = strlen(s);
+        if (l < 3 || l > 80) continue;
+        bool printable = true;
+        for (size_t i = 0; i < l; i++) if (s[i] < 32 || s[i] > 126) { printable = false; break; }
+        if (!printable) continue;
+        char esc[200];
+        test_json_escape(esc, sizeof esc, s);
+        test_append(p, end, "%s\"%s\"", labels ? "," : "", esc);
+        labels++;
+    }
+    test_append(p, end, "]}");
+    uint64_t kids[128];
+    int n = test_children(widget, kids, 128);
+    for (int i = 0; i < n; i++)
+        test_walk(p, end, kids[i], depth + 1, scale, has ? ax : ox, has ? ay : oy, hash, count);
+}
+
+static void test_state_dump(const char *path)
+{
+    uint64_t manager = test_manager();
+    if (!manager) return;
+    const char *state = test_state_name();
+    double scale = guest_surface_scale();
+    if (!(scale > 0.0)) scale = 1.0;
+    char line[TEST_STATE_MAX];
+    char *p = line, *end = line + sizeof line - 2;
+    unsigned long hash = 7;
+    int count = 0;
+    test_append(&p, end, "{\"seq\":%lu,\"state\":\"%s\"", ++g_test_dump_seq, state);
+    uint64_t app = test_app();
+    uint64_t modal = test_u64(manager + 0xe0);
+    if (app) {
+        test_append(&p, end, ",\"mainmenu\":%s",
+                    test_u64(app + 0xb00) ? "true" : "false");
+        test_append(&p, end, ",\"transition\":%s",
+                    test_u64(app + 0xaf8) ? "true" : "false");
+    }
+    if (modal) {
+        char cn[96];
+        test_class_name(modal, cn, sizeof cn);
+        test_append(&p, end, ",\"modal\":\"%s\"", cn);
+    } else test_append(&p, end, ",\"modal\":\"\"");
+    uint64_t board = test_board();
+    if (board) {
+        test_append(&p, end, ",\"board\":%llu,\"board_state\":%d",
+                    (unsigned long long)board, test_i32(board + 0xe0));
+        char level[224];
+        if (test_guest_string(board + 0xe8, level, sizeof level) && level[0]) {
+            char esc[460];
+            test_json_escape(esc, sizeof esc, level);
+            test_append(&p, end, ",\"level_name\":\"%s\"", esc);
+        }
+    }
+    test_append(&p, end, ",\"widgets\":[");
+    uint64_t top[128];
+    int n = test_children(manager, top, 128);
+    for (int i = 0; i < n; i++) test_walk(&p, end, top[i], 0, scale, 0, 0, &hash, &count);
+    test_append(&p, end, "],\"count\":%d}\n", count);
+    if (p >= end) return;
+    static unsigned long last_hash;
+    static char last_state[96];
+    if (hash == last_hash && !strcmp(state, last_state)) return;
+    last_hash = hash;
+    snprintf(last_state, sizeof last_state, "%s", state);
+    char tmp[1100];
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "w");
+    if (!f) return;
+    fputs(line, f);
+    fclose(f);
+    rename(tmp, path);
+    tl_log_line("pvz2: test: state %s, %d widgets -> %s", state, count, path);
+}
+
+/* The game's built-in developer commands, for tests only.  The game has
+ * the game's own developer-command classes; a command is a small object: the factory
+ * allocates it, the std::string at +0x60 is its argument, and the run method
+ * acts on it on the game thread.  The game registers these classes at start-up
+ * (docs/GAME-NOTES.md, "The game's built-in developer commands").  Running the
+ * same object the game's own developer menu runs keeps the action inside the
+ * game's code -- no second level-start or collectable path.
+ *
+ * "startlevel" is also the preferred level jump: unlike the two calls the map
+ * makes, it knows how to take the map off the screen and to load a level from
+ * a world that is not the current one. */
+#define GUEST_TEST_DEVCMD_STARTLEVEL_FACTORY  0x11ccbb0
+#define GUEST_TEST_DEVCMD_STARTLEVEL_RUN      0x11ccc20
+#define GUEST_TEST_DEVCMD_COLLECT_FACTORY     0x11cc514
+#define GUEST_TEST_DEVCMD_COLLECT_RUN         0x11cc2e8
+#define GUEST_TEST_DEVCMD_ZOMBIE_FACTORY      0x11cbcc8
+#define GUEST_TEST_DEVCMD_ZOMBIE_RUN          0x11cbd38
+#define GUEST_TEST_DEVCMD_SEEDPACKET_FACTORY  0x11cc6bc
+#define GUEST_TEST_DEVCMD_SEEDPACKET_RUN      0x11cc584
+#define GUEST_TEST_DEVCMD_SEEDPACKETXP_FACTORY 0x11cc894
+#define GUEST_TEST_DEVCMD_SEEDPACKETXP_RUN    0x11cc730
+/* The seed chooser: its vtable, and the method that adds one of its available
+ * entries to the chosen list.  The Let's Rock button is a widget at +0x248;
+ * its rect is in the game's own 3393x1536 space and the touch queue takes
+ * surface pixels. */
+#define GUEST_TEST_SEED_CHOOSER_VTABLE        0x23b7db0
+#define GUEST_TEST_SEED_CHOOSER_ADD           0x977468
+
+typedef struct {
+    const char *name;
+    uint64_t factory, run;
+    int needs_board;
+} test_devcmd_def;
+
+static const test_devcmd_def g_test_devcmds[] = {
+    { "startlevel", GUEST_TEST_DEVCMD_STARTLEVEL_FACTORY,
+      GUEST_TEST_DEVCMD_STARTLEVEL_RUN, 0 },
+    { "collect", GUEST_TEST_DEVCMD_COLLECT_FACTORY,
+      GUEST_TEST_DEVCMD_COLLECT_RUN, 1 },
+    { "zombie", GUEST_TEST_DEVCMD_ZOMBIE_FACTORY,
+      GUEST_TEST_DEVCMD_ZOMBIE_RUN, 1 },
+    { "seedpacket", GUEST_TEST_DEVCMD_SEEDPACKET_FACTORY,
+      GUEST_TEST_DEVCMD_SEEDPACKET_RUN, 1 },
+    { "seedpacketxp", GUEST_TEST_DEVCMD_SEEDPACKETXP_FACTORY,
+      GUEST_TEST_DEVCMD_SEEDPACKETXP_RUN, 1 },
+    { "rock", 0, 0, 1 },
+};
+
+/* The board's object list (the vector the spawn calls append to): a count is
+ * the cheapest proof that a spawn command did something, even when the
+ * frame's camera is elsewhere. */
+static long test_board_objects(uint64_t board)
+{
+    uint64_t begin = test_u64(board + 0x128);
+    uint64_t end = test_u64(board + 0x130);
+    return end > begin ? (long)((end - begin) / 8) : 0;
+}
+
+/* Find the live SeedChooser by its vtable in the heap around the board.  The
+ * object is not in the board's widget tree; the allocator can place it some
+ * hundred MB away, so the scan is deliberately larger than the board.  A
+ * candidate is only taken if it has a sane selected/required count and the
+ * Let's Rock button class, which also skips freed survivors of earlier levels. */
+static uint64_t test_find_seed_chooser(uint64_t board)
+{
+    void *svp = tl_aot_guest_data_ptr_any(GUEST_TEST_SEED_CHOOSER_VTABLE);
+    uint64_t sv = (uint64_t)(uintptr_t)svp;
+    const size_t chunk = 0x100000;
+    uint8_t *buf = malloc(chunk);
+    if (!sv || !buf) return 0;
+    uint64_t found = 0;
+    uint64_t lo = board - 0x14000000ULL;
+    uint64_t hi = board + 0x14000000ULL;
+    for (uint64_t a = lo; a < hi && !found; a += chunk) {
+        if (!safe_read(a, buf, chunk)) continue;
+        for (size_t off = 0; off + 8 <= chunk; off += 8) {
+            uint64_t v = 0;
+            memcpy(&v, buf + off, sizeof v);
+            if (v != sv) continue;
+            uint64_t p = a + off;
+            if (test_u64(p) != sv) continue;
+            int32_t need = test_i32(p + 0x23c);
+            int32_t have = test_i32(p + 0x238);
+            uint64_t button = test_u64(p + 0x248);
+            if (need <= 0 || need > 12 || have < 0 || have > need || !button)
+                continue;
+            char cn[96];
+            test_class_name(button, cn, sizeof cn);
+            if (strcmp(cn, "StretchableNewLawnButton")) continue;
+            found = p;
+            break;
+        }
+    }
+    free(buf);
+    return found;
+}
+
+/* Fill the chooser from its own available-entry list, through the method the
+ * chooser's grid press uses.  The first entries are the level's plants; the
+ * add method refuses duplicates, so a failure to advance simply moves on. */
+static int test_fill_seed_chooser(uint64_t chooser)
+{
+    int32_t need = test_i32(chooser + 0x23c);
+    int32_t have = test_i32(chooser + 0x238);
+    uint64_t base = test_u64(chooser + 0x208);
+    uint64_t end = test_u64(chooser + 0x210);
+    if (need <= 0 || need > 12 || base >= end) return have;
+    uint64_t entries = (end - base) / 0x40;
+    if (entries > 512) entries = 512;
+    for (uint64_t i = 0; i < entries && have < need; i++) {
+        bool ok = false;
+        guest_call2(guest_code(GUEST_TEST_SEED_CHOOSER_ADD), chooser,
+                    base + i * 0x40, &ok);
+        if (!ok) break;
+        have = test_i32(chooser + 0x238);
+    }
+    return have;
+}
+
+/* The chooser's Let's Rock button: queue the same down/up pair a player's tap
+ * makes, at the centre of the button's own rect (converted to surface
+ * pixels).  The game's UI_ProcessEvents then runs the chooser's own press
+ * path; this function does not write the board state. */
+static bool test_press_lets_rock(uint64_t chooser)
+{
+    uint64_t button = test_u64(chooser + 0x248);
+    if (!button) return false;
+    uint64_t r0 = test_u64(button + 0x40);
+    uint64_t r1 = test_u64(button + 0x48);
+    uint64_t r2 = test_u64(button + 0x50);
+    int x = (int)(uint32_t)(r0 >> 32);
+    int y = (int)(uint32_t)r1;
+    int w = (int)(uint32_t)(r1 >> 32);
+    int h = (int)(uint32_t)r2;
+    if (w <= 0 || h <= 0) return false;
+    double s = guest_surface_scale();
+    if (!(s > 0.0)) s = 1.0;
+    int sx = (int)((x + w / 2.0) * s + 0.5);
+    int sy = (int)((y + h / 2.0) * s + 0.5);
+    tl_pvz2_touch(0, 1, (float)sx, (float)sy);
+    tl_pvz2_touch(3, 1, (float)sx, (float)sy);
+    tl_log_line("pvz2: test: devcmd rock: Let's Rock button %#llx rect %d,%d %dx%d"
+                " -> surface %d,%d", (unsigned long long)button, x, y, w, h, sx, sy);
+    return true;
+}
+
+static const test_devcmd_def *test_devcmd_find(const char *name)
+{
+    for (size_t i = 0; i < sizeof g_test_devcmds / sizeof g_test_devcmds[0]; i++)
+        if (!strcmp(g_test_devcmds[i].name, name)) return &g_test_devcmds[i];
+    return NULL;
+}
+
+/* Build one command object, put the argument in +0x60 and run it.  The object
+ * is deliberately not freed: it is one small allocation per line and freeing
+ * it needs the deleting destructor; a test run leaks a handful. */
+static bool test_devcmd_run(const char *name, const char *args)
+{
+    const test_devcmd_def *def = test_devcmd_find(name);
+    if (!def) {
+        tl_log_line("pvz2: test: there is no dev command \"%s\"", name);
+        return false;
+    }
+    uint64_t board = def->needs_board ? test_board() : 0;
+    long before = board ? test_board_objects(board) : -1;
+    if (!strcmp(name, "rock")) {
+        uint64_t chooser = test_find_seed_chooser(board);
+        if (!chooser) {
+            tl_log_line("pvz2: test: devcmd rock: no seed chooser around the board");
+            return false;
+        }
+        int32_t need = test_i32(chooser + 0x23c);
+        int32_t have = test_i32(chooser + 0x238);
+        if (have < need) have = test_fill_seed_chooser(chooser);
+        bool queued = test_press_lets_rock(chooser);
+        tl_log_line("pvz2: test: devcmd rock: chooser %#llx, selected %d/%d,"
+                    " button %s (board state %d)", (unsigned long long)chooser,
+                    have, need, queued ? "touched" : "not found",
+                    test_i32(board + 0xe0));
+        return queued && have >= need;
+    }
+    bool ok = false;
+    uint64_t obj = guest_call2(guest_code(def->factory), 0, 0, &ok);
+    if (!ok || !obj) {
+        tl_log_line("pvz2: test: devcmd %s: the factory faulted", name);
+        return false;
+    }
+    size_t n = strlen(args);
+    if (n > 0) {
+        char *tmp = malloc(n + 1);
+        if (!tmp) return false;
+        memcpy(tmp, args, n + 1);
+        guest_call3(guest_code(GUEST_TEST_STRING_ASSIGN), obj + 0x60,
+                    (uint64_t)(uintptr_t)tmp, n, &ok);
+        free(tmp);
+        if (!ok) {
+            tl_log_line("pvz2: test: devcmd %s: setting \"%s\" faulted", name, args);
+            return false;
+        }
+    }
+    char got[256];
+    if (!test_guest_string(obj + 0x60, got, sizeof got)) got[0] = 0;
+    bool ran = false;
+    guest_call2(guest_code(def->run), obj, 0, &ran);
+    long after = board ? test_board_objects(board) : -1;
+    tl_log_line("pvz2: test: devcmd %s \"%s\" -> command %p, %s (objects %ld -> %ld)",
+                name, got, (void *)(uintptr_t)obj, ran ? "ran" : "faulted",
+                before, after);
+    return ran;
+}
+
+/* A line from TL_PVZ2_DEVCMD or a tap script: "name [args]".  The argument
+ * is the game's own key, not a class name (the level must know the type). */
+static bool test_devcmd_exec(const char *line)
+{
+    while (*line == ' ' || *line == '\t') line++;
+    char buf[320];
+    snprintf(buf, sizeof buf, "%s", line);
+    char *args = strchr(buf, ' ');
+    if (args) {
+        *args++ = 0;
+        while (*args == ' ' || *args == '\t') args++;
+    } else args = buf + strlen(buf);
+    const test_devcmd_def *def = test_devcmd_find(buf);
+    if (!def) {
+        tl_log_line("pvz2: test: unknown dev command \"%s\" (startlevel, collect, zombie, seedpacket, seedpacketxp, rock)", buf);
+        return false;
+    }
+    if (!args[0] && strcmp(buf, "rock")) {
+        tl_log_line("pvz2: test: devcmd %s needs an argument", buf);
+        return false;
+    }
+    if (def->needs_board && !test_board()) {
+        tl_log_line("pvz2: test: devcmd %s \"%s\": no board", buf, args);
+        return false;
+    }
+    return test_devcmd_run(buf, args);
+}
+
+/* TL_PVZ2_DEVCMD is one or more "name [args]" lines separated by ';'.  They
+ * run one after another once the game has started; a startlevel gets five
+ * seconds for its level to load before the next line runs.  A tap script's
+ * devcmd: step is the precise way to wait for a screen first. */
+static void test_devcmd_env_tick(double now)
+{
+    if (!g_test_devcmd_env[0] || !atomic_load(&g_started)) return;
+    if (now < g_test_devcmd_env_next) return;
+    size_t len = strlen(g_test_devcmd_env);
+    if (g_test_devcmd_env_pos >= (int)len) return;
+    char line[320];
+    size_t o = 0;
+    int p = g_test_devcmd_env_pos;
+    while (p < (int)len && g_test_devcmd_env[p] != ';') {
+        if (o + 1 < sizeof line) line[o++] = g_test_devcmd_env[p];
+        p++;
+    }
+    line[o] = 0;
+    if (p < (int)len && g_test_devcmd_env[p] == ';') p++;
+    g_test_devcmd_env_pos = p;
+    while (o > 0 && (line[o - 1] == ' ' || line[o - 1] == '\t')) line[--o] = 0;
+    char *s = line;
+    while (*s == ' ' || *s == '\t') s++;
+    if (!*s) {
+        g_test_devcmd_env_next = now;
+        return;
+    }
+    bool is_start = !strncmp(s, "startlevel", 10) && (s[10] == 0 || s[10] == ' ');
+    bool ok = test_devcmd_exec(s);
+    g_test_devcmd_env_next = now + (is_start && ok ? 5.0 : 0.75);
+}
+
+/* The map screen's own level button takes the map off the widget list before
+ * the board runs.  The two calls that build a level do not, so a test that
+ * jumps from the map leaves it underneath; unlink its top-level widgets.  The
+ * nodes are the manager's circular list (node+0 prev, +8 next, +0x10 child);
+ * this only unlinks, it never frees. */
+static int test_remove_map_widgets(void)
+{
+    uint64_t manager = test_manager();
+    if (!manager) return 0;
+    uint64_t sentinel = manager + 8;
+    uint64_t node = test_u64(manager + 0x10);
+    int removed = 0;
+    for (int guard = 0; node && node != sentinel && guard < 256; guard++) {
+        uint64_t next = test_u64(node + 8);
+        uint64_t child = test_u64(node + 0x10);
+        if (child) {
+            char cn[96];
+            test_class_name(child, cn, sizeof cn);
+            if (strstr(cn, "WorldMap") || strstr(cn, "UniverseMap") ||
+                strstr(cn, "SpaceSpiral")) {
+                uint64_t prev = test_u64(node);
+                if (!guest_write_u64(prev + 8, next) || !guest_write_u64(next, prev))
+                    break;
+                removed++;
+            }
+        }
+        node = next;
+    }
+    return removed;
+}
+
+/* TL_PVZ2_GOTO: a destination, reached with the game's own buttons.  "map"
+ * presses the title's PLAY; the map's own buttons go to the almanac, the
+ * store and the settings.  "level:<name>" sets the name the game's own level
+ * start reads and then makes the two calls that start reads make: create the
+ * board on LawnApp and load the level into it.  <name> is the game's level
+ * name in the current world (on the level save that is the event's own path,
+ * e.g. lod/holidayevents26/halloween/lod_halloween_005); a name the current
+ * world has not loaded is not in its registry and the guest call faults. */
+static bool test_goto_level(const char *name)
+{
+    uint64_t mgr = test_u64((uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(GUEST_TEST_STATE_GLOBAL));
+    uint64_t app = test_app();
+    if (!mgr || !app) {
+        tl_log_line("pvz2: test: goto level \"%s\": no game state manager", name);
+        return false;
+    }
+    size_t n = strlen(name);
+    if (n == 0 || n > 200) {
+        tl_log_line("pvz2: test: goto level: bad name \"%s\"", name);
+        return false;
+    }
+    /* The game's own developer-command level start is the preferred path: it
+     * loads the level by
+     * name, closes the map with the game's own transition and knows levels
+     * outside the current world's registry (proved with egypt2 from the event
+     * map).  The two direct calls below stay as the fallback. */
+    if (test_devcmd_run("startlevel", name)) {
+        tl_log_line("pvz2: test: goto level \"%s\": the game's developer-command level start was scheduled", name);
+        return true;
+    }
+    /* libc++'s assign reads the bytes; the converted guest reads host
+     * addresses, so a host buffer is enough and needs no guest allocation. */
+    char *tmp = malloc(n + 1);
+    if (!tmp) return false;
+    memcpy(tmp, name, n + 1);
+    bool ok = false;
+    guest_call3(guest_code(GUEST_TEST_STRING_ASSIGN), mgr + 0x1348,
+                (uint64_t)(uintptr_t)tmp, n, &ok);
+    free(tmp);
+    char got[224];
+    test_guest_string(mgr + 0x1348, got, sizeof got);
+    if (!ok) {
+        tl_log_line("pvz2: test: goto level \"%s\": setting the name faulted", name);
+        return false;
+    }
+    tl_log_line("pvz2: test: level name is now \"%s\"", got);
+    bool created = false;
+    guest_call2(guest_code(GUEST_TEST_BOARD_CREATE), app, 0, &created);
+    uint64_t board = test_u64(app + 0x9a8);
+    if (!created || !board) {
+        tl_log_line("pvz2: test: goto level \"%s\": no board was created", got);
+        return false;
+    }
+    bool loaded = false;
+    guest_call2(guest_code(GUEST_TEST_BOARD_LOAD), board, mgr + 0x1348, &loaded);
+    tl_log_line("pvz2: test: goto level \"%s\" -> board %p, load %s",
+                got, (void *)(uintptr_t)board, loaded ? "ok" : "faulted");
+    if (loaded) {
+        /* The map's own level button also takes the map off the screen before
+         * the board runs; the two calls above only build the board.  Unlink
+         * the map's top-level widgets so the test sees the level, not the map
+         * left underneath it.  Test-only: no game logic is called here. */
+        int removed = test_remove_map_widgets();
+        if (removed)
+            tl_log_line("pvz2: test: goto level \"%s\": removed %d map widget(s)", got, removed);
+    }
+    return loaded;
+}
+
+static void test_goto_tick(double now)
+{
+    char dest[96];
+    pthread_mutex_lock(&g_test_lock);
+    snprintf(dest, sizeof dest, "%s", g_test_goto);
+    int phase = g_test_goto_phase;
+    double at = g_test_goto_at;
+    pthread_mutex_unlock(&g_test_lock);
+    if (!dest[0] || !atomic_load(&g_started)) return;
+    const char *state = test_state_name();
+    bool level_dest = !strncmp(dest, "level:", 6);
+    /* A level destination's phase 1 polls the map every frame; its `at` is a
+     * deadline, not a wait.  Everything else runs only when its time comes. */
+    if (now < at && !(level_dest && phase == 1)) return;
+    if (level_dest) {
+        if (phase == 0) {
+            if (!strcmp(state, "title")) {
+                if (test_press_widget("Profile_Play")) {
+                    pthread_mutex_lock(&g_test_lock);
+                    g_test_goto_phase = 1;
+                    g_test_goto_at = now + 30.0;
+                    pthread_mutex_unlock(&g_test_lock);
+                } else {
+                    pthread_mutex_lock(&g_test_lock);
+                    g_test_goto_at = now + 1.0;
+                    pthread_mutex_unlock(&g_test_lock);
+                }
+                return;
+            }
+            /* Already past the title: the map (or a level) is up. */
+            pthread_mutex_lock(&g_test_lock);
+            g_test_goto_phase = 1;
+            g_test_goto_at = now + 30.0;
+            pthread_mutex_unlock(&g_test_lock);
+            return;
+        }
+        if (phase == 1) {
+            if (strcmp(state, "map")) {
+                if (now >= at) {
+                    tl_log_line("pvz2: test: goto %s: no map after 30 s", dest);
+                    pthread_mutex_lock(&g_test_lock);
+                    g_test_goto[0] = 0;
+                    g_test_goto_phase = 0;
+                    pthread_mutex_unlock(&g_test_lock);
+                }
+                return;
+            }
+            /* The map has just appeared and is still building its widgets;
+             * the game's own level start runs after that settles. */
+            pthread_mutex_lock(&g_test_lock);
+            g_test_goto_phase = 2;
+            g_test_goto_at = now + 3.0;
+            pthread_mutex_unlock(&g_test_lock);
+            return;
+        }
+        if (phase == 2) {
+            if (!strcmp(state, "map")) {
+                bool ok = test_goto_level(dest + 6);
+                tl_log_line("pvz2: test: goto %s %s", dest, ok ? "done" : "failed");
+            } else {
+                tl_log_line("pvz2: test: goto %s: left the map before the start", dest);
+            }
+            pthread_mutex_lock(&g_test_lock);
+            g_test_goto[0] = 0;
+            g_test_goto_phase = 0;
+            pthread_mutex_unlock(&g_test_lock);
+            return;
+        }
+    }
+    if (phase == 0) {
+        if (!strcmp(dest, "map") || !strcmp(dest, "worldmap") ||
+            !strcmp(dest, "almanac") || !strcmp(dest, "store") || !strcmp(dest, "settings")) {
+            if (!strcmp(state, "title")) {
+                /* The title's play button: its sound label names the profile
+                 * play action ("Play_UI_Menu_Button_Profile_Play").  The
+                 * game's own name for it is not in the layout, so the press
+                 * goes by that label. */
+                if (test_press_widget("Profile_Play")) {
+                    pthread_mutex_lock(&g_test_lock);
+                    g_test_goto_phase = 1;
+                    g_test_goto_at = now + 3.0;
+                    pthread_mutex_unlock(&g_test_lock);
+                } else {
+                    pthread_mutex_lock(&g_test_lock);
+                    g_test_goto_at = now + 1.0;
+                    pthread_mutex_unlock(&g_test_lock);
+                }
+                return;
+            }
+            pthread_mutex_lock(&g_test_lock);
+            g_test_goto_phase = 1;
+            g_test_goto_at = now;
+            pthread_mutex_unlock(&g_test_lock);
+            return;
+        }
+        tl_log_line("pvz2: test: goto \"%s\" is not implemented", dest);
+        pthread_mutex_lock(&g_test_lock);
+        g_test_goto[0] = 0;
+        pthread_mutex_unlock(&g_test_lock);
+        return;
+    }
+    if (phase == 1) {
+        const char *button = NULL;
+        if (!strcmp(dest, "almanac")) button = "UIWorldMapAlmanacButton";
+        else if (!strcmp(dest, "store")) button = "UIWorldMapStoreButton";
+        else if (!strcmp(dest, "settings")) button = "UIWorldMapSettingsButton";
+        if (button) {
+            bool pressed = test_press_widget(button);
+            tl_log_line("pvz2: test: goto %s %s", dest, pressed ? "pressed" : "found no button");
+        } else {
+            tl_log_line("pvz2: test: goto %s done", dest);
+        }
+        pthread_mutex_lock(&g_test_lock);
+        g_test_goto[0] = 0;
+        g_test_goto_phase = 0;
+        pthread_mutex_unlock(&g_test_lock);
+    }
+}
+
+/* The frame loop's one call: publish the state, run a queued press and the
+ * goto state machine, and dump on change when asked to. */
+static void test_hooks_frame(void)
+{
+    static const char *state_file;
+    static int on = -1;
+    if (on < 0) {
+        state_file = getenv("TL_PVZ2_STATE");
+        const char *devcmd_env = getenv("TL_PVZ2_DEVCMD");
+        on = (state_file && *state_file) || getenv("TL_PVZ2_PRESS") ||
+             getenv("TL_PVZ2_GOTO") || (devcmd_env && *devcmd_env);
+        if (devcmd_env && *devcmd_env && !g_test_devcmd_env_seen) {
+            g_test_devcmd_env_seen = 1;
+            snprintf(g_test_devcmd_env, sizeof g_test_devcmd_env, "%s", devcmd_env);
+        }
+        if (on) tl_log_line("pvz2: test hooks are on%s%s%s%s",
+                            state_file && *state_file ? " (state dump)" : "",
+                            getenv("TL_PVZ2_PRESS") ? " (press)" : "",
+                            getenv("TL_PVZ2_GOTO") ? " (goto)" : "",
+                            devcmd_env && *devcmd_env ? " (devcmd)" : "");
+    }
+    if (!on) return;
+    char st[96];
+    test_state_name_into(st, sizeof st);
+    pthread_mutex_lock(&g_test_lock);
+    snprintf(g_test_state, sizeof g_test_state, "%s", st);
+    char press[96];
+    snprintf(press, sizeof press, "%s", g_test_press);
+    int do_press = g_test_press_pending;
+    g_test_press_pending = 0;
+    char devcmd[256];
+    snprintf(devcmd, sizeof devcmd, "%s", g_test_devcmd);
+    int do_devcmd = g_test_devcmd_pending;
+    g_test_devcmd_pending = 0;
+    pthread_mutex_unlock(&g_test_lock);
+    if (do_press && press[0]) test_press_widget(press);
+    if (do_devcmd && devcmd[0]) test_devcmd_exec(devcmd);
+    static int initial_press_done;
+    static double started_at;
+    if (atomic_load(&g_started) && started_at == 0) started_at = now_s();
+    const char *env_press = getenv("TL_PVZ2_PRESS");
+    if (!initial_press_done && env_press && *env_press && started_at > 0 &&
+        now_s() - started_at > 6.0) {
+        initial_press_done = 1;
+        test_press_widget(env_press);
+    }
+    static int initial_goto_done;
+    const char *env_goto = getenv("TL_PVZ2_GOTO");
+    if (!initial_goto_done && env_goto && *env_goto && started_at > 0 &&
+        now_s() - started_at > 6.0) {
+        initial_goto_done = 1;
+        tl_pvz2_test_goto(env_goto);
+    }
+    test_goto_tick(now_s());
+    test_devcmd_env_tick(now_s());
+    static int dump_counter;
+    if (state_file && *state_file && (++dump_counter % 15) == 0) test_state_dump(state_file);
+}
+
 static void *guest_app_finder(void *arg)
 {
     (void)arg;
@@ -4513,6 +5719,9 @@ static void *gl_main(void *arg)
          * thread, right after the frame: the widget tree is the guest's, and it
          * is the guest's thread that owns it. */
         if ((tl_pvz2_frames() % 30) == 0) guest_ui_geometry();
+        /* The test hooks: state, the clickable tree and a press by name, all on
+         * the guest's thread, after the frame (they are inert unless asked). */
+        test_hooks_frame();
         /* The memory warning, on the game's own thread. */
         if (atomic_exchange(&g_low_memory_pending, 0)) guest_low_memory_warning();
         /* The host's own touches: any that are left down are released. */

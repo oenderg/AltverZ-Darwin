@@ -558,6 +558,14 @@ def emit_asm(e, lay, sv, outdir, stub_bytes, mod_init=False, code_gap=0, redirec
     lines.append("")
     exports = {}
     for name, val, size, typ, shndx in e.symbols():
+        # A name the assembler cannot spell cannot be exported. AltVerZ's libSnowie
+        # carries one obfuscated symbol whose dynstr bytes are not ASCII; no sibling
+        # references it, and writing it into guest.s stops the link ("unexpected
+        # token"). Skip it -- its bytes still live in the blob, only the export is lost.
+        if not name or not re.fullmatch(r"[A-Za-z0-9_.$]+", name):
+            if name:
+                print("  -> not exporting the symbol %r: not an assembler name" % name)
+            continue
         if shndx and name and name not in (CODE_LABEL, DATA_LABEL, STUB_LABEL, TCB_LABEL,
                                            VX18_LABEL):
             # A redirected name is not exported: its definition now branches to the

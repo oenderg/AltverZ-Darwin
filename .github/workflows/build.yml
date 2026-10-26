@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: "Link to the PvZ2 Reflourished 1.4.2 APK (direct, Google Drive or MEGA); empty: the repository's own copy (the build-inputs draft release)"
+        description: "Link to the PvZ2 AltVerZ 1.8.3f APK (direct, Google Drive or MEGA); empty: this repository's build-inputs draft release"
         required: false
         default: ""
       obb_url:
-        description: "Link to the OBB (leave empty: the mod's own 1.4.2 OBB is used)"
+        description: "Link to the OBB; empty: the game's own 1.8.3f OBB from data/game-1.8.3f.json"
         required: false
         default: ""
       platforms:
@@ -22,7 +22,7 @@ on:
         options: [Slim and full, Slim, Full]
         default: Slim and full
       publish:
-        description: "Publish the release, the AltStore source and the Mac update feed (off: build only)"
+        description: "Publish the prerelease, the AltStore source and the Mac update feed (off: build only)"
         type: boolean
         default: true
       release_tag:
@@ -37,6 +37,8 @@ jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 150
+    env:
+      PROFILE: altverz
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,19 +65,22 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.inputs.release_tag }}
         run: |
+          set -euo pipefail
+          . scripts/profile.sh
           . scripts/app-version.sh
           # The release notes' What's new is written by hand before the run (release-notes/README.md).
           python3 scripts/release-notes.py --whats-new --version "$APP_VERSION" > /dev/null
           echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "game=$GAME_VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=${RELEASE_TAG:-v$APP_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "prefix=PvZ2-Reflourished-$GAME_VERSION-Darwin-$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "prefix=$PROFILE_ARTIFACT-$GAME_VERSION-Darwin-$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$PROFILE_ARTIFACT-$GAME_VERSION.apk" >> "$GITHUB_OUTPUT"
 
       - name: The APK
         id: apk
         env:
           APK_URL: ${{ github.event.inputs.apk_url }}
-          GAME: ${{ steps.metadata.outputs.game }}
+          APK_NAME: ${{ steps.metadata.outputs.apk_name }}
           REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -83,19 +88,18 @@ jobs:
           if [ -n "$APK_URL" ]; then echo "apk=$APK_URL" >> "$GITHUB_OUTPUT"; exit 0; fi
           # The repository's own copy: an asset of the draft release "build-inputs", which only
           # people with write access can see (docs/RELEASING.md). A fork has none: give a link.
-          name="PvZ2-Reflourished-$GAME.apk"
           id="$(gh api "repos/$REPOSITORY/releases" --paginate \
-            --jq ".[] | select(.draft and .tag_name == \"build-inputs\") | .assets[] | select(.name == \"$name\") | .id" | head -1)"
-          [ -n "$id" ] || { echo "no APK link given and no $name in a build-inputs draft release" >&2; exit 1; }
+            --jq ".[] | select(.draft and .tag_name == \"build-inputs\") | .assets[] | select(.name == \"$APK_NAME\") | .id" | head -1)"
+          [ -n "$id" ] || { echo "no APK link given and no $APK_NAME in a build-inputs draft release" >&2; exit 1; }
           mkdir -p inputs
-          gh api -H "Accept: application/octet-stream" "repos/$REPOSITORY/releases/assets/$id" > "inputs/$name"
-          ls -l "inputs/$name"
-          echo "apk=$PWD/inputs/$name" >> "$GITHUB_OUTPUT"
+          gh api -H "Accept: application/octet-stream" "repos/$REPOSITORY/releases/assets/$id" > "inputs/$APK_NAME"
+          ls -l "inputs/$APK_NAME"
+          echo "apk=$PWD/inputs/$APK_NAME" >> "$GITHUB_OUTPUT"
 
       - name: dmgbuild
         # Lays out the Mac disk image's window (scripts/make-dmg.sh, scripts/dmg/). In a venv put
         # first on PATH: the runner's Python refuses pip installs; the other scripts need only the
-        # standard library.
+        # standard library. The AltVerZ profile has no window art yet, so its DMG is plain until it does.
         run: |
           set -euo pipefail
           python3 -m venv "$RUNNER_TEMP/dmg-venv"
@@ -126,10 +130,11 @@ jobs:
             extra=()
             [ "$variant" = slim ] && extra+=(--slim)
             [ -n "$OBB_URL" ] && extra+=(--obb "$OBB_URL")
-            ./build.sh "${platforms[@]}" ${extra[@]+"${extra[@]}"} ${reuse[@]+"${reuse[@]}"} --apk "$APK_URL" --out out
+            ./build.sh --profile "$PROFILE" "${platforms[@]}" ${extra[@]+"${extra[@]}"} \
+              ${reuse[@]+"${reuse[@]}"} --apk "$APK_URL" --out out
             scripts/package-release.sh out release "$variant"
             # Keep downloaded inputs and converted dylibs, not bundles or converter scratch files.
-            rm -rf out/.work/ios out/.work/macos 'out/PvZ2 Reflourished.app' out/.work/libs \
+            rm -rf out/.work/ios out/.work/macos "out/$PROFILE_APP_NAME.app" out/.work/libs \
               out/.work/ios-dylibs/.work out/.work/macos-dylibs/.work
             reuse=(--reuse-converted)
             df -h /
@@ -147,13 +152,14 @@ jobs:
           python3 scripts/release-notes.py release --version "$VERSION" --tag "$TAG" --repo "$REPOSITORY" > release-notes.md
           cat release-notes.md
 
-      - name: Publish the release
+      - name: Publish the prerelease
         if: github.event.inputs.publish == 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.metadata.outputs.tag }}
-          name: "Reflourished-Darwin ${{ steps.metadata.outputs.version }} · PvZ2: Reflourished ${{ steps.metadata.outputs.game }}"
+          name: "AltVerZ-Darwin ${{ steps.metadata.outputs.version }} · PvZ2 AltVerZ ${{ steps.metadata.outputs.game }} (early build)"
           body_path: release-notes.md
+          prerelease: true
           files: release/*
           fail_on_unmatched_files: true
 

@@ -11,6 +11,6 @@
 
 <!-- Anything you could not check. -->
 
-- [ ] Both apps build: `./build.sh --apk ...` (without `--quick`)
+- [ ] Both apps build: `./build.sh --profile altverz --apk ...` (without `--quick`)
 - [ ] No game files and no personal data (paths under your home folder, device IDs, signing identities)
 - [ ] The title follows Conventional Commits (`fix(mac): ...`, `feat(keys): ...`)

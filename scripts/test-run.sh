@@ -3,11 +3,11 @@
 # at given seconds, then it is closed. Your own game data and settings are never touched,
 # no input goes anywhere but the test app, and nothing takes the focus from what you are doing.
 #
-#   scripts/test-run.sh [--app <PvZ2 Reflourished.app>] [--save <data folder to copy>]
+#   scripts/test-run.sh [--app <PvZ2 AltVerZ.app>] [--save <data folder to copy>]
 #                       [--tap "<script>"] [--seconds N] [--shots "t1 t2 ..."] [--screen N]
 #                       [--out <folder>] [-- <extra launch arguments>]
 #
-#   --app      default: out/PvZ2 Reflourished.app
+#   --app      default: out/PvZ2 AltVerZ.app
 #   --save     a data folder to start from (copied, never changed); default: an empty one,
 #              which means the first-launch screens (and, for a slim build, the OBB download)
 #   --tap      the tap script, see docs/TESTING.md; default: just wait
@@ -21,7 +21,7 @@
 # (look for "CRASH" in run.log).
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/out/PvZ2 Reflourished.app" SAVE="" TAP="wait:600" SECS=40 SHOTS="" SCREEN="" RUN=""
+APP="$ROOT/out/PvZ2 AltVerZ.app" SAVE="" TAP="wait:600" SECS=40 SHOTS="" SCREEN="" RUN=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --app) APP="$2"; shift 2 ;;     --save) SAVE="$2"; shift 2 ;;
@@ -33,6 +33,13 @@ while [ $# -gt 0 ]; do
     esac
 done
 [ -x "$APP/Contents/MacOS/PvZ2" ] || { echo "no app at $APP (build it: ./build.sh --mac ...)" >&2; exit 2; }
+# A locked login session still runs the app, but the window server releases its
+# drawables at about 10-15 fps, so the fps lines in the log fall from the game's
+# rate to the locked screen's rate. Say so, or the next reader looks for a game
+# bug that is not there.
+if ioreg -n Root -d1 -a 2>/dev/null | grep -A1 CGSSessionScreenIsLocked | grep -q '<true/>'; then
+    echo "note: the login session is locked; the window server throttles the test window to about 10-15 fps" >&2
+fi
 RUN="${RUN:-$ROOT/out/runs/$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$RUN/data"
 [ -n "$SAVE" ] && cp -R "$SAVE/." "$RUN/data/"

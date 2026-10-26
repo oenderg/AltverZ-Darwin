@@ -117,7 +117,7 @@ def main():
     p.add_argument("--version", required=True)
     p.add_argument("--tag")
     p.add_argument("--since", help="the previous release's tag or commit (default: the newest tag before --tag)")
-    p.add_argument("--repo", default="oenderg/Reflourished-Darwin")
+    p.add_argument("--repo", default="oenderg/AltverZ-Darwin")
     p.add_argument("--whats-new", action="store_true")
     p.add_argument("--format", choices=["md", "text", "html"], default="md")
     args = p.parse_args()

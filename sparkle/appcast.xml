@@ -1,20 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>PvZ2 Reflourished</title>
-    <link>https://github.com/oenderg/Reflourished-Darwin/releases</link>
-    <description>Updates of PvZ2 Reflourished for the Mac (Reflourished-Darwin)</description>
+    <title>PvZ2 AltVerZ</title>
+    <link>https://github.com/oenderg/AltverZ-Darwin/releases</link>
+    <description>Updates of PvZ2 AltVerZ for the Mac (AltverZ-Darwin)</description>
     <language>en</language>
-    <item>
-      <title>Reflourished-Darwin 1.2.0 · PvZ2: Reflourished 1.4.2</title>
-      <pubDate>Sun, 25 Oct 2026 19:41:21 +0000</pubDate>
-      <link>https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.2.0</link>
-      <sparkle:version>10200</sparkle:version>
-      <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
-      <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p><b>Import and export your saves, and more keyboard shortcuts.</b> The game's own Import/Export menu (Settings, Import/Export) now works: bring your Android save over, or back it up, through the Files app on iPhone and iPad or a normal file dialog on the Mac.</p><ul><li>More keys: <code>Space</code> now also collects gems and plant food, <code>F</code> toggles fast-forward, <code>Q</code> picks up plant food and <code>Z</code>, <code>X</code>, <code>C</code> pick a power-up. On the Mac you can change them in Settings.</li><li>iPhone and iPad show the game's own reminders as notifications; the game asks for permission when it first starts, as on Android. The Mac shows none.</li><li>iPad: in a window next to other apps, a swipe that ends outside the game no longer leaves every tap dead.</li><li>Links in the game open in your browser.</li><li>The Mac disk image opens to a new install window, styled like the game.</li><li>Small fixes so the game sees the same device details as on Android, and keeps its own data between launches.</li></ul><p><a href="https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.2.0">The release on GitHub</a></p>]]></description>
-      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.2.0/PvZ2-Reflourished-1.4.2-Darwin-1.2.0-Mac.dmg" length="70904487"
-                 type="application/octet-stream" sparkle:edSignature="LVu1DPL7oB5uKfgFrSqke6SgogDAJ1AwSFdQPUa/pyPynEu/SJ85Wp0PVI3xOfIxNQa9qUpFUFqKxF+kmcO7AQ=="/>
-    </item>
   </channel>
 </rss>

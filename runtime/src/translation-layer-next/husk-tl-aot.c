@@ -33,6 +33,7 @@
 #include "husk-tl-aot.h"
 #include "husk-tl-bionic.h"
 #include "husk-tl-ld.h"
+#include "pvz2-profile.h"
 
 /* One of the translation layer's own implementations, by the guest's name for it. */
 static void *host_impl(const char *name)
@@ -269,7 +270,7 @@ int tl_aot_init(const char *dir)
     /* The guest's libraries, in the order the loader will ask for them: the game library
      * first (it is what the driver starts from), then its framework layer, then the C++
      * runtime and the JNI helper it imports from. */
-    static const char *candidates[] = { "libPVZ2", "libRFLib", "libc++_shared",
+    static const char *candidates[] = { "libPVZ2", PVZ2_PROFILE_MOD_LIBRARY_BASE, "libc++_shared",
                                         "libNimble", "libcrashlytics-common" };
     for (size_t c = 0; c < sizeof(candidates) / sizeof(*candidates); c++) {
         if (g_nlibs >= AOT_MAX_LIBS) break;

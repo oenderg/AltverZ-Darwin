@@ -10,7 +10,9 @@ import re
 import sys
 
 root = Path(sys.argv[1])
-version = (root / "VERSION").read_text().strip()
+# A mod profile may carry the app version (AltVerZ starts its own line); the
+# repository VERSION file is still the default, so the Reflourished build is unchanged.
+version = os.environ.get("PROFILE_APP_VERSION") or (root / "VERSION").read_text().strip()
 if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
     sys.exit("VERSION must contain major.minor.patch")
 major, minor, patch = map(int, version.split("."))
@@ -19,7 +21,8 @@ if minor >= 100 or patch >= 100:
 build = os.environ.get("APP_BUILD") or str(major * 10000 + minor * 100 + patch)
 if not re.fullmatch(r"[1-9][0-9]*", build):
     sys.exit("APP_BUILD must be a positive integer")
-game = json.loads((root / "data/game-1.4.2.json").read_text())["version"]
+game_file = os.environ.get("PROFILE_GAME_DATA") or "data/game-1.4.2.json"
+game = json.loads((root / game_file).read_text())["version"]
 print(version, build, game)
 PY
 )" || return 1

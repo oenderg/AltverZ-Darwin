@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Minimal iOS host for the PvZ2: Reflourished driver.
+ * Minimal iOS host for the PvZ2 mod driver (the profile names the app and package).
  *
  * This is the device counterpart of tools/pvz2-window.m: the same driver, the
  * same off-screen-free path through a real CAMetalLayer, but on UIKit and with
@@ -42,6 +42,7 @@
 #include "husk-tl-audio.h"
 #include "husk-tl-pvz2.h"
 #include "husk-tl-cdn.h"
+#include "pvz2-profile.h"
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
 #include "pvz2-open-url.h"
@@ -399,6 +400,37 @@ static void *tapper(void *arg)
             char *text = strdup(tok + 6);
             dispatch_sync(dispatch_get_main_queue(), ^{ test_text(text); });
             free(text);
+        } else if (!strncmp(tok, "click:", 6)) {
+            /* A widget by the game's own name, class or label: the driver finds
+             * it on the game thread and taps the middle of its rect. */
+            tl_log_line("ios: the script clicks \"%s\"", tok + 6);
+            tl_pvz2_test_press(tok + 6);
+            sleep(1);
+        } else if (!strncmp(tok, "goto:", 5)) {
+            /* The same destination language as TL_PVZ2_GOTO. */
+            tl_log_line("ios: the script goes to \"%s\"", tok + 5);
+            tl_pvz2_test_goto(tok + 5);
+            sleep(1);
+        } else if (!strncmp(tok, "devcmd:", 7)) {
+            /* The game's built-in developer command object, run by the driver. */
+            tl_log_line("ios: the script runs devcmd \"%s\"", tok + 7);
+            tl_pvz2_test_devcmd(tok + 7);
+            sleep(1);
+        } else if (!strncmp(tok, "until:", 6)) {
+            /* Wait for the driver to say it is on a screen. */
+            const char *want = tok + 6;
+            char st[96] = "";
+            int waited = 0;
+            while (waited < 60) {
+                if (tl_pvz2_test_state(st, sizeof st) &&
+                    (!strcmp(st, want) ||
+                     (!strncmp(want, "modal:", 6) && !strncmp(st, want, strlen(want))) ||
+                     !strcmp(want, "state:*")))
+                    break;
+                sleep(1);
+                waited++;
+            }
+            tl_log_line("ios: until %s -> %s after %d s", want, st, waited);
         } else if (!strcmp(tok, "keyboard:hide")) {
             dispatch_sync(dispatch_get_main_queue(), ^{ test_keyboard_hide(); });
         } else if (!strcmp(tok, "return")) {
@@ -1266,8 +1298,8 @@ static void stage_bundled_game(NSString *docs)
 static void stage_bundled_cdn(NSString *docs)
 {
     if (getenv("TL_PVZ2_MAIN_TAR")) return;
-    NSString *src = [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"Game/1.4.2.main.tar"];
-    NSString *dst = [docs stringByAppendingPathComponent:@"data/No_Backup/1.4.2.main.tar"];
+    NSString *src = [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:[NSString stringWithFormat:@"Game/%s", PVZ2_PROFILE_CDN_ARCHIVE]];
+    NSString *dst = [docs stringByAppendingPathComponent:[NSString stringWithFormat:@"data/No_Backup/%s", PVZ2_PROFILE_CDN_ARCHIVE]];
     tl_cdn_stage(src.UTF8String, dst.UTF8String);
 }
 
@@ -1324,7 +1356,7 @@ static NSDictionary *obb_info(void)
     NSArray *urls = plist[@"PVZ2ObbURLs"];
     NSString *sha = plist[@"PVZ2ObbSHA256"];
     NSNumber *size = plist[@"PVZ2ObbSize"];
-    NSString *name = plist[@"PVZ2ObbName"] ?: @"main.675.com.ea.game.pvz2_rfl.obb";
+    NSString *name = plist[@"PVZ2ObbName"] ?: [NSString stringWithFormat:@"main.675.%s.obb", PVZ2_PROFILE_PKG];
     if (![urls isKindOfClass:NSArray.class] || !urls.count || !sha.length || size.longLongValue <= 0) return nil;
     return @{ @"urls": urls, @"sha": sha.lowercaseString, @"size": size, @"name": name };
 }
@@ -1968,8 +2000,8 @@ static NSDictionary *obb_info(void)
     if (!have_inputs) {
         tl_log_line("ios: no APK/OBB in Documents; see the app's README");
         show_message(vc, @"Game files needed",
-                     @"Put your Reflourished .apk in this app's Documents folder and the OBB at "
-                      "Documents/obb/main.675.com.ea.game.pvz2_rfl.obb, then relaunch.");
+                     [NSString stringWithFormat:@"Put your %@ .apk in this app's Documents folder and the OBB at "
+                      "Documents/obb/main.675.%s.obb, then relaunch.", @(PVZ2_PROFILE_APP_NAME), PVZ2_PROFILE_PKG]);
         return;
     }
     [self startGameIn:vc];
@@ -2005,7 +2037,7 @@ static NSDictionary *obb_info(void)
     [view layoutIfNeeded];
     [view updateSafeInsets];
 
-    g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = "com.ea.game.pvz2_rfl",
+    g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = PVZ2_PROFILE_PKG,
                             .width = g_w, .height = g_h, .metal_layer = (__bridge void *)layer,
                             .angle_egl = g_egl, .angle_gles = NULL, .frame_dir = NULL, .frame_every = 0 };
 

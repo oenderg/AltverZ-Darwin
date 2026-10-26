@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add a release of PvZ2 Reflourished to the AltStore / SideStore source.
+"""Add a release of PvZ2 AltVerZ to the AltStore / SideStore source.
 
   scripts/update-altstore-source.py <ipa> --tag <release-tag> [--changelog <text>]
   scripts/update-altstore-source.py --check
@@ -24,7 +24,9 @@ import re
 import sys
 import zipfile
 
-RELEASES = "https://github.com/oenderg/Reflourished-Darwin/releases/download"
+RELEASES = "https://github.com/oenderg/AltverZ-Darwin/releases/download"
+PRODUCT = "PvZ2 AltVerZ"
+RELEASE_NAME = "AltverZ-Darwin"
 DEFAULT_SOURCE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "altstore", "source.json"
 )
@@ -52,7 +54,7 @@ def add_version(source, ipa, tag, changelog):
         sys.exit("error: the IPA's Info.plist has no CFBundleIdentifier")
 
     if not changelog:
-        changelog = (f"Reflourished-Darwin {version} · PvZ2: Reflourished "
+        changelog = (f"{RELEASE_NAME} {version} · {PRODUCT} "
                      f"{info.get('PVZ2GameVersion', '?')}")
 
     new = {
@@ -175,7 +177,7 @@ def main():
     parser.add_argument("--changelog", default="",
                         help="text for the version's localizedDescription")
     parser.add_argument("--icon-url",
-                        help="where the app's icon is (default: the one in the source, docs/banner/icon.png on main)")
+                        help="where the app's icon is (default: the one in the source)")
     parser.add_argument("--source", default=DEFAULT_SOURCE,
                         help=f"path to altstore/source.json (default: {DEFAULT_SOURCE})")
     parser.add_argument("--check", action="store_true",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the Mac app's update feed (Sparkle's appcast) for a release.
+"""Write the Mac app's update feed (Sparkle's appcast) for an AltverZ-Darwin release.
 
   scripts/update-appcast.py <mac.dmg> --tag <release-tag> --ed-signature <signature>
                             [--notes-html <html>] [--appcast <file>] [--url <download-url>]
@@ -31,7 +31,9 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 
-RELEASES = "https://github.com/oenderg/Reflourished-Darwin/releases"
+RELEASES = "https://github.com/oenderg/AltverZ-Darwin/releases"
+PRODUCT = "PvZ2 AltVerZ"
+RELEASE_NAME = "AltverZ-Darwin"
 DEFAULT_APPCAST = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sparkle", "appcast.xml"
 )
@@ -64,19 +66,20 @@ def write(args):
         sys.exit("--ed-signature is not an EdDSA signature (sign_update prints it)")
     url = args.url or f"{RELEASES}/download/{args.tag}/{os.path.basename(args.dmg)}"
     page = f"{RELEASES}/tag/{args.tag}"
-    notes = args.notes_html or f"<p>Reflourished-Darwin {html.escape(version)} · PvZ2: Reflourished {html.escape(game)}.</p>"
+    notes = args.notes_html or (
+        f"<p>{RELEASE_NAME} {html.escape(version)} · {PRODUCT} {html.escape(game)}.</p>")
     if "]]>" in notes:
         sys.exit("--notes-html cannot contain ]]>")
     description = notes + f'<p><a href="{html.escape(page)}">The release on GitHub</a></p>'
     feed = f"""<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="{SPARKLE}">
   <channel>
-    <title>PvZ2 Reflourished</title>
+    <title>{PRODUCT}</title>
     <link>{RELEASES}</link>
-    <description>Updates of PvZ2 Reflourished for the Mac (Reflourished-Darwin)</description>
+    <description>Updates of {PRODUCT} for the Mac ({RELEASE_NAME})</description>
     <language>en</language>
     <item>
-      <title>Reflourished-Darwin {html.escape(version)} · PvZ2: Reflourished {html.escape(game)}</title>
+      <title>{RELEASE_NAME} {html.escape(version)} · {PRODUCT} {html.escape(game)}</title>
       <pubDate>{email.utils.format_datetime(datetime.datetime.now(datetime.timezone.utc))}</pubDate>
       <link>{html.escape(page)}</link>
       <sparkle:version>{html.escape(build)}</sparkle:version>
@@ -98,8 +101,10 @@ def write(args):
 def check(path):
     tree = ET.parse(path)
     items = tree.getroot().findall("./channel/item")
+    # A new repository ships an empty feed until its first release; that is valid.
     if not items:
-        sys.exit(f"{path}: no item")
+        print(f"{path}: ok (no updates yet)")
+        return
     for item in items:
         enclosure = item.find("enclosure")
         build = item.findtext(f"{{{SPARKLE}}}version", "")
