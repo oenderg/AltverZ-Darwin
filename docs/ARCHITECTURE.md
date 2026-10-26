@@ -66,7 +66,7 @@ answers the few calls into those parts). The pieces that matter here:
   does not exist; the driver answers the ~130 methods the native code calls (config storage,
   screen size, HTTP, assets, broadcasts) with C functions (`M(APP, "Config_ConfigKeyExists", ...)`).
 - **Live content.** `husk-tl-cdn.m` uses Foundation on both platforms to fetch only the
-  Reflourished HTTPS host (30 s without data, 60 s in total). It queues real response headers
+  profile's HTTPS hosts (30 s without data, 60 s in total). It queues real response headers
   (including the server Date) and unchanged gzip bytes for the driver's GL-thread
   callbacks. A validated download updates the writable CDN cache atomically; failures
   use that cache or the staged bundle with device-clock time. See GAME-NOTES.md.
@@ -87,7 +87,7 @@ answers the few calls into those parts). The pieces that matter here:
   tapping a reminder makes its `data.fields` available to the game's intent getter. The Mac host
   installs no hooks on purpose (reminders are a phone habit): it never asks and never schedules,
   and the driver keeps the data as Android does when notifications are not allowed.
-- **Import/Export.** Reflourished's `FilePickerHelper` calls cross a host hook
+- **Import/Export.** Reflourished's `FilePickerHelper` calls (AltVerZ never makes one) cross a host hook
   (`runtime/tools/pvz2-file-picker.h`). The shared driver (`husk-tl-pvz2-picker.c`) maps
   Android's external-files paths into the data folder, queues the work on its own worker so
   the game keeps drawing, and copies, zips (zlib) or unzips (the runtime's zip reader). The
@@ -120,7 +120,8 @@ answers the few calls into those parts). The pieces that matter here:
 
 ## Data on disk
 
-- Mac: the data folder is `~/Library/Application Support/PvZ2 Reflourished/` (or `TL_DATA`), with
+- Mac: the data folder is `~/Library/Application Support/PvZ2 AltVerZ/` for the `altverz`
+  profile (`PvZ2 Reflourished/` for the other; or `TL_DATA`), with
   `pvz2.log` in it. iOS: `Documents/data/`, with `Documents/pvz2.log` and the OBB in `Documents/obb/`.
   Each launch starts a new `pvz2.log` and renames the old one to `pvz2.previous.log` (on the Mac, not
   for a restart to fit the window, nor for a test's `TL_PVZ2_LOG`).

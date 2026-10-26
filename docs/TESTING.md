@@ -2,6 +2,8 @@
 
 How to check a change on the Mac without a device, without touching your own game, and without
 disturbing whatever else you are doing on the Mac. Then: what to look at on an iPhone/iPad.
+The examples use the `altverz` profile, the one this repository publishes; add
+`--profile reflourished` to build the comparison mod.
 
 ## The test runner
 
@@ -9,7 +11,7 @@ disturbing whatever else you are doing on the Mac. Then: what to look at on an i
 scripts/test-run.sh --seconds 40 --shots "15 35" -- -resizeMode Fixed -fixedAspect game
 ```
 
-It starts `out/PvZ2 Reflourished.app` with a **data folder of its own** (`--save <folder>` copies one
+It starts `out/PvZ2 AltVerZ.app` with a **data folder of its own** (`--save <folder>` copies one
 in, so a test can start from a profile that is already past the tutorial), runs a **tap script**
 (`--tap`), captures **only its own window** at the given seconds (`shot-<t>.png`), and closes the app
 at the end. Everything lands in `out/runs/<time>/` (`run.log` is the app's log). `--help` lists the
@@ -20,7 +22,7 @@ What it sets (you can set these yourself when running the binary by hand):
 
 | Variable | Meaning |
 |---|---|
-| `TL_DATA` | the data folder (default: `~/Library/Application Support/PvZ2 Reflourished`) |
+| `TL_DATA` | the data folder (default: `~/Library/Application Support/PvZ2 AltVerZ`) |
 | `TL_PVZ2_CDN=offline` | skip CDN networking and replay the local archive with a fresh device-clock UTC Date |
 | `TL_PVZ2_OPEN_URL=log` | validate game web links and log `pvz2: open URL <url> (test: not opened)` without opening another app; use for every automated link test |
 | `TL_PVZ2_NOTIFY=log` | log reminders with their computed UTC fire time and text; never ask permission or schedule a notification |
@@ -67,9 +69,11 @@ clang -fobjc-arc runtime/tools/regress/test-open-url.m -framework Foundation -o 
 
 ## Import/Export
 
-The game's rows are in title Settings -> Import/Export Files (scroll the settings list to the
-bottom; on a 4:3 window the row is under the performance switches). For a scripted run, two
-environment switches replace only the panel, never the copy:
+This is Reflourished's FilePickerHelper; AltVerZ never asks for it (zero calls in its logs), so
+moving an AltVerZ save is the file copy in the README. For the `reflourished` profile, the rows
+are in title Settings -> Import/Export Files (scroll the settings list to the bottom; on a 4:3
+window the row is under the performance switches). For a scripted run, two environment switches
+replace only the panel, never the copy:
 
 | Variable | Meaning |
 |---|---|
@@ -141,14 +145,14 @@ The public Mac app imports its pre-release settings once, before any setting is 
 source was empty. The source is only read. Background test launches skip the import entirely
 unless `TL_PVZ2_IMPORT_FROM` names a source domain. The runner passes through environment variables.
 
-Build a test copy with `BUNDLE_ID=io.github.oenderg.reflourished-darwin.importtest` and use only
+Build a test copy with `BUNDLE_ID=io.github.oenderg.altverz-darwin.importtest` and use only
 test domains. For example, after building that copy:
 
 ```sh
 defaults write io.github.oenderg.importtest.src resizeMode -string Adapt
 defaults write io.github.oenderg.importtest.src closeAction -string pause
 TL_PVZ2_IMPORT_FROM=io.github.oenderg.importtest.src scripts/test-run.sh --seconds 15
-defaults read io.github.oenderg.reflourished-darwin.importtest
+defaults read io.github.oenderg.altverz-darwin.importtest
 ```
 
 The log names the source, destination and key count. Run again with the same source: the log
@@ -166,12 +170,12 @@ point it elsewhere), a throwaway key and a local feed. Never sign a test with th
 openssl genpkey -algorithm ed25519 -outform DER -out k.der
 tail -c 32 k.der | base64 > test-private.txt
 openssl pkey -inform DER -in k.der -pubout -outform DER | tail -c 32 | base64 > test-public.txt
-export BUNDLE_ID=io.github.oenderg.reflourished-darwin.updatetest DATA_FOLDER="PvZ2 Reflourished Update Test"
+export BUNDLE_ID=io.github.oenderg.altverz-darwin.updatetest DATA_FOLDER="PvZ2 AltVerZ Update Test"
 export SPARKLE_PUBLIC_KEY="$(cat test-public.txt)" SPARKLE_FEED_URL=http://127.0.0.1:8799/appcast.xml
-APP_BUILD=99 ./build.sh --mac --obb <obb> --apk <apk> --out out/update-old      # full, older
-./build.sh --mac --slim --apk <apk> --out out/update-new                        # slim, newer
-sig="$(out/update-new/.work/sparkle/bin/sign_update --ed-key-file test-private.txt -p out/update-new/PvZ2-Reflourished.dmg)"
-python3 scripts/update-appcast.py out/update-new/PvZ2-Reflourished.dmg --tag v0-test \
+APP_BUILD=99 ./build.sh --profile altverz --mac --obb <obb> --apk <apk> --out out/update-old  # full, older
+./build.sh --profile altverz --mac --slim --apk <apk> --out out/update-new                    # slim, newer
+sig="$(out/update-new/.work/sparkle/bin/sign_update --ed-key-file test-private.txt -p out/update-new/PvZ2-AltVerZ.dmg)"
+python3 scripts/update-appcast.py out/update-new/PvZ2-AltVerZ.dmg --tag v0-test \
     --ed-signature "$sig" --url http://127.0.0.1:8799/new.dmg --appcast feed/appcast.xml
 ```
 
@@ -367,10 +371,10 @@ The iPhone's screen (the Dynamic Island, the rounded corners) without an iPhone,
 Apple-silicon Mac with Xcode's iOS Simulator and an iOS runtime installed:
 
 ```sh
-./build.sh --ios-sim --slim --apk "PvZ2 Reflourished 1.4.2.apk"
+./build.sh --profile altverz --ios-sim --slim --apk "AltVerZ_1.8.3f.apk"
 ```
 
-This builds `out/PvZ2-Reflourished-sim.app`, ad-hoc signed with no entitlements (a signature
+This builds `out/PvZ2-AltVerZ-sim.app`, ad-hoc signed with no entitlements (a signature
 that carries `get-task-allow` is refused: "Security policy issue"). The host is compiled for the
 simulator and bundle copies of the converted game libraries are relabelled `IOSSIMULATOR`. ANGLE
 is its own simulator build (`prebuilt/ios-simulator`; `REBUILD_ANGLE=1` rebuilds it with
@@ -382,11 +386,11 @@ optionally a save (`$C/Documents/data` takes a test run's `data/` folder as it i
 
 ```sh
 xcrun simctl boot "iPhone 18 Pro"
-xcrun simctl install booted out/PvZ2-Reflourished-sim.app
-C="$(xcrun simctl get_app_container booted io.github.oenderg.reflourished-darwin data)"
+xcrun simctl install booted out/PvZ2-AltVerZ-sim.app
+C="$(xcrun simctl get_app_container booted io.github.oenderg.altverz-darwin data)"
 mkdir -p "$C/Documents/obb"
-cp out/.work/game.obb "$C/Documents/obb/main.675.com.ea.game.pvz2_rfl.obb"
-SIMCTL_CHILD_TL_PVZ2_TAP="1310,1100;wait:14" xcrun simctl launch booted io.github.oenderg.reflourished-darwin
+cp out/.work/game.obb "$C/Documents/obb/main.675.com.ea.game.pvz2_auz.obb"
+SIMCTL_CHILD_TL_PVZ2_TAP="1310,1100;wait:14" xcrun simctl launch booted io.github.oenderg.altverz-darwin
 xcrun simctl io booted screenshot --mask=black out/ios-sim.png
 ```
 

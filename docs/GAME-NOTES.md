@@ -1,4 +1,4 @@
-# Game notes (Reflourished 1.4.2)
+# Game notes (PvZ2 8.3.0; recorded on Reflourished 1.4.2, shared with AltVerZ 1.8.3f)
 
 What the game does that is not obvious, and the places in its code the driver relies on. Every
 address here is a **guest virtual address in `libPVZ2.so` of the 1.4.2 build** (the one

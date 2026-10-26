@@ -42,7 +42,7 @@ body:
       description: |
         Each launch starts a new pvz2.log and keeps the one before as pvz2.previous.log. If the app
         crashed or you opened it again since, send pvz2.previous.log.
-        - iPhone/iPad: Files app > On My iPhone (or iPad) > PvZ2 Reflourished
-        - Mac: ~/Library/Application Support/PvZ2 Reflourished/ (Finder: Go > Go to Folder)
+        - iPhone/iPad: Files app > On My iPhone (or iPad) > PvZ2 AltVerZ
+        - Mac: ~/Library/Application Support/PvZ2 AltVerZ/ (Finder: Go > Go to Folder)
         Attach the file, or paste the last ~100 lines.
       render: text

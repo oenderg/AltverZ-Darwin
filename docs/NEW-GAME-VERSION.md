@@ -1,7 +1,9 @@
-# Supporting a new Reflourished version
+# Supporting a new game version
 
-The apps support exactly one build of the game's code at a time. A new Reflourished release can
-change any of the four libraries; how much work it is depends on which ones changed.
+The apps support exactly one build of the game's code at a time. A new AltVerZ (or Reflourished)
+release can change any of the four libraries; how much work it is depends on which ones changed.
+AltVerZ 1.8.3f and Reflourished 1.4.2 are the same EA 8.3.0 engine: their `libPVZ2.so` differs only
+in the build id and five rodata strings, so the addresses below hold for both.
 
 ## 1. See what changed
 
@@ -10,10 +12,11 @@ unzip -o -q new.apk 'lib/arm64-v8a/*.so' -d new
 shasum -a 256 new/lib/arm64-v8a/*.so
 ```
 
-Compare with `libs_sha256` in `data/game-1.4.2.json`.
+Compare with `libs_sha256` in the profile's data file (`data/game-1.8.3f.json` for AltVerZ,
+`data/game-1.4.2.json` for Reflourished).
 
-- **Only `libRFLib.so` changed** (the mod's own code; `libPVZ2.so` was identical between 1.4.0 and
-  1.4.2): the driver's game addresses still hold. Re-record the hook table (step 3).
+- **Only the mod library changed** (`libSnowie.so` or `libRFLib.so`; the mod's own code): the
+  driver's game addresses still hold. Re-record the hook table (step 3).
 - **`libPVZ2.so` changed**: every `GUEST_*` address in `husk-tl-pvz2.c` and every offset in
   [GAME-NOTES.md](GAME-NOTES.md) must be found again (step 4), and the hooks re-recorded.
 - **The OBB changed**: new name, size, SHA-256 and download links (step 2). The builds take the
@@ -22,27 +25,24 @@ Compare with `libs_sha256` in `data/game-1.4.2.json`.
 
 ## 2. The game data file
 
-Copy `data/game-1.4.2.json` to `data/game-<version>.json` and fill in: `version`, `obb_name`,
-`cdn_url` (the mod's CDN archive), `libs_sha256` (all four), `apk_sha256`, `obb_sha256`, `obb_size`,
-`obb_urls` (the mod's OBB releases are on github.com/lantern-fans/obbybackup, one tag per version).
-The app identity and the mod library are in `data/profiles/<id>.json`; point its `game_data`
-at the new file ([MOD-PROFILES.md](MOD-PROFILES.md)).
+Copy the profile's current data file (`data/game-1.8.3f.json`) to `data/game-<version>.json` and
+fill in: `version`, `obb_name`, `cdn_url` (the mod's CDN archive), `libs_sha256` (all four),
+`apk_sha256`, `obb_sha256`, `obb_size`, `obb_urls` (the mod's own OBB releases). The app identity
+and the mod library are in `data/profiles/<id>.json`; point its `game_data` at the new file
+([MOD-PROFILES.md](MOD-PROFILES.md)).
 
-The version is also written in these places (search for `1.4.2`):
-
-- `build.sh`: the data and hook file names, and the CDN archive's name;
-- `runtime/src/translation-layer-next/husk-tl-pvz2.c`, `runtime/tools/pvz2-macos.m`,
-  `runtime/tools/pvz2-ios.m`, `runtime/tools/regress/build-*-app.sh`: the CDN archive's file name
-  (`<version>.main.tar`) and the default app version;
-- `.github/workflows/build.yml`: the input descriptions and the release text.
+The profile also names the app's version and the Mac feed. Search for the old game version
+(`1.8.3f` or `1.4.2`) in `build.sh`, the runtime and host comments, and the workflow's input
+descriptions; the data and hook file names now come from the profile, not from `build.sh`.
 
 ## 3. The hook table
 
-`libRFLib` installs its 290 inline hooks into `libPVZ2` at start-up by writing branches over function
-prologues. A converted library cannot be written at run time, so the final content of every byte the
-mod writes is recorded once and baked in by the converter (`data/hooks-<version>.json`).
+The mod library installs its inline hooks into `libPVZ2` at start-up by writing branches over function
+prologues (69 for AltVerZ, 290 for Reflourished). A converted library cannot be written at run time,
+so the final content of every byte the mod writes is recorded once and baked in by the converter
+(`data/hooks-<version>.json`).
 
-How it was recorded for 1.4.2: the game was run through Husk's translating loader (the unconverted
+How they were recorded for 1.4.2 and 1.8.3f: the game was run through Husk's translating loader (the unconverted
 `.so` files, `TL_AOT_DIR` unset) on a Mac, with `TL_CODEWRITE_LOG=<file>`, which logs every code
 store the mod makes; `converter/aot-hooks.py <log> --json` reduces the log to the final value per
 address, and two runs are diffed to check the set is deterministic (`aot-hooks.py <logA> <logB>`).
@@ -103,7 +103,7 @@ call and kill the test run, so use a copied save and `TL_PVZ2_FRAMES` on the fir
 
 ## 5. Test
 
-A full build (`./build.sh --apk new.apk`, no `--quick`), then on the Mac ([TESTING.md](TESTING.md)):
+A full build (`./build.sh --profile <id> --apk new.apk`, no `--quick`), then on the Mac ([TESTING.md](TESTING.md)):
 the first launch (Welcome screen), the title, the map, a level played for a minute with each keyboard
 action (1-8, S, Space, Esc), going to the background and back, a resize and full screen after
 start-up. Then the same on an iPhone or iPad by hand. Note what you could not test in the pull request.

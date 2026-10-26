@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Drives Plants vs. Zombies 2: Reflourished (com.ea.game.pvz2_rfl) the way its
- * Java shell does.
+ * Drives a Plants vs. Zombies 2 mod (the profile names the package, the mod
+ * library and the app) the way the game's Java shell does.
  *
  * The game is a NativeActivity-less game: a Java Activity builds an
  * AndroidSurfaceView (a GLSurfaceView), an AndroidGameApp (PopCap's
@@ -25,7 +25,7 @@
 extern "C" {
 #endif
 
-/* Load the libraries, run JNI_OnLoad, the Reflourished constructors and
+/* Load the libraries, run JNI_OnLoad, the mod library's constructors and
  * Native_GameAppInitialize.  Returns false (with the reason logged) on failure. */
 bool tl_pvz2_start(const tl_ga_config *cfg);
 

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Minimal iOS host for the PvZ2: Reflourished driver.
+ * Minimal iOS host for the PvZ2 mod driver (the profile names the app and package).
  *
  * This is the device counterpart of tools/pvz2-window.m: the same driver, the
  * same off-screen-free path through a real CAMetalLayer, but on UIKit and with

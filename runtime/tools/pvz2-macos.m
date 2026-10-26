@@ -9,20 +9,20 @@
  * difference between this and the translating host in pvz2-window.m.
  *
  * Built by tools/regress/build-macos-app.sh into
- *     build/pvz2-macos/PvZ2 Reflourished.app
+ *     build/pvz2-macos/<the profile's app name>.app
  *
  * Everything it reads is in the bundle:
- *     Contents/MacOS/PvZ2 Reflourished   this program
+ *     Contents/MacOS/PvZ2                this program
  *     Contents/Frameworks/*.dylib        the converted guest libraries (and their
  *                                        .facts files, which carry the symbol map)
  *     Contents/Frameworks/libEGL.dylib   ANGLE: the EGL the driver needs on a Mac
  *     Contents/Game/pvz2.apk              the game's APK (the Java half)
  *     Contents/Game/obb/*.obb             the game's expansion file (its assets)
- *     Contents/Game/1.4.2.main.tar        the mod's CDN archive
+ *     Contents/Game/<cdn archive>         the mod's CDN archive
  *
- * The writable state is in ~/Library/Application Support/PvZ2 Reflourished (the guest's
- * own files under sdcard/, its saves under No_Backup/, its settings under config/),
- * and the log is next to it.
+ * The writable state is in ~/Library/Application Support/<the profile's data folder>
+ * (the guest's own files under sdcard/, its saves under No_Backup/, its settings
+ * under config/), and the log is next to it.
  */
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/CAMetalLayer.h>
@@ -3010,7 +3010,7 @@ static void start_updater(void)
     [self showGameWindow:nil];
     return NO;
 }
-/* Window > PvZ2 Reflourished (Cmd-0): the game's window, closed or not. */
+/* Window > <the app> (Cmd-0): the game's window, closed or not. */
 - (void)showGameWindow:(id)sender
 {
     (void)sender;
@@ -3076,7 +3076,7 @@ static void start_updater(void)
  * not a document, and the macOS way for a one-window app is to quit with it.
  * The setting "When the window is closed: keep the game paused" keeps the game
  * instead: the window goes away, the game pauses the way it does when the app
- * is hidden, and the Dock icon (or Window > PvZ2 Reflourished) brings it back
+ * is hidden, and the Dock icon (or Window > the app's name) brings it back
  * where it was. */
 - (void)windowWillEnterFullScreen:(NSNotification *)n { (void)n; g_fs_moving = true; }
 - (void)windowWillExitFullScreen:(NSNotification *)n { (void)n; g_fs_moving = true; }
@@ -3095,7 +3095,7 @@ static void start_updater(void)
     [self askToQuit:nil];
     return NO;
 }
-/* Quit Reflourished (Cmd-Q) and the window's close button when it quits: the
+/* Quit the app (Cmd-Q) and the window's close button when it quits: the
  * player is asked first, so a slip of the hand does not end a level. The
  * setting "Ask before quitting" turns it off, and so does the alert's own
  * "Don't ask again". A quit from outside the app -- the Dock's menu, a

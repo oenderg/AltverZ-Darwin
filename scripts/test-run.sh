@@ -3,11 +3,11 @@
 # at given seconds, then it is closed. Your own game data and settings are never touched,
 # no input goes anywhere but the test app, and nothing takes the focus from what you are doing.
 #
-#   scripts/test-run.sh [--app <PvZ2 Reflourished.app>] [--save <data folder to copy>]
+#   scripts/test-run.sh [--app <PvZ2 AltVerZ.app>] [--save <data folder to copy>]
 #                       [--tap "<script>"] [--seconds N] [--shots "t1 t2 ..."] [--screen N]
 #                       [--out <folder>] [-- <extra launch arguments>]
 #
-#   --app      default: out/PvZ2 Reflourished.app
+#   --app      default: out/PvZ2 AltVerZ.app
 #   --save     a data folder to start from (copied, never changed); default: an empty one,
 #              which means the first-launch screens (and, for a slim build, the OBB download)
 #   --tap      the tap script, see docs/TESTING.md; default: just wait
@@ -21,7 +21,7 @@
 # (look for "CRASH" in run.log).
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/out/PvZ2 Reflourished.app" SAVE="" TAP="wait:600" SECS=40 SHOTS="" SCREEN="" RUN=""
+APP="$ROOT/out/PvZ2 AltVerZ.app" SAVE="" TAP="wait:600" SECS=40 SHOTS="" SCREEN="" RUN=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --app) APP="$2"; shift 2 ;;     --save) SAVE="$2"; shift 2 ;;

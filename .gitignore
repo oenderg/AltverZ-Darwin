@@ -1,6 +1,8 @@
 out/
 runtime/build/
 runtime/third_party/
+# the local file browser's window state (it keeps a path under the home folder)
+.qspacesettings/
 *.apk
 *.obb
 .DS_Store

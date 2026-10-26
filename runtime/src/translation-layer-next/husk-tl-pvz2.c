@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Plants vs. Zombies 2: Reflourished -- the translation-layer driver.
+ * Plants vs. Zombies 2 mods -- the translation-layer driver (one profile at a time).
  *
  * Why a driver at all: the game is not a NativeActivity and not an engine Husk
  * already knows.  Its Java shell (PvZ2GameActivity -> SexyAppFrameworkActivity)
@@ -16,9 +16,10 @@
  *   - FrameworkInfo_SysGetMainExpansionFilePath must return the .obb path with
  *     a leading '/', because the engine treats anything else as a resource name
  *     to be looked up through the Java asset API (PvZ 2 RE, framework_activity).
- *   - The engine patches libPVZ2.so at start-up (libRFLib's A64HookFunction),
- *     so code-write emulation has to be on before libRFLib's constructors run.
- *   - The Reflourished library's constructors run after the game's JNI_OnLoad,
+ *   - The engine patches libPVZ2.so at start-up (the mod library's
+ *     A64HookFunction), so code-write emulation has to be on before its
+ *     constructors run.
+ *   - The mod library's constructors run after the game's JNI_OnLoad,
  *     not with the game's own initialisers (the Switch port does the same).
  */
 
@@ -364,8 +365,9 @@ static void J_cloud_silent_sync(tl_jcall *c)
 static void J_obb_path(tl_jcall *c) { (void)c; tl_log_line("pvz2: OBB path asked for: %s", P.obb_guest); c->ret = vl(str(P.obb_guest)); }
 static void J_data_folder(tl_jcall *c) { (void)c; c->ret = vl(str(P.files_guest)); }
 
-/* Reflourished's Import/Export menu.  Android posts each of these to its UI
- * thread and returns; the driver queues the same request for its own worker. */
+/* The mod's Import/Export menu (Reflourished's FilePickerHelper; AltVerZ never
+ * calls it). Android posts each of these to its UI thread and returns; the
+ * driver queues the same request for its own worker. */
 static void J_fp_import_file(tl_jcall *c) { tl_pvz2_file_picker_import_file(S(c->args[0].l)); }
 static void J_fp_import_file_to_dir(tl_jcall *c) { tl_pvz2_file_picker_import_file_to_dir(S(c->args[0].l)); }
 static void J_fp_export_file(tl_jcall *c) { tl_pvz2_file_picker_export_file(S(c->args[0].l)); }
@@ -801,7 +803,7 @@ static void J_set_scale(tl_jcall *c)
 }
 static void J_get_scale(tl_jcall *c) { jvalue v; v.f = P.scale; c->ret = v; }
 
-/* AssetManager lookups: Reflourished keeps its resources in the OBB, so a miss
+/* AssetManager lookups: the mod keeps its resources in the OBB, so a miss
  * here is not fatal; answer "not in the APK" cleanly. */
 static void J_asset_info(tl_jcall *c) { tl_log_line("pvz2: asset info \"%s\"", S(c->args[0].l)); c->ret = vl(NULL); }
 static void J_asset_size(tl_jcall *c) { tl_log_line("pvz2: asset size \"%s\"", S(c->args[0].l)); c->ret = vj(-1); }
