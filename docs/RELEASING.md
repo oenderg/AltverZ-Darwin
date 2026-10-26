@@ -20,7 +20,7 @@ Actions > **Build** > Run workflow, with:
 | `platforms` | iPhone/iPad and Mac, or one of them |
 | `variants` | Slim and full (default), Slim, or Full |
 | `publish` | publish the prerelease and update the AltStore source and Mac feed; off = build only |
-| `release_tag` | optional; empty = `v<VERSION>` (for example `v0.1.0`) |
+| `release_tag` | optional; empty = `v<app version>` (for example `v0.1.0`, from the profile) |
 
 The workflow sets `PROFILE=altverz`, so the app name, bundle id, data folder, game manifest and
 artifact prefix all come from `data/profiles/altverz.json` ([MOD-PROFILES.md](MOD-PROFILES.md)).
