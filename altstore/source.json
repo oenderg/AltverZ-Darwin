@@ -3,7 +3,7 @@
   "identifier": "com.oenderg.altverz",
   "subtitle": "PvZ2: AltVerZ for iPhone and iPad",
   "description": "iPhone and iPad builds of PvZ2: AltVerZ, straight from the project's GitHub releases: the Android mod converted ahead of time into native Apple code, with no jailbreak and no emulator.",
-  "iconURL": "https://github.com/oenderg.png?size=512",
+  "iconURL": "https://raw.githubusercontent.com/oenderg/AltverZ-Darwin/main/docs/icon.png",
   "website": "https://github.com/oenderg/AltverZ-Darwin",
   "tintColor": "7B4FD8",
   "apps": [
@@ -14,7 +14,7 @@
       "subtitle": "Plants vs. Zombies 2, AltVerZ",
       "localizedDescription": "PvZ2: AltVerZ, the Plants vs. Zombies 2 mod, on iPhone and iPad. No jailbreak and no emulator: the game's Android code is converted ahead of time into ordinary, signed Apple code, so it runs full screen at your display's refresh rate, with sound, saves and the mod's own content built in. This is an early build, so expect bugs. The app downloads the game's data (about 1.1 GB) on its first launch, so keep it open on Wi-Fi until the game starts.",
       "developerWebsite": "https://github.com/oenderg/AltverZ-Darwin",
-      "iconURL": "https://github.com/oenderg.png?size=512",
+      "iconURL": "https://raw.githubusercontent.com/oenderg/AltverZ-Darwin/main/docs/icon.png",
       "tintColor": "7B4FD8",
       "category": "games",
       "screenshots": [],

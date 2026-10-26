@@ -44,9 +44,11 @@ and the mod's own content built in.
 * **Keyboard** (Mac, and iPad with a keyboard)
   * `1`-`8` take a seed packet, `S` the shovel.
   * `Space` collects every sun, coin, gem and plant food drop on the lawn.
-  * `F` toggles fast-forward, and `Esc` pauses and resumes. The keys rest while the game is paused.
+  * `F` toggles fast-forward, `Q` picks up plant food, and `Esc` pauses and resumes. The keys rest
+    while the game is paused.
   * On the Mac, Settings (`Cmd-,`) lets you pick any keys.
-  * <!-- TODO(power-ups): AltVerZ's power-up keys are still being settled; add the line here when the manager confirms it. -->
+  * AltVerZ's adventure levels have no power-ups; in its Vasebreaker levels, `Z`, `X`, `C` select
+    the power-ups from left to right.
 * **Mac window**
   * Keeps the game's shape at any size, or, in Settings, adapts to any shape from 4:3 to 21:9.
   * Drawn at the sharpness of the display it is on; Settings can draw it sharper on a
@@ -135,7 +137,7 @@ Needs Xcode (with its iOS platform) and about 8 GB of free space.
 
 ```sh
 git clone https://github.com/oenderg/AltverZ-Darwin
-cd AltVerZ-Darwin
+cd AltverZ-Darwin
 ./build.sh --profile altverz --apk "AltVerZ_1.8.3f.apk" --slim
 ```
 
