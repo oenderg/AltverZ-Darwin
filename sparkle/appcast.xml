@@ -5,5 +5,16 @@
     <link>https://github.com/oenderg/AltverZ-Darwin/releases</link>
     <description>Updates of PvZ2 AltVerZ for the Mac (AltverZ-Darwin)</description>
     <language>en</language>
+    <item>
+      <title>AltverZ-Darwin 0.1.0 · PvZ2 AltVerZ 1.8.3f</title>
+      <pubDate>Mon, 26 Oct 2026 11:10:13 +0000</pubDate>
+      <link>https://github.com/oenderg/AltverZ-Darwin/releases/tag/v0.1.0</link>
+      <sparkle:version>100</sparkle:version>
+      <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<p><b>The first AltVerZ build, and an early one: expect bugs.</b> PvZ2 AltVerZ 1.8.3f runs natively on iPhone, iPad and Mac, with no jailbreak, no JIT and no emulator.</p><ul><li>The Mac build is the tested one: the title screen, the world map, the Store, the Almanac and levels work, including with a save moved over from Android.</li><li>iPhone and iPad builds have had only light testing. Treat them as a preview.</li><li>The game's own content, AltVerZ's War world and its levels are there.</li></ul><p><b>Known gaps</b></p><ul><li>AltVerZ has no Import/Export screen, so moving a save over is a file copy. The README has the folders.</li><li>The Mac app is not notarized: the first time, macOS refuses to open it until you allow it in System Settings &gt; Privacy &amp; Security.</li><li>The Mac app checks this repository's update feed. Later builds will show up there; this one is the first.</li><li>This is a prerelease. It is marked as such on GitHub and is not a stable build.</li></ul><p><a href="https://github.com/oenderg/AltverZ-Darwin/releases/tag/v0.1.0">The release on GitHub</a></p>]]></description>
+      <enclosure url="https://github.com/oenderg/AltverZ-Darwin/releases/download/v0.1.0/PvZ2-AltVerZ-1.8.3f-Darwin-0.1.0-Mac.dmg" length="56071855"
+                 type="application/octet-stream" sparkle:edSignature="KzL+iO3rHhkGq8/tFFn6YkfjOIwWwx5Hypq+T6WoLPZT7SXljMOpzSS+PbGafzDWL0WX6uKGvbx1vHQDa0XhAw=="/>
+    </item>
   </channel>
 </rss>
