@@ -32,8 +32,8 @@ and the mod library are in `data/profiles/<id>.json`; point its `game_data` at t
 ([MOD-PROFILES.md](MOD-PROFILES.md)).
 
 The profile also names the app's version and the Mac feed. Search for the old game version
-(`1.8.3f` or `1.4.2`) in `build.sh`, the runtime and host comments, and the workflow's input
-descriptions; the data and hook file names now come from the profile, not from `build.sh`.
+(`1.8.3f` or `1.4.2`) in the runtime and host comments and the workflow's input descriptions;
+the data and hook file names come from the profile, and the app version from its `app_version`.
 
 ## 3. The hook table
 
