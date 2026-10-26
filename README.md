@@ -108,8 +108,9 @@ Copy the profile files from there:
 
 Replace the files that are there, then start the app. The game reads the profile on its next start.
 
-**On iPhone or iPad.** The app shares its Documents folder with the Files app: its Info.plist has
-`UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`, so no in-game menu is needed. In
+**On iPhone or iPad.** Start the app once so it creates its data folder, then close it. The app
+shares its Documents folder with the Files app: its Info.plist has `UIFileSharingEnabled` and
+`LSSupportsOpeningDocumentsInPlace`, so no in-game menu is needed. In
 **Files > On My iPhone > PvZ2 AltVerZ**, open
 `data/sdcard/Android/data/com.ea.game.pvz2_auz/files/No_Backup/` and copy the same files in.
 Finder can also show the app's Documents folder when the device is connected.
