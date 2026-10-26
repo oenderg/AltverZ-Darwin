@@ -21,22 +21,19 @@ and the mod's own content built in.
   <a href="https://github.com/oenderg/AltverZ-Darwin/releases"><b>Download</b></a> ·
   <a href="#features">Features</a> ·
   <a href="#install">Install guide</a> ·
-  <a href="#moving-a-save-in">Moving a save in</a> ·
   <a href="#build-it-yourself">Build it yourself</a> ·
   <a href="#how-it-works">How it works</a>
 </p>
 
 ---
 
-> **Early build, expect bugs.** The Mac build is the tested one. The iPhone and iPad builds have had
-> only light testing; treat them as a preview.
+> **Early build, expect bugs.**
 
 ## Features
 
 * **A real app**
   * Full screen, with sound, saves and the mod's own content built in.
   * Leaving the app pauses the game; coming back shows its pause menu.
-  * The game's own Store, Almanac, world map and levels, including AltVerZ's War world.
 * **Unlocked frame rate**
   * The game runs at your display's refresh rate: 120 Hz on ProMotion displays.
   * Turn on **Target 60 FPS** in the game's own settings for that; with it off, the game runs at 60.
@@ -44,23 +41,20 @@ and the mod's own content built in.
 * **Keyboard** (Mac, and iPad with a keyboard)
   * `1`-`8` take a seed packet, `S` the shovel.
   * `Space` collects every sun, coin, gem and plant food drop on the lawn.
-  * `F` toggles fast-forward, `Q` picks up plant food, and `Esc` pauses and resumes. The keys rest
-    while the game is paused.
+  * `F` toggles fast-forward, `Q` picks up plant food, and `Z`, `X`, `C` select the level's
+    power-ups from left to right.
+  * `Esc` pauses and resumes. The keys rest while the game is paused.
   * On the Mac, Settings (`Cmd-,`) lets you pick any keys.
-  * AltVerZ's adventure levels have no power-ups; in its Vasebreaker levels, `Z`, `X`, `C` select
-    the power-ups from left to right.
 * **Mac window**
   * Keeps the game's shape at any size, or, in Settings, adapts to any shape from 4:3 to 21:9.
   * Drawn at the sharpness of the display it is on; Settings can draw it sharper on a
     display that isn't Retina.
   * `Cmd-M` and `Cmd-H` pause the game.
-  * Closing the window quits, or keeps the game paused if you choose that in Settings.
-    Quitting asks first (Settings, or "Don't ask again", turns that off).
 * **Updates**
-  * The Mac app updates itself from this repository's own feed: it checks once a day and asks
-    before it installs (PvZ2 AltVerZ > Check for Updates…).
+  * The Mac app updates itself: it checks once a day and asks before it installs
+    (PvZ2 AltVerZ > Check for Updates…).
   * iPhone and iPad get updates through AltStore and SideStore with this repository's source.
-  * Your saves stay, and a full app needs no second download.
+  * Your saves stay, and a full app needs no second 1.1 GB download.
 
 ## Install
 
@@ -82,52 +76,30 @@ LiveContainer.
 
 **AltStore / SideStore source** - add
 `https://raw.githubusercontent.com/oenderg/AltverZ-Darwin/main/altstore/source.json`
-(Sources > +) and install the game from it; new releases then show up as updates.
+(Sources → +) and install the game from it; new releases then show up as updates.
 
 **Mac** (Apple silicon, macOS 12 or later) - open the DMG and drag the app onto Applications. The
 app is not notarized, so the first time macOS refuses to open it: click **Done**, then in
-**System Settings > Privacy & Security** click **Open Anyway**. After that the app updates itself.
+**System Settings → Privacy & Security** click **Open Anyway**. After that the app updates itself.
 
-Your saves live with the app (on the Mac, in `~/Library/Application Support/PvZ2 AltVerZ/`).
-
-## Moving a save in
-
-AltVerZ has no Import/Export screen, so this is a file copy. Close the app before you start, and
-back up the folder you are about to change.
-
-**From Android.** The save is in `/sdcard/Android/data/com.ea.game.pvz2_auz/files/No_Backup/`.
-Copy the profile files from there:
-
-- `pp.dat` and `pp.dat.bak` - the current profile and its backup.
-- `local_profiles` and `global_save_data` - the profile list and the global data.
-- `save/` if you want a level that is in progress.
-
-**On the Mac.** Paste them into:
-
-```text
-~/Library/Application Support/PvZ2 AltVerZ/sdcard/Android/data/com.ea.game.pvz2_auz/files/No_Backup/
-```
-
-Replace the files that are there, then start the app. The game reads the profile on its next start.
-
-**On iPhone or iPad.** Start the app once so it creates its data folder, then close it. The app
-shares its Documents folder with the Files app: its Info.plist has `UIFileSharingEnabled` and
-`LSSupportsOpeningDocumentsInPlace`, so no in-game menu is needed. In
-**Files > On My iPhone > PvZ2 AltVerZ**, open
-`data/sdcard/Android/data/com.ea.game.pvz2_auz/files/No_Backup/` and copy the same files in.
-Finder can also show the app's Documents folder when the device is connected.
+Your saves live with the app (on the Mac, in `~/Library/Application Support/PvZ2 AltVerZ`).
+AltVerZ has no Import/Export menu, so to bring a save over from Android, copy `pp.dat`,
+`pp.dat.bak`, `local_profiles` and `global_save_data` from
+`Android/data/com.ea.game.pvz2_auz/files/No_Backup/` on the phone into
+`sdcard/Android/data/com.ea.game.pvz2_auz/files/No_Backup/` inside that folder (on iPhone and
+iPad, inside **PvZ2 AltVerZ** → `data` in the Files app), with the app closed.
 
 ## Build it yourself
 
-You need the **PvZ2 AltVerZ 1.8.3f** APK from the mod's official download. You don't need the OBB
-that is next to it: a full build downloads the game's own OBB from its manifest and checks it. To
-use your own copy instead, pass it with `--obb` (or the workflow's OBB link).
+You need the **PvZ2 AltVerZ 1.8.3f** APK from the mod's official download. You don't need the
+OBB: the build downloads it from the mod's own link by itself and checks it. To use your own
+copy instead, pass it with `--obb` (or the workflow's OBB link).
 
 ### Option A - let GitHub build it (no Mac needed)
 
 1. **Fork** this repository.
 2. In your fork, open the **Actions** tab and enable workflows.
-3. Pick **Build > Run workflow**, paste a link to the APK (a direct link, Google Drive or MEGA),
+3. Pick **Build → Run workflow**, paste a link to the APK (a direct link, Google Drive or MEGA),
    and start it.
 4. When it finishes (up to an hour), the apps are in your fork's **Releases**.
 
@@ -146,11 +118,7 @@ for apps with the game's data inside (about 1.1 GB more).
 
 ## Known issues
 
-* This is an early build. The Mac app has been played through the title, the world map, the Store,
-  the Almanac and levels, with a save moved from Android. iPhone and iPad have had light testing.
-* The Mac app is ad-hoc signed, not notarized: the first open needs **Open Anyway**.
-* AltVerZ has no Import/Export screen. Moving a save is the file copy above.
-* The Mac disk image is plain until AltVerZ has its own install art.
+* Early build: tested on the Mac, and only lightly on iPhone and iPad so far.
 
 ## How it works
 
@@ -163,7 +131,7 @@ the app's lifecycle.
 
 | Folder | What is in it |
 |---|---|
-| `converter/` | ELF to Mach-O conversion and the hook bake |
+| `converter/` | ELF → Mach-O conversion and the hook bake |
 | `runtime/` | the host: Android and JNI environment, graphics, audio, input, iOS and Mac apps |
 | `data/` | the mod's recorded hook table, the game version it matches, and the mod profiles |
 | `prebuilt/` | ANGLE for iOS and the iOS Simulator (rebuild with `REBUILD_ANGLE=1 ./build.sh …`) |
@@ -181,7 +149,5 @@ agents start at [AGENTS.md](AGENTS.md). Found a bug? Open an issue with the app'
 
 ## Thanks
 
-The **AltVerZ** team - Poss and the AltVerZ Team, as the mod's own text names them - for the mod.
-**PopCap Games and EA** for Plants vs. Zombies 2. **Reflourished-Darwin** for the base this port is
-built on ([github.com/oenderg/Reflourished-Darwin](https://github.com/oenderg/Reflourished-Darwin)),
+The **AltVerZ** team for the mod, **Reflourished-Darwin**, which this port is built on,
 **Husk** for the translation layer, and **ANGLE** (WebKit and Chromium) for OpenGL ES on Metal.
