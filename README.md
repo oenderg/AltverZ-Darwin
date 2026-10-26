@@ -149,5 +149,5 @@ agents start at [AGENTS.md](AGENTS.md). Found a bug? Open an issue with the app'
 
 ## Thanks
 
-The **AltVerZ** team for the mod, **Reflourished-Darwin**, which this port is built on,
-**Husk** for the translation layer, and **ANGLE** (WebKit and Chromium) for OpenGL ES on Metal.
+The **AltVerZ** team for the mod, **Husk** for the translation layer this is built on, and
+**ANGLE** (WebKit and Chromium) for OpenGL ES on Metal.
