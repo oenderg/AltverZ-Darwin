@@ -9,7 +9,7 @@ and the mod's own content built in.
 </p>
 
 <p align="center">
-  <a href="https://github.com/oenderg/AltverZ-Darwin/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/oenderg/AltverZ-Darwin?label=latest&color=8a3ffc"></a>
+  <a href="https://github.com/oenderg/AltverZ-Darwin/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/oenderg/AltverZ-Darwin?include_prereleases&label=latest&color=8a3ffc"></a>
   <a href="https://github.com/oenderg/AltverZ-Darwin/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/oenderg/AltverZ-Darwin/total?color=e0702c"></a>
   <img alt="Game version" src="https://img.shields.io/badge/PvZ2%20AltVerZ-1.8.3f-2ea44f">
   <img alt="iPhone and iPad" src="https://img.shields.io/badge/iOS%20%26%20iPadOS-15.5%2B-0a84ff?logo=apple&logoColor=white">
@@ -18,7 +18,7 @@ and the mod's own content built in.
 </p>
 
 <p align="center">
-  <a href="https://github.com/oenderg/AltverZ-Darwin/releases/latest"><b>Download</b></a> ·
+  <a href="https://github.com/oenderg/AltverZ-Darwin/releases"><b>Download</b></a> ·
   <a href="#features">Features</a> ·
   <a href="#install">Install guide</a> ·
   <a href="#moving-a-save-in">Moving a save in</a> ·
