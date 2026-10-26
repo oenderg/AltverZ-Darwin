@@ -18,7 +18,7 @@
 #   ANGLE_GLES     ANGLE's libGLESv2.dylib
 #   SPARKLE_DIR    where Sparkle.framework is (scripts/fetch-sparkle.sh)
 #   SPARKLE_FEED_URL, SPARKLE_PUBLIC_KEY   the update feed and the key updates are signed
-#                  with (default: the repository's sparkle/appcast.xml and sparkle/public-key);
+#                  with (default: the profile's sparkle_feed_url and sparkle/public-key);
 #                  without a key the app has no updater
 #   DATA_FOLDER    another name for the data folder in Application Support (a test build's)
 #
@@ -27,13 +27,13 @@
 #   Contents/Frameworks/*.dylib          the converted guest libraries and their .facts
 #   Contents/Frameworks/libEGL.dylib     ANGLE: the EGL the driver needs on a Mac
 #   Contents/Frameworks/Sparkle.framework  the updater
-#   Contents/Resources/AppIcon.icns      the app's icon (Reflourished's, from the APK)
+#   Contents/Resources/AppIcon.icns      the app's icon (the mod's, from the APK)
 #   Contents/Game/pvz2.apk               the game's APK
 #   Contents/Game/obb/*.obb              the game's expansion file
-#   Contents/Game/1.4.2.main.tar         the mod's CDN archive
+#   Contents/Game/<cdn archive>          the mod's CDN archive
 #
-# The writable state is not in the bundle: it is in ~/Library/Application Support/PvZ2
-# Reflourished, and the host finds the bundle's pieces relative to its own executable.
+# The writable state is not in the bundle: it is in ~/Library/Application Support/<the
+# profile's data folder>, and the host finds the bundle's pieces relative to its own executable.
 set -euo pipefail
 
 R="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -47,10 +47,14 @@ APP="$OUT/$PROFILE_APP_NAME.app"
 AOT_DYLIB_DIR="${AOT_DYLIB_DIR:-$R/build/macos-dylibs}"
 OBB_NAME="${OBB_NAME:-main.675.${PROFILE_PACKAGE}.obb}"
 SPARKLE_DIR="${SPARKLE_DIR:-$R/build/sparkle}"
-SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/sparkle/appcast.xml}"
-# Only Reflourished has a live update feed here; an AltVerZ build must never take
-# Reflourished's updates as its own.
+# The profile names the feed, so an AltVerZ build can never take Reflourished's
+# updates as its own (or the reverse). A profile without Sparkle gets no updater.
 if [ "$PROFILE_SPARKLE" = "True" ]; then
+    SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-$PROFILE_SPARKLE_FEED_URL}"
+    [ -n "$SPARKLE_FEED_URL" ] || {
+        echo "the $PROFILE profile has Sparkle on but no sparkle_feed_url" >&2
+        exit 1
+    }
     if [ -z "${SPARKLE_PUBLIC_KEY:-}" ] && [ -f "$R/../sparkle/public-key" ]; then
         SPARKLE_PUBLIC_KEY="$(tr -d ' \n' < "$R/../sparkle/public-key")"
     fi
@@ -183,7 +187,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# The app's icon: Reflourished's own, out of the APK (as the iOS app's), cut to a Mac
+# The app's icon: the mod's own, out of the APK (as the iOS app's), cut to a Mac
 # icon's shape by tools/macos-icon.swift. ICON_PNG takes another picture.
 if [ -z "${ICON_PNG:-}" ] && [ -n "${GAME_APK:-}" ]; then
     ICON_DIR="$(mktemp -d)"

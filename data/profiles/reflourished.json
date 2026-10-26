@@ -18,5 +18,7 @@
   ],
   "cdn_archive": "1.4.2.main.tar",
   "cdn_path": "/cdn/1.4.2.main.tar",
-  "sparkle": true
+  "sparkle": true,
+  "sparkle_feed_url": "https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/sparkle/appcast.xml",
+  "dmg_art": true
 }
