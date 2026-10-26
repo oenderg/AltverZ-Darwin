@@ -62,7 +62,7 @@ and the mod's own content built in.
 
 ## Install
 
-Every [release](https://github.com/oenderg/AltVerZ-Darwin/releases) has two downloads for each
+Every [release](https://github.com/oenderg/AltverZ-Darwin/releases) has two downloads for each
 platform:
 
 | File | What it is |
@@ -79,7 +79,7 @@ it open on Wi-Fi until the game starts.
 LiveContainer.
 
 **AltStore / SideStore source** - add
-`https://raw.githubusercontent.com/oenderg/AltVerZ-Darwin/main/altstore/source.json`
+`https://raw.githubusercontent.com/oenderg/AltverZ-Darwin/main/altstore/source.json`
 (Sources > +) and install the game from it; new releases then show up as updates.
 
 **Mac** (Apple silicon, macOS 12 or later) - open the DMG and drag the app onto Applications. The
@@ -134,7 +134,7 @@ use your own copy instead, pass it with `--obb` (or the workflow's OBB link).
 Needs Xcode (with its iOS platform) and about 8 GB of free space.
 
 ```sh
-git clone https://github.com/oenderg/AltVerZ-Darwin
+git clone https://github.com/oenderg/AltverZ-Darwin
 cd AltVerZ-Darwin
 ./build.sh --profile altverz --apk "AltVerZ_1.8.3f.apk" --slim
 ```
