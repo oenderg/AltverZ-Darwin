@@ -114,6 +114,13 @@ Compare the cache's gzip hash with the guest's `CDN.1.4.2/` files after extracti
 With the lid closed, allow extra time for frames and taps. Use `TL_PVZ2_FRAMES` if window
 capture is unavailable, and inspect `latest.bmp` yourself; low fps alone is not a failure.
 
+A **locked login session** is its own case: the app keeps running, but the window server
+releases its Metal drawables at about 10-15 fps, so the `frames=` lines fall from the game's
+rate to that plateau after half a minute and `screencapture -l` has no picture. That is the
+lock, not the game: Reflourished shows the same plateau, and `sample <pid>` puts the GL
+thread in `CAMetalLayer nextDrawable`. `test-run.sh` prints a note when it sees
+`CGSSessionScreenIsLocked`; unlock the session for frame-rate measurements.
+
 The cache/allowlist regression test needs no network or game assets:
 
 ```sh
