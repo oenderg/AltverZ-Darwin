@@ -338,7 +338,7 @@ private struct GeneralPane: View {
                 }
             } footer: {
                 (Text(closeAction == "pause"
-                     ? "The red button and ⌘W hide the window and pause the game, the way minimizing does. Click the Dock icon (or Window › PvZ2 Reflourished, ⌘0) to go on where you were. The paused game still uses its memory; ⌘Q quits."
+                     ? "The red button and ⌘W hide the window and pause the game, the way minimizing does. Click the Dock icon (or Window › \(pvz2ProfileAppName), ⌘0) to go on where you were. The paused game still uses its memory; ⌘Q quits."
                      : "The red button and ⌘W save and quit, like ⌘Q. To pause and keep your place instead, minimize (⌘M) or hide (⌘H).")
                     + Text(confirmQuit ? " Quitting asks first." : ""))
                     .font(.caption)
@@ -548,7 +548,7 @@ private struct AboutPane: View {
         }
         let name = Bundle.main.infoDictionary?["PVZ2DataFolder"] as? String ?? ""
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(name.isEmpty ? "PvZ2 Reflourished" : name)
+            .appendingPathComponent(name.isEmpty ? pvz2ProfileAppName : name)
     }
 
     /// A build with Sparkle's feed and key (the host's updates_configured)
@@ -560,11 +560,11 @@ private struct AboutPane: View {
     var body: some View {
         Pane {
             Section {
-                LabeledContent("Reflourished-Darwin version",
+                LabeledContent("\(pvz2ProfileAppName) version",
                                value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")
                 LabeledContent("Game version",
                                value: Bundle.main.infoDictionary?["PVZ2GameVersion"] as? String ?? "?")
-                Text("Plants vs. Zombies 2: Reflourished, running natively on this Mac: the game's own Android code, converted ahead of time, drawn through Metal.")
+                Text("\(pvz2ProfileAppName), running natively on this Mac: the game's own Android code, converted ahead of time, drawn through Metal.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -653,7 +653,7 @@ private enum AspectName {
 extension GeneralPane {
     /// The display's own shape, the way the host reads it: below the camera housing.
     @MainActor static func displayAspect() -> Double {
-        let s = NSApp.windows.first(where: { $0.title == "PvZ2 Reflourished" })?.screen ?? NSScreen.main
+        let s = NSApp.windows.first(where: { $0.title == pvz2ProfileAppName })?.screen ?? NSScreen.main
         guard let s else { return 1.6 }
         let h = s.frame.height - s.safeAreaInsets.top
         return h > 0 ? s.frame.width / h : 1.6

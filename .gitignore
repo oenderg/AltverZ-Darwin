@@ -6,3 +6,4 @@ runtime/third_party/
 .DS_Store
 __pycache__/
 scripts/dmg/art
+out-alt/

@@ -19,8 +19,8 @@ is signed like any other library. On the device nothing writes code.
 
 ## The converter (`converter/`)
 
-`build-macos-dylibs.sh` / `build-ios-dylibs.sh` run, per library (`libPVZ2`, `libRFLib`, `libNimble`,
-`libc++_shared`), `aot-convert.py`, which:
+`build-macos-dylibs.sh` / `build-ios-dylibs.sh` run, per library (`libPVZ2`, the mod's
+library -- `libRFLib` or `libSnowie` --, `libNimble`, `libc++_shared`), `aot-convert.py`, which:
 
 - keeps the code at the offsets the ELF put it, so every PC-relative branch and load still works;
   the data segment moves (Mach-O wants it page-aligned), so PC-relative references into data are
@@ -31,7 +31,8 @@ is signed like any other library. On the device nothing writes code.
 - turns ELF relocations into assembler expressions, so `ld64` writes the rebase/bind information;
 - rewrites what Darwin forbids or lays out differently: thread-pointer reads (`mrs tpidr_el0`) point
   at a fake thread block, and uses of register x18 (reserved on Apple platforms) go through stubs;
-- bakes in the mod's **290 inline hooks** (`data/hooks-1.4.2.json`). On Android, `libRFLib` patches
+- bakes in the mod's inline hooks (the profile's table: `data/hooks-1.4.2.json` for
+  Reflourished, `data/hooks-snowie-1.8.3f.json` for AltVerZ). On Android, `libRFLib` patches
   `libPVZ2`'s function prologues at start-up; here those branches are written into the dylib ahead
   of time, and the mod's hook API becomes a lookup. Without the table the game never draws a frame.
 - writes a `.facts` file (the guest's symbol names, which live inside the image as bytes) and a
@@ -70,7 +71,7 @@ answers the few calls into those parts). The pieces that matter here:
   callbacks. A validated download updates the writable CDN cache atomically; failures
   use that cache or the staged bundle with device-clock time. See GAME-NOTES.md.
 - **Boot order** (the game is written against Android's): libraries -> constructors -> `JNI_OnLoad`
-  -> `libRFLib` init -> Nimble launch -> `Native_GameAppInitialize` -> lifecycle observer ->
+  -> the mod's constructors (and `JNI_OnLoad` if it has one) -> Nimble launch -> `Native_GameAppInitialize` -> lifecycle observer ->
   will/did finish launching -> foreground -> active.
 - **The GL thread** runs the game: creates the EGL context, calls `Native_onSurfaceCreated` /
   `Native_onSurfaceChanged` / `Native_onDrawFrame`, pumps the game's message queue, and between
@@ -124,6 +125,6 @@ answers the few calls into those parts). The pieces that matter here:
   Each launch starts a new `pvz2.log` and renames the old one to `pvz2.previous.log` (on the Mac, not
   for a restart to fit the window, nor for a test's `TL_PVZ2_LOG`).
 - In the data folder: `config/pvz2-config` (the game's own settings),
-  `sdcard/Android/obb/com.ea.game.pvz2_rfl/` (the Mac's OBB),
-  `sdcard/Android/data/com.ea.game.pvz2_rfl/files/No_Backup/` (saves, CDN content).
+  `sdcard/Android/obb/<package>/` (the Mac's OBB),
+  `sdcard/Android/data/<package>/files/No_Backup/` (saves, CDN content).
   The Mac host's own settings are in the app's user defaults.

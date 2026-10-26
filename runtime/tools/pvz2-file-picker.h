@@ -20,6 +20,7 @@
 #endif
 
 #include "husk-tl-pvz2.h"
+#include "pvz2-profile.h"
 
 void tl_log_line(const char *fmt, ...);
 
@@ -124,7 +125,7 @@ static void pvz2_file_picker_install(UIViewController *root)
             panel.canChooseFiles = YES;
             panel.canChooseDirectories = NO;
             panel.allowsMultipleSelection = NO;
-            panel.title = @"Import into PvZ2 Reflourished";
+            panel.title = [NSString stringWithFormat:@"Import into %@", @(PVZ2_PROFILE_APP_NAME)];
             panel.prompt = @"Import";
             panel.message = [NSString stringWithFormat:@"Choose the file to import as %@.", suggested];
             tl_log_line("pvz2: file picker: showing the open panel over the game");
@@ -138,7 +139,7 @@ static void pvz2_file_picker_install(UIViewController *root)
             NSSavePanel *panel = [NSSavePanel savePanel];
             panel.canCreateDirectories = YES;
             panel.nameFieldStringValue = suggested;
-            panel.title = @"Export from PvZ2 Reflourished";
+            panel.title = [NSString stringWithFormat:@"Export from %@", @(PVZ2_PROFILE_APP_NAME)];
             panel.prompt = @"Export";
             tl_log_line("pvz2: file picker: showing the save panel over the game as %s",
                         suggested.UTF8String ?: "");

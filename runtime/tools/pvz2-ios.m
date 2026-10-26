@@ -42,6 +42,7 @@
 #include "husk-tl-audio.h"
 #include "husk-tl-pvz2.h"
 #include "husk-tl-cdn.h"
+#include "pvz2-profile.h"
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
 #include "pvz2-open-url.h"
@@ -1266,8 +1267,8 @@ static void stage_bundled_game(NSString *docs)
 static void stage_bundled_cdn(NSString *docs)
 {
     if (getenv("TL_PVZ2_MAIN_TAR")) return;
-    NSString *src = [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"Game/1.4.2.main.tar"];
-    NSString *dst = [docs stringByAppendingPathComponent:@"data/No_Backup/1.4.2.main.tar"];
+    NSString *src = [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:[NSString stringWithFormat:@"Game/%s", PVZ2_PROFILE_CDN_ARCHIVE]];
+    NSString *dst = [docs stringByAppendingPathComponent:[NSString stringWithFormat:@"data/No_Backup/%s", PVZ2_PROFILE_CDN_ARCHIVE]];
     tl_cdn_stage(src.UTF8String, dst.UTF8String);
 }
 
@@ -1324,7 +1325,7 @@ static NSDictionary *obb_info(void)
     NSArray *urls = plist[@"PVZ2ObbURLs"];
     NSString *sha = plist[@"PVZ2ObbSHA256"];
     NSNumber *size = plist[@"PVZ2ObbSize"];
-    NSString *name = plist[@"PVZ2ObbName"] ?: @"main.675.com.ea.game.pvz2_rfl.obb";
+    NSString *name = plist[@"PVZ2ObbName"] ?: [NSString stringWithFormat:@"main.675.%s.obb", PVZ2_PROFILE_PKG];
     if (![urls isKindOfClass:NSArray.class] || !urls.count || !sha.length || size.longLongValue <= 0) return nil;
     return @{ @"urls": urls, @"sha": sha.lowercaseString, @"size": size, @"name": name };
 }
@@ -1968,8 +1969,8 @@ static NSDictionary *obb_info(void)
     if (!have_inputs) {
         tl_log_line("ios: no APK/OBB in Documents; see the app's README");
         show_message(vc, @"Game files needed",
-                     @"Put your Reflourished .apk in this app's Documents folder and the OBB at "
-                      "Documents/obb/main.675.com.ea.game.pvz2_rfl.obb, then relaunch.");
+                     [NSString stringWithFormat:@"Put your %@ .apk in this app's Documents folder and the OBB at "
+                      "Documents/obb/main.675.%s.obb, then relaunch.", @(PVZ2_PROFILE_APP_NAME), PVZ2_PROFILE_PKG]);
         return;
     }
     [self startGameIn:vc];
@@ -2005,7 +2006,7 @@ static NSDictionary *obb_info(void)
     [view layoutIfNeeded];
     [view updateSafeInsets];
 
-    g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = "com.ea.game.pvz2_rfl",
+    g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = PVZ2_PROFILE_PKG,
                             .width = g_w, .height = g_h, .metal_layer = (__bridge void *)layer,
                             .angle_egl = g_egl, .angle_gles = NULL, .frame_dir = NULL, .frame_every = 0 };
 

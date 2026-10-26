@@ -1,0 +1,17 @@
+{
+  "version": "1.8.3f",
+  "obb_name": "main.675.com.ea.game.pvz2_auz.obb",
+  "cdn_url": "https://possthree.pythonanywhere.com//main.tar.8.3",
+  "libs_sha256": {
+    "libPVZ2.so": "fdac81eaa1b9764452b01cc88ce1ff4a2e032c5ec2918445894136ca5f286261",
+    "libSnowie.so": "7ac54992dae657317f6565d16a8e29f68b38dcb97ca0557158d1e08b28ce0841",
+    "libNimble.so": "43586263eaba06b7a4cfb5528bffaefdff2ee8dc21589958d16476a7b92d3ac7",
+    "libc++_shared.so": "38815e321b404e8363aba1c0a5a86649eed45ce31007740039dddb780ea1d653"
+  },
+  "apk_sha256": "ab93bee743b96fabd9da8e75adcfe637b6651e29bef65e62d5734bfc68f41b75",
+  "obb_sha256": "cf6857a625e3b8a1dc537de6dc5e71870833f5f73f2d3f2f62a47745ccf69839",
+  "obb_size": 1170182144,
+  "obb_urls": [
+    "https://github.com/PvZ2OBBHost/PvZ2AltverZOBB/releases/download/v1.8.3f/main.675.com.ea.game.pvz2_auz.obb"
+  ]
+}

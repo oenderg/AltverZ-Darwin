@@ -1,0 +1,22 @@
+{
+  "id": "reflourished",
+  "game_data": "data/game-1.4.2.json",
+  "hooks": "data/hooks-1.4.2.json",
+  "app_name": "PvZ2 Reflourished",
+  "artifact_name": "PvZ2-Reflourished",
+  "bundle_id": "io.github.oenderg.reflourished-darwin",
+  "data_folder": "PvZ2 Reflourished",
+  "package_name": "com.ea.game.pvz2_rfl",
+  "android_version_code": 675,
+  "android_version_name": "1.4.0",
+  "app_version": "1.2.0",
+  "mod_library": "libRFLib.so",
+  "mod_jni_onload": false,
+  "icon_path": "res/mipmap-xxxhdpi/pvz2_icon.png",
+  "cdn_hosts": [
+    "reflourished.ducnguyen.org"
+  ],
+  "cdn_archive": "1.4.2.main.tar",
+  "cdn_path": "/cdn/1.4.2.main.tar",
+  "sparkle": true
+}

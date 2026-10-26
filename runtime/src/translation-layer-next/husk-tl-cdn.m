@@ -4,13 +4,17 @@
 #include <zlib.h>
 #include "husk-tl-cdn.h"
 #include "husk-tl-bionic.h"
+#include "pvz2-profile.h"
 
 static const NSUInteger CDN_LIMIT = 64 * 1024 * 1024;
 
 static BOOL allowed(NSURL *url)
 {
-    return [url.scheme.lowercaseString isEqualToString:@"https"] &&
-        [url.host.lowercaseString isEqualToString:@"reflourished.ducnguyen.org"] &&
+    NSArray<NSString *> *hosts = [@(PVZ2_PROFILE_CDN_HOSTS) componentsSeparatedByString:@"|"];
+    BOOL known = url.host && [hosts indexOfObjectPassingTest:^BOOL(NSString *h, NSUInteger i, BOOL *stop) {
+        return [h.lowercaseString isEqualToString:url.host.lowercaseString];
+    }] != NSNotFound;
+    return [url.scheme.lowercaseString isEqualToString:@"https"] && known &&
         (!url.port || url.port.integerValue == 443) && !url.user && !url.password;
 }
 bool tl_cdn_allowed_url(const char *url)
@@ -212,7 +216,8 @@ void tl_cdn_fetch(const char *url, const char *method, const void *body, size_t 
     @autoreleasepool {
         PVCdnFetch *fetch = [PVCdnFetch new];
         fetch.url = @(url);
-        fetch.cache = cache_path && [[[NSURL URLWithString:fetch.url] path] isEqualToString:@"/cdn/1.4.2.main.tar"] ? @(cache_path) : nil;
+        fetch.cache = cache_path && [[[NSURL URLWithString:fetch.url] path]
+            isEqualToString:@(PVZ2_PROFILE_CDN_PATH)] ? @(cache_path) : nil;
         fetch.token = token; fetch.completion = completion; fetch.data = [NSMutableData new];
         if (!tl_cdn_allowed_url(url)) { completion(token, NULL); return; }
         const char *mode = getenv("TL_PVZ2_CDN");

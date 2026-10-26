@@ -1,11 +1,15 @@
 #!/bin/bash
-# Build PvZ2: Reflourished for iPhone, iPad and Mac from the Android release.
+# Build a PvZ2 mod for iPhone, iPad and Mac from the Android release.
 #
-#   ./build.sh --apk <file|url> [--obb <file|url>] [--cdn <file|url>] [--ios] [--ios-sim] [--mac] [--slim] [--quick] [--reuse-converted] [--out dir]
+#   ./build.sh --profile <reflourished|altverz> --apk <file|url> [--obb <file|url>] [--cdn <file|url>] [--ios] [--ios-sim] [--mac] [--slim] [--quick] [--reuse-converted] [--out dir]
+#
+# --profile picks data/profiles/<name>.json: the game build, the mod library and its hook
+# table, the app's name, bundle id and data folder, and the live-content host. The
+# default is reflourished. --apk and --obb are that game's own files.
 #
 # Without --ios, --ios-sim or --mac, iOS and Mac are built. --apk and --obb take a file, or a link
 # (direct, Google Drive or MEGA) that is downloaded first; without --obb the OBB
-# comes from the mod's own release. --slim makes the apps without the OBB inside
+# comes from the profile's release. --slim makes the apps without the OBB inside
 # (the IPA is about 60 MB, the Mac disk image about 65 MB): they download it themselves
 # on their first launch. --quick reuses the game's converted code from the last
 # build in the same --out and skips the disk image: the fast loop while working
@@ -15,21 +19,22 @@
 # APP_BUILD overrides the build number (default: major*10000 + minor*100 + patch).
 # The results land in out/ (or --out):
 #
-#   PvZ2-Reflourished.ipa          for iPhone and iPad (sign it with your sideloader)
-#   PvZ2-Reflourished-sim.app      for the iOS Simulator (Apple silicon, --ios-sim)
-#   PvZ2 Reflourished.app          for the Mac (Apple silicon)
-#   PvZ2-Reflourished.dmg          the same app in a disk image, ready to share
+#   <artifact>.ipa                 for iPhone and iPad (sign it with your sideloader)
+#   <artifact>-sim.app             for the iOS Simulator (Apple silicon, --ios-sim)
+#   <app name>.app                 for the Mac (Apple silicon)
+#   <artifact>.dmg                 the same app in a disk image, ready to share
+# The profile names them: PvZ2-Reflourished / PvZ2-AltVerZ.
 #
 # Needs: a Mac with Xcode (and its iOS platform for --ios), python3, about 8 GB free.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-. "$ROOT/scripts/app-version.sh"
 OUT="$ROOT/out"
 APK="" OBB="" CDN="" WANT_IOS=0 WANT_IOS_SIM=0 WANT_MAC=0 SLIM=0 QUICK=0 REUSE_CONVERTED=0
-
+PROFILE_ARG=""
 while [ $# -gt 0 ]; do
     case "$1" in
+        --profile) PROFILE_ARG="$2"; shift 2 ;;
         --apk) APK="$2"; shift 2 ;;
         --obb) OBB="$2"; shift 2 ;;
         --cdn) CDN="$2"; shift 2 ;;
@@ -47,12 +52,17 @@ done
 [ "$WANT_IOS$WANT_IOS_SIM$WANT_MAC" = 000 ] && WANT_IOS=1 WANT_MAC=1
 [ -n "$APK" ] || { echo "--apk is required (see ./build.sh --help)" >&2; exit 2; }
 
+[ -n "$PROFILE_ARG" ] && PROFILE="$PROFILE_ARG"
+. "$ROOT/scripts/profile.sh"
+. "$ROOT/scripts/app-version.sh"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 WORK="$OUT/.work"
 mkdir -p "$WORK"
-GAME="$ROOT/data/game-1.4.2.json"
-HOOKS="$ROOT/data/hooks-1.4.2.json"
+GAME="$ROOT/$PROFILE_GAME_DATA"
+HOOKS="$ROOT/$PROFILE_HOOKS"
+MOD_LIBRARY="$PROFILE_MOD_LIBRARY"
+export MOD_LIBRARY
 json() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))" "$GAME" "$1"; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
@@ -76,10 +86,13 @@ if [ "$NEED_OBB" = 1 ]; then
     OBB="$(fetch "$OBB" "$WORK/game.obb")"
 fi
 if [ -z "$CDN" ]; then
-    CDN="$WORK/1.4.2.main.tar"
-    [ -s "$CDN" ] || curl -fL --retry 3 -o "$CDN" "$(json 'd["cdn_url"]')"
+    cdn_url="$(json 'd.get("cdn_url") or ""')"
+    if [ -n "$cdn_url" ]; then
+        CDN="$WORK/$PROFILE_CDN_ARCHIVE"
+        [ -s "$CDN" ] || curl -fL --retry 3 -o "$CDN" "$cdn_url"
+    fi
 else
-    CDN="$(fetch "$CDN" "$WORK/1.4.2.main.tar")"
+    CDN="$(fetch "$CDN" "$WORK/$PROFILE_CDN_ARCHIVE")"
 fi
 
 # The mod's hooks were recorded against one exact build of the game's code, so the
@@ -87,12 +100,12 @@ fi
 rm -rf "$WORK/libs"; mkdir -p "$WORK/libs"
 unzip -o -q "$APK" 'lib/arm64-v8a/*.so' -d "$WORK/libs" || { echo "$APK is not an Android APK with arm64 libraries" >&2; exit 1; }
 LIBS="$WORK/libs/lib/arm64-v8a"
-for so in libPVZ2.so libRFLib.so libNimble.so libc++_shared.so; do
+for so in libPVZ2.so "$MOD_LIBRARY" libNimble.so libc++_shared.so; do
     want="$(json "d['libs_sha256']['$so']")"
     have="$(shasum -a 256 "$LIBS/$so" 2>/dev/null | cut -d' ' -f1)"
     if [ "$want" != "$have" ]; then
-        echo "this APK's $so is not the one Reflourished $(json 'd["version"]') ships." >&2
-        echo "Use the PvZ2 Reflourished $(json 'd["version"]') APK from the mod's official downloads." >&2
+        echo "this APK's $so is not the one $PROFILE_APP_NAME $(json 'd["version"]') ships." >&2
+        echo "Use the $PROFILE_APP_NAME $(json 'd["version"]') APK from the mod's official downloads." >&2
         exit 1
     fi
 done
@@ -100,11 +113,11 @@ if [ "$NEED_OBB" = 1 ]; then
     obb_size="$(stat -f %z "$OBB")"
     [ "$obb_size" -gt 100000000 ] || { echo "$OBB is $obb_size bytes; the game's OBB is about 1.3 GB" >&2; exit 1; }
     if [ "$(shasum -a 256 "$OBB" | cut -d' ' -f1)" != "$(json 'd["obb_sha256"]')" ]; then
-        echo "    note: this OBB is not Reflourished $(json 'd["version"]')'s own (it may be another version's)." >&2
+        echo "    note: this OBB is not $PROFILE_APP_NAME $(json 'd["version"]')'s own (it may be another version's)." >&2
     fi
-    echo "    APK: Reflourished $(json 'd["version"]') ✓    OBB: $(du -h "$OBB" | cut -f1)    CDN archive: $(du -h "$CDN" | cut -f1)"
+    echo "    APK: $PROFILE_APP_NAME $(json 'd["version"]') ✓    OBB: $(du -h "$OBB" | cut -f1)    CDN archive: $([ -n "$CDN" ] && du -h "$CDN" | cut -f1 || echo none)"
 else
-    echo "    APK: Reflourished $(json 'd["version"]') ✓    OBB: downloaded by the app    CDN archive: $(du -h "$CDN" | cut -f1)"
+    echo "    APK: $PROFILE_APP_NAME $(json 'd["version"]') ✓    OBB: downloaded by the app    CDN archive: $([ -n "$CDN" ] && du -h "$CDN" | cut -f1 || echo none)"
 fi
 # Where the apps download the OBB from when it is not inside them (or not the
 # right one): the links in order, and the size and sha256 it must have.
@@ -157,18 +170,18 @@ if [ "$WANT_IOS" = 1 ] || [ "$WANT_IOS_SIM" = 1 ]; then
         step "building the iOS app"
         GAME_APK="$APK" GAME_OBB="$IOS_OBB" GAME_CDN_TAR="$CDN" \
         OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" OBB_NAME="$OBB_NAME" \
-        AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-io.github.oenderg.reflourished-darwin}" \
+        AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-$PROFILE_BUNDLE_ID}" \
             bash "$ROOT/runtime/tools/regress/build-ios-ipa.sh" "$WORK/ios" | grep -E '^==>|^built|^ipa'
         [ -f "$WORK/ios/PvZ2.ipa" ] || { echo "the iOS build failed (see above)" >&2; exit 1; }
-        mv -f "$WORK/ios/PvZ2.ipa" "$OUT/PvZ2-Reflourished.ipa"
+        mv -f "$WORK/ios/PvZ2.ipa" "$OUT/$PROFILE_ARTIFACT.ipa"
     fi
 
     if [ "$WANT_IOS_SIM" = 1 ]; then
         step "building the iOS Simulator app"
         GAME_APK="$APK" GAME_OBB="$IOS_OBB" GAME_CDN_TAR="$CDN" \
         OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" OBB_NAME="$OBB_NAME" \
-        AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-io.github.oenderg.reflourished-darwin}" \
-        IOS_SIM=1 IOS_SIM_APP="$OUT/PvZ2-Reflourished-sim.app" \
+        AOT_DYLIB_DIR="$WORK/ios-dylibs" BUNDLE_ID="${BUNDLE_ID:-$PROFILE_BUNDLE_ID}" \
+        IOS_SIM=1 IOS_SIM_APP="$OUT/$PROFILE_ARTIFACT-sim.app" \
             bash "$ROOT/runtime/tools/regress/build-ios-ipa.sh" "$WORK/ios-sim"
     fi
 fi
@@ -201,19 +214,19 @@ if [ "$WANT_MAC" = 1 ]; then
     OBB_URLS="$OBB_URLS" OBB_SHA256="$OBB_SHA256" OBB_SIZE="$OBB_SIZE" OBB_NAME="$OBB_NAME" \
     ANGLE_EGL="$ANGLE_MAC/libEGL.dylib" ANGLE_GLES="$ANGLE_MAC/libGLESv2.dylib" SPARKLE_DIR="$SPARKLE" \
         bash "$ROOT/runtime/tools/regress/build-macos-app.sh" "$WORK/macos" | grep -E '^==>|^built'
-    [ -d "$WORK/macos/PvZ2 Reflourished.app" ] || { echo "the Mac build failed (see above)" >&2; exit 1; }
-    rm -rf "$OUT/PvZ2 Reflourished.app"
-    mv "$WORK/macos/PvZ2 Reflourished.app" "$OUT/"
+    [ -d "$WORK/macos/$PROFILE_APP_NAME.app" ] || { echo "the Mac build failed (see above)" >&2; exit 1; }
+    rm -rf "$OUT/$PROFILE_APP_NAME.app"
+    mv "$WORK/macos/$PROFILE_APP_NAME.app" "$OUT/"
 
     if [ "$QUICK" = 0 ]; then
         step "packing the Mac app into a disk image"
-        bash "$ROOT/scripts/make-dmg.sh" "$OUT/PvZ2 Reflourished.app" "$OUT/PvZ2-Reflourished.dmg"
+        bash "$ROOT/scripts/make-dmg.sh" "$OUT/$PROFILE_APP_NAME.app" "$OUT/$PROFILE_ARTIFACT.dmg"
     fi
 fi
 
 step "done"
-[ "$WANT_IOS" = 1 ] && echo "    $OUT/PvZ2-Reflourished.ipa"
-[ "$WANT_IOS_SIM" = 1 ] && echo "    $OUT/PvZ2-Reflourished-sim.app"
-[ "$WANT_MAC" = 1 ] && echo "    $OUT/PvZ2 Reflourished.app"
-[ "$WANT_MAC" = 1 ] && [ "$QUICK" = 0 ] && echo "    $OUT/PvZ2-Reflourished.dmg"
+[ "$WANT_IOS" = 1 ] && echo "    $OUT/$PROFILE_ARTIFACT.ipa"
+[ "$WANT_IOS_SIM" = 1 ] && echo "    $OUT/$PROFILE_ARTIFACT-sim.app"
+[ "$WANT_MAC" = 1 ] && echo "    $OUT/$PROFILE_APP_NAME.app"
+[ "$WANT_MAC" = 1 ] && [ "$QUICK" = 0 ] && echo "    $OUT/$PROFILE_ARTIFACT.dmg"
 exit 0

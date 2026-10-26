@@ -8,7 +8,7 @@
 set -euo pipefail
 APP="$1" DMG="$2"
 [ -d "$APP" ] || { echo "no app at $APP" >&2; exit 1; }
-NAME="PvZ2 Reflourished"
+NAME="$(basename "$APP" .app)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 rm -f "$DMG"

@@ -25,6 +25,7 @@
 #define _DARWIN_C_SOURCE
 #include "husk-tl-pvz2.h"
 #include "husk-tl-cdn.h"
+#include "pvz2-profile.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -70,7 +71,7 @@ const char *tl_data_dir(void);
 void tl_nwindow_configure(int w, int h, void *layer);
 void *tl_nwindow_get(void);
 
-#define PKG "com.ea.game.pvz2_rfl"
+#define PKG PVZ2_PROFILE_PKG
 #define APP "com/popcap/SexyAppFramework/AndroidGameApp"
 #define ACT "com/popcap/SexyAppFramework/SexyAppFrameworkActivity"
 #define ACT2 "com/popcap/PvZ2/PvZ2GameActivity"
@@ -86,8 +87,8 @@ void *tl_nwindow_get(void);
 #define FP "FilePickerHelper"
 
 /* These are the package fields read by AndroidGameApp from the pinned APK. */
-#define PVZ2_ANDROID_VERSION_CODE 675
-#define PVZ2_ANDROID_VERSION_NAME "1.4.0"
+#define PVZ2_ANDROID_VERSION_CODE PVZ2_PROFILE_VERSION_CODE
+#define PVZ2_ANDROID_VERSION_NAME PVZ2_PROFILE_VERSION_NAME
 
 #define OBB_NAME "main.675." PKG ".obb"
 
@@ -988,7 +989,7 @@ static void J_http_start(tl_jcall *c)
         http_complete(token, NULL);
     } else {
         const char *path = getenv("TL_PVZ2_MAIN_TAR");
-        if (!path) { snprintf(local, sizeof local, "%s/No_Backup/1.4.2.main.tar", P.data); path = local; }
+        if (!path) { snprintf(local, sizeof local, "%s/No_Backup/%s", P.data, PVZ2_PROFILE_CDN_ARCHIVE); path = local; }
         tl_cdn_fetch(url, method, body, length, path, token, http_complete);
     }
     free(body);
@@ -1877,6 +1878,74 @@ static void J_log_component(tl_jcall *c) { (void)c; c->ret = vl(tl_jni_new_objec
 static void J_network_component(tl_jcall *c) { (void)c; c->ret = vl(tl_jni_new_object(tl_jni_class("com/ea/nimble/INetwork"))); }
 static void J_network_status(tl_jcall *c) { (void)c; c->ret = vl(tl_jni_new_object(tl_jni_class("com/ea/nimble/Network$Status"))); }
 
+/* ------------------------------------------- AltVerZ's Java (libSnowie only)
+ *
+ * libSnowie asks Java for one thing the engine does not: the mod's feature map.
+ * Its CRefManualSymbolBuilder replacement calls
+ *
+ *     ActivityThread.currentApplication().getClassLoader()
+ *         .loadClass("com.snowie.SnowieConfig").GetGameFeatureMap()
+ *
+ * and then reads each element's name (String) and id (int). The two entries are
+ * AltVerZ's custom worlds; without them the worlds are not registered (the code
+ * returns quietly), the game would still start, but its own content would be
+ * missing. ActivityThread and Application do not exist in this Java world, so
+ * they are answered here; loadClass is the generic layer's, and the List methods
+ * are answered for the list this file builds. */
+typedef struct { jobj **items; uint32_t n; } plist;
+
+static void J_list_size(tl_jcall *c)
+{
+    plist *l = c->self ? c->self->native : NULL;
+    c->ret = vi(l ? (int)l->n : 0);
+}
+static void J_list_get(tl_jcall *c)
+{
+    plist *l = c->self ? c->self->native : NULL;
+    int i = c->args[0].i;
+    if (!l || i < 0 || (uint32_t)i >= l->n) {
+        tl_jni_throw("java/lang/IndexOutOfBoundsException", "");
+        c->ret.l = NULL;
+        return;
+    }
+    c->ret = vl(tl_jni_ref(l->items[i]));
+}
+static jobj *snowie_feature(const char *name, int id)
+{
+    jobj *o = tl_jni_new_object(tl_jni_class("com/snowie/SnowieConfig$Feature"));
+    tl_jni_set_field(o, "name", "Ljava/lang/String;", vl(str(name)));
+    jvalue v = vi(id);
+    tl_jni_set_field(o, "id", "I", v);
+    return o;
+}
+static void J_snowie_feature_map(tl_jcall *c)
+{
+    static const struct { const char *name; int id; } features[] = {
+        { "war_stargate_start", 123 },      /* com.snowie.SnowieConfig.GetGameFeatureMap */
+        { "world_trophy_war", 124 },
+    };
+    jobj *list = tl_jni_new_object(tl_jni_class("java/util/ArrayList"));
+    plist *l = calloc(1, sizeof(*l));
+    l->items = calloc(sizeof(features) / sizeof(features[0]), sizeof(jobj *));
+    for (size_t i = 0; i < sizeof(features) / sizeof(features[0]); i++)
+        l->items[l->n++] = snowie_feature(features[i].name, features[i].id);
+    list->native = l;
+    tl_log_line("pvz2: SnowieConfig.GetGameFeatureMap() -> %u features", l->n);
+    c->ret = vl(list);
+}
+static void J_current_application(tl_jcall *c)
+{
+    static jobj *app;
+    if (!app) app = tl_jni_new_object(tl_jni_class("android/app/Application"));
+    c->ret = vl(app);
+}
+static void J_application_class_loader(tl_jcall *c)
+{
+    static jobj *loader;
+    if (!loader) loader = tl_jni_new_object(tl_jni_class("java/lang/ClassLoader"));
+    c->ret = vl(loader);
+}
+
 /* ------------------------------------------------------------------- tables */
 
 #define M(cls, name, fn) { cls, name, NULL, fn }
@@ -2083,6 +2152,15 @@ static const tl_jhle k_hle[] = {
     M("com/ea/nimble/SynergyEnvironment", "getEaDeviceId", J_empty),
     M("com/ea/nimble/Log", "getThresholdLevel", J_ignore),
     M("com/ea/nimble/Identity", "getAuthenticator", J_ignore),
+
+    /* AltVerZ's feature map (libSnowie). Harmless when no mod asks for it. */
+    M("android/app/ActivityThread", "currentApplication", J_current_application),
+    M("android/app/Application", "getClassLoader", J_application_class_loader),
+    M("com/snowie/SnowieConfig", "GetGameFeatureMap", J_snowie_feature_map),
+    M("java/util/List", "size", J_list_size),
+    M("java/util/List", "get", J_list_get),
+    M("java/util/ArrayList", "size", J_list_size),
+    M("java/util/ArrayList", "get", J_list_get),
     { NULL, NULL, NULL, NULL },
 };
 
@@ -2531,6 +2609,15 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
     tl_jni_declare("com/ea/nimble/Log", "java/lang/Object");
     tl_jni_declare("com/ea/nimble/Identity", "java/lang/Object");
     tl_jni_declare("com/ea/nimble/bridge/BaseNativeCallback", "java/lang/Object");
+    /* AltVerZ's one Java path: an Application and its class loader, the mod's config
+     * class, and the List of features it returns. */
+    tl_jni_declare("android/app/Application", "java/lang/Object");
+    tl_jni_declare("android/app/ActivityThread", "java/lang/Object");
+    tl_jni_declare("java/lang/ClassLoader", "java/lang/Object");
+    tl_jni_declare("java/util/List", "java/lang/Object");
+    tl_jni_declare("java/util/ArrayList", "java/util/List");
+    tl_jni_declare("com/snowie/SnowieConfig", "java/lang/Object");
+    tl_jni_declare("com/snowie/SnowieConfig$Feature", "java/lang/Object");
     tl_jni_register_hle(k_hle);
 
     P.activity = tl_jni_new_object(tl_jni_class(ACT2));
@@ -2579,18 +2666,26 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
     onload(nimble);
     if (onload(game) < 0) tl_log_line("pvz2: libPVZ2 has no JNI_OnLoad");
 
-    /* Reflourished's own library: loaded and initialised after the game's
-     * JNI_OnLoad, so that the functions it hooks are registered. */
-    /* Reflourished's own library is the mod, and it installs its hooks by storing branches
-     * into the game. A converted library's code is signed and read-only, so A64HookFunction
-     * is redirected to the shim: it records what was asked for (site and replacement) and
-     * returns, and the game runs on the original code until the hooks are baked in. The
-     * library itself is still loaded -- the game expects it, and its constructors run. */
+    /* The mod's own library, after the game's JNI_OnLoad so the functions it hooks
+     * exist. It installs its hooks by storing branches into the game; a converted
+     * library's code is signed and read-only, so A64HookFunction is redirected to the
+     * shim: it fills a baked site's slot and records a site the bake does not answer.
+     * The library is still loaded and its constructors run, because it keeps state the
+     * game calls back into.
+     *
+     * The two mods differ here in exactly one way: libSnowie has a JNI_OnLoad that
+     * re-runs libPVZ2's constructors and registers itself, as Android's
+     * System.loadLibrary would; libRFLib has none. */
     if (getenv("TL_AOT_NO_MOD"))
-        tl_log_line("pvz2: libRFLib.so not loaded (TL_AOT_NO_MOD)");
+        tl_log_line("pvz2: %s not loaded (TL_AOT_NO_MOD)", PVZ2_PROFILE_MOD_LIBRARY);
     else {
-        tl_lib *rfl = load("libRFLib.so");
-        if (rfl) tl_ld_init(rfl);
+        tl_lib *mod = load(PVZ2_PROFILE_MOD_LIBRARY);
+        if (mod) {
+            if (!tl_ld_init(mod)) tl_log_line("pvz2: %s constructors failed", PVZ2_PROFILE_MOD_LIBRARY);
+#if PVZ2_PROFILE_MOD_JNI_ONLOAD
+            if (onload(mod) < 0) tl_log_line("pvz2: %s has no JNI_OnLoad", PVZ2_PROFILE_MOD_LIBRARY);
+#endif
+        }
     }
     if (getenv("TL_PVZ2_PROBE")) {
         tl_ld_probe(game, 0x166bf4c, probe_changed);

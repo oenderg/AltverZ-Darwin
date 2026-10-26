@@ -4,7 +4,7 @@
 #
 #   tools/regress/build-macos-app.sh [out-dir]
 #
-# Produces $OUT/PvZ2 Reflourished.app. The pieces come from the environment:
+# Produces $OUT/<the profile's app name>.app. The pieces come from the environment:
 #
 #   AOT_DYLIB_DIR  the converted guest libraries (scripts/build-macos-dylibs.sh)
 #   GAME_APK       the game's APK
@@ -37,17 +37,25 @@
 set -euo pipefail
 
 R="$(cd "$(dirname "$0")/../.." && pwd)"
-. "$R/../scripts/app-version.sh"
+ROOT="$R/.."
+. "$ROOT/scripts/profile.sh"
+. "$ROOT/scripts/app-version.sh"
 N="$R/src/translation-layer-next"
 T="$R/src/translation-layer"
 OUT="${1:-$R/build/pvz2-macos}"
-APP="$OUT/PvZ2 Reflourished.app"
+APP="$OUT/$PROFILE_APP_NAME.app"
 AOT_DYLIB_DIR="${AOT_DYLIB_DIR:-$R/build/macos-dylibs}"
-OBB_NAME="${OBB_NAME:-main.675.com.ea.game.pvz2_rfl.obb}"
+OBB_NAME="${OBB_NAME:-main.675.${PROFILE_PACKAGE}.obb}"
 SPARKLE_DIR="${SPARKLE_DIR:-$R/build/sparkle}"
 SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/sparkle/appcast.xml}"
-if [ -z "${SPARKLE_PUBLIC_KEY:-}" ] && [ -f "$R/../sparkle/public-key" ]; then
-    SPARKLE_PUBLIC_KEY="$(tr -d ' \n' < "$R/../sparkle/public-key")"
+# Only Reflourished has a live update feed here; an AltVerZ build must never take
+# Reflourished's updates as its own.
+if [ "$PROFILE_SPARKLE" = "True" ]; then
+    if [ -z "${SPARKLE_PUBLIC_KEY:-}" ] && [ -f "$R/../sparkle/public-key" ]; then
+        SPARKLE_PUBLIC_KEY="$(tr -d ' \n' < "$R/../sparkle/public-key")"
+    fi
+else
+    SPARKLE_PUBLIC_KEY=""
 fi
 [ -d "$SPARKLE_DIR/Sparkle.framework" ] || {
     echo "no Sparkle.framework in $SPARKLE_DIR -- run scripts/fetch-sparkle.sh" >&2
@@ -76,14 +84,21 @@ echo "==> compiling the host and the translation layer"
 . "$R/tools/regress/pvz2-sources.sh"
 SRCS="$R/tools/pvz2-macos.m $(pvz2_runtime_sources | tr '\n' ' ')"
 # The settings window is SwiftUI: one Swift file, compiled to an object and linked
-# with the rest (the Swift runtime is the system's own).
-SWIFT_OBJ="$(mktemp -d)/settings.o"
-xcrun swiftc -c -parse-as-library -O -target arm64-apple-macos14.0 \
-    "$R/tools/pvz2-macos-settings.swift" -o "$SWIFT_OBJ"
+# with the rest (the Swift runtime is the system's own). The profile's Swift constants
+# (the app's name) are compiled beside it.
+profile_generate "$OUT/profile"
+SWIFT_TMP="$(mktemp -d)"
+cp "$R/tools/pvz2-macos-settings.swift" "$OUT/profile/Pvz2Profile.swift" "$SWIFT_TMP/"
+# One module: the settings pane reads the profile's app name, a symbol in the other
+# file, so the two are compiled together.
+(cd "$SWIFT_TMP" && xcrun swiftc -c -parse-as-library -O -target arm64-apple-macos14.0 \
+    -module-name PvZ2Settings pvz2-macos-settings.swift Pvz2Profile.swift)
+SWIFT_OBJ="$SWIFT_TMP/pvz2-macos-settings.o"
+SWIFT_PROFILE_OBJ="$SWIFT_TMP/Pvz2Profile.o"
 SWIFT_LIB="$(dirname "$(xcrun -f swiftc)")/../lib/swift/macosx"
 clang -g -O1 -fobjc-arc -Wall -Wno-unused-function -Wno-deprecated-declarations \
-    -I"$T" -I"$N" -F"$SPARKLE_DIR" \
-    "$SWIFT_OBJ" -L"$SWIFT_LIB" -L/usr/lib/swift -Wl,-rpath,/usr/lib/swift \
+    -I"$T" -I"$N" -I"$OUT/profile" -F"$SPARKLE_DIR" \
+    "$SWIFT_OBJ" "$SWIFT_PROFILE_OBJ" -L"$SWIFT_LIB" -L/usr/lib/swift -Wl,-rpath,/usr/lib/swift \
     -Wl,-U,_husk_native_loaded_apk \
     -Wl,-rpath,@executable_path/../Frameworks \
     $SRCS \
@@ -144,7 +159,7 @@ if [ -n "${GAME_OBB:-}" ]; then
 fi
 if [ -n "${GAME_CDN_TAR:-}" ]; then
     [ -f "$GAME_CDN_TAR" ] || { echo "no cdn tar at $GAME_CDN_TAR" >&2; exit 1; }
-    cp "$GAME_CDN_TAR" "$APP/Contents/Game/1.4.2.main.tar"
+    cp "$GAME_CDN_TAR" "$APP/Contents/Game/$PROFILE_CDN_ARCHIVE"
     echo "==> the CDN archive: $(du -h "$GAME_CDN_TAR" | cut -f1)"
 fi
 
@@ -154,9 +169,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key><string>PvZ2</string>
-	<key>CFBundleIdentifier</key><string>${BUNDLE_ID:-io.github.oenderg.reflourished-darwin}</string>
-	<key>CFBundleName</key><string>PvZ2 Reflourished</string>
-	<key>CFBundleDisplayName</key><string>PvZ2 Reflourished</string>
+	<key>CFBundleIdentifier</key><string>${BUNDLE_ID:-$PROFILE_BUNDLE_ID}</string>
+	<key>CFBundleName</key><string>$PROFILE_APP_NAME</string>
+	<key>CFBundleDisplayName</key><string>$PROFILE_APP_NAME</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleVersion</key><string>${APP_BUILD}</string>
 	<key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
@@ -172,8 +187,8 @@ PLIST
 # icon's shape by tools/macos-icon.swift. ICON_PNG takes another picture.
 if [ -z "${ICON_PNG:-}" ] && [ -n "${GAME_APK:-}" ]; then
     ICON_DIR="$(mktemp -d)"
-    unzip -o -q "$GAME_APK" "res/mipmap-xxxhdpi/pvz2_icon.png" -d "$ICON_DIR"
-    ICON_PNG="$ICON_DIR/res/mipmap-xxxhdpi/pvz2_icon.png"
+    unzip -o -q "$GAME_APK" "$PROFILE_ICON" -d "$ICON_DIR"
+    ICON_PNG="$ICON_DIR/$PROFILE_ICON"
 fi
 if [ -n "${ICON_PNG:-}" ]; then
     [ -f "$ICON_PNG" ] || { echo "no icon at $ICON_PNG" >&2; exit 1; }
@@ -181,7 +196,7 @@ if [ -n "${ICON_PNG:-}" ]; then
     xcrun swift "$R/tools/macos-icon.swift" "$ICON_PNG" "$ICONSET"
     iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
     /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$APP/Contents/Info.plist"
-    echo "==> Reflourished's icon"
+    echo "==> the mod's icon"
 fi
 
 # Updates: the feed, and the public half of the key every update is signed with.
@@ -232,7 +247,7 @@ run it:
   open "$APP"
 
 its state and its log:
-  ~/Library/Application\ Support/PvZ2\ Reflourished/
+  ~/Library/Application\ Support/$PROFILE_DATA_FOLDER/
 
 with another data directory, another set of libraries or another game:
   TL_DATA=... TL_AOT_DIR=... TL_PVZ2_APK=... "$APP/Contents/MacOS/PvZ2"

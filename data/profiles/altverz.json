@@ -1,0 +1,22 @@
+{
+  "id": "altverz",
+  "game_data": "data/game-1.8.3f.json",
+  "hooks": "data/hooks-snowie-1.8.3f.json",
+  "app_name": "PvZ2 AltVerZ",
+  "artifact_name": "PvZ2-AltVerZ",
+  "bundle_id": "io.github.oenderg.altverz-darwin",
+  "data_folder": "PvZ2 AltVerZ",
+  "package_name": "com.ea.game.pvz2_auz",
+  "android_version_code": 675,
+  "android_version_name": "8.3.0",
+  "app_version": "0.1.0",
+  "mod_library": "libSnowie.so",
+  "mod_jni_onload": true,
+  "icon_path": "res/mipmap-xxxhdpi/pvz2_icon.png",
+  "cdn_hosts": [
+    "possthree.pythonanywhere.com"
+  ],
+  "cdn_archive": "1.8.3f.main.tar",
+  "cdn_path": "//main.tar.8.3",
+  "sparkle": false
+}

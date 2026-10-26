@@ -25,6 +25,8 @@ Compare with `libs_sha256` in `data/game-1.4.2.json`.
 Copy `data/game-1.4.2.json` to `data/game-<version>.json` and fill in: `version`, `obb_name`,
 `cdn_url` (the mod's CDN archive), `libs_sha256` (all four), `apk_sha256`, `obb_sha256`, `obb_size`,
 `obb_urls` (the mod's OBB releases are on github.com/lantern-fans/obbybackup, one tag per version).
+The app identity and the mod library are in `data/profiles/<id>.json`; point its `game_data`
+at the new file ([MOD-PROFILES.md](MOD-PROFILES.md)).
 
 The version is also written in these places (search for `1.4.2`):
 

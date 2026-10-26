@@ -15,11 +15,11 @@
 #   libc++_shared.dylib      the C++ runtime the game brings with it (not iOS's)
 #   libNimble.dylib          the game's JNI helper, which libPVZ2 calls by name
 #   libPVZ2.dylib            the game
-#   libRFLib.dylib           the game's framework layer
+#   <mod>.dylib              the mod (libRFLib.dylib or libSnowie.dylib)
 # plus a .facts file beside each dylib: the symbol map the runtime needs, because the
 # guest's names live inside the image as bytes rather than in a symbol table.
 #
-# The mod's 290 inline hooks are baked into libPVZ2 as well. A device's code is signed
+# The mod's inline hooks are baked into libPVZ2 as well. A device's code is signed
 # and read-only, so the branches the mod would write at start-up cannot be written there;
 # they are written here instead, into libPVZ2's own text, before the signature. Set
 # HOOKS=<the frozen hook table> to bake them; without it the build has no hooks and the
@@ -51,7 +51,8 @@ if [ -f "$SRC" ]; then
 else
     LIB="$SRC"
 fi
-for so in libc++_shared libNimble libPVZ2 libRFLib; do
+MOD_LIBRARY="${MOD_LIBRARY:-libRFLib}"; MOD_LIBRARY="${MOD_LIBRARY%.so}"
+for so in libc++_shared libNimble libPVZ2 "$MOD_LIBRARY"; do
     [ -f "$LIB/$so.so" ] || { echo "no $so.so in $LIB" >&2; exit 1; }
 done
 
@@ -115,7 +116,7 @@ if [ -n "${HOOKS:-}" ]; then
 fi
 convert libPVZ2 2 --shim "$OUT/libc++_shared.dylib" --shim "$OUT/libNimble.dylib" \
                   ${HOOK_ARG[@]+"${HOOK_ARG[@]}"}
-convert libRFLib 3 --shim "$OUT/libPVZ2.dylib" --shim "$OUT/libc++_shared.dylib" \
+convert "$MOD_LIBRARY" 3 --shim "$OUT/libPVZ2.dylib" --shim "$OUT/libc++_shared.dylib" \
                   --shim "$OUT/libNimble.dylib"
 
 echo

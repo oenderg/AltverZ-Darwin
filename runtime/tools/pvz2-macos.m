@@ -45,6 +45,7 @@
 #include "husk-tl-ld.h"
 #include "husk-tl-pvz2.h"
 #include "husk-tl-cdn.h"
+#include "pvz2-profile.h"
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
 #include "pvz2-open-url.h"
@@ -345,7 +346,7 @@ static NSString *support_dir(void)
     /* PVZ2DataFolder: a test build's own folder (an update test's relaunched app has
      * no environment to point it elsewhere) */
     NSString *name = NSBundle.mainBundle.infoDictionary[@"PVZ2DataFolder"];
-    return [base stringByAppendingPathComponent:name.length ? name : @"PvZ2 Reflourished"];
+    return [base stringByAppendingPathComponent:name.length ? name : @(PVZ2_PROFILE_DATA_FOLDER)];
 }
 
 static void mkdirs(NSString *path)
@@ -358,8 +359,8 @@ static void mkdirs(NSString *path)
 static NSString *stage_cdn_tar(void)
 {
     if (getenv("TL_PVZ2_MAIN_TAR")) return @(getenv("TL_PVZ2_MAIN_TAR"));
-    NSString *local = [@(g_data) stringByAppendingPathComponent:@"No_Backup/1.4.2.main.tar"];
-    tl_cdn_stage(bundle_dir(@"Game/1.4.2.main.tar").UTF8String, local.UTF8String);
+    NSString *local = [@(g_data) stringByAppendingPathComponent:[NSString stringWithFormat:@"No_Backup/%s", PVZ2_PROFILE_CDN_ARCHIVE]];
+    tl_cdn_stage(bundle_dir([NSString stringWithFormat:@"Game/%s", PVZ2_PROFILE_CDN_ARCHIVE]).UTF8String, local.UTF8String);
     setenv("TL_PVZ2_MAIN_TAR", local.UTF8String, 1);
     return local;
 }
@@ -390,13 +391,13 @@ static NSDictionary *obb_info(void)
                    filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"length > 0"]];
     NSString *sha = plist[@"PVZ2ObbSHA256"];
     NSNumber *size = plist[@"PVZ2ObbSize"];
-    NSString *name = plist[@"PVZ2ObbName"] ?: @"main.675.com.ea.game.pvz2_rfl.obb";
+    NSString *name = plist[@"PVZ2ObbName"] ?: [NSString stringWithFormat:@"main.675.%s.obb", PVZ2_PROFILE_PKG];
     if (![urls isKindOfClass:NSArray.class] || !urls.count || !sha.length || size.longLongValue <= 0) return nil;
     return @{ @"urls": urls, @"sha": sha.lowercaseString, @"size": size, @"name": name };
 }
 static NSString *obb_dir(void)
 {
-    return [@(g_data) stringByAppendingPathComponent:@"sdcard/Android/obb/com.ea.game.pvz2_rfl"];
+    return [@(g_data) stringByAppendingPathComponent:[NSString stringWithFormat:@"sdcard/Android/obb/%s", PVZ2_PROFILE_PKG]];
 }
 static bool obb_in_bundle(void)
 {
@@ -510,7 +511,7 @@ static void adopt_bundled_obb(void)
     _window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 460, 170)
                                           styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
                                             backing:NSBackingStoreBuffered defer:NO];
-    _window.title = @"PvZ2 Reflourished";
+    _window.title = @(PVZ2_PROFILE_APP_NAME);
     _window.releasedWhenClosed = NO;
     _window.delegate = self;
     _title = [NSTextField labelWithString:@"Downloading the game's data"];
@@ -786,7 +787,7 @@ static void *launch_game(void *unused)
         tl_log_line("macos: driver startup %s", ok ? "complete" : "FAILED");
         if (!ok) dispatch_async(dispatch_get_main_queue(), ^{
             NSAlert *alert = [NSAlert new];
-            alert.messageText = @"Reflourished could not start";
+            alert.messageText = [NSString stringWithFormat:@"%@ could not start", @(PVZ2_PROFILE_APP_NAME)];
             alert.informativeText = @"See the runtime log (pvz2.log, in Application Support) for details.";
             [alert runModal];
         });
@@ -1854,7 +1855,7 @@ static CGFloat g_prefs_bottom = 0;    /* where the content ends */
         window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 460, height)
             styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
             backing:NSBackingStoreBuffered defer:NO];
-        window.title = @"Reflourished Preferences";
+        window.title = [NSString stringWithFormat:@"%@ Preferences", @(PVZ2_PROFILE_APP_NAME)];
         window.releasedWhenClosed = NO;
         window.contentView = scroll;
     }
@@ -2654,7 +2655,7 @@ static void start_updater(void)
     self.window = [[NSWindow alloc] initWithContentRect:frame
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = @"PvZ2 Reflourished";
+    self.window.title = @(PVZ2_PROFILE_APP_NAME);
     self.window.delegate = self;
     self.window.releasedWhenClosed = NO;
     /* The smallest window. In the letterbox mode the game keeps its own shape,
@@ -2784,7 +2785,7 @@ static void start_updater(void)
     }];
 
     config = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data,
-        .package_name = "com.ea.game.pvz2_rfl", .width = surfW, .height = surfH,
+        .package_name = PVZ2_PROFILE_PKG, .width = surfW, .height = surfH,
         .metal_layer = (__bridge void *)layer, .angle_egl = g_egl,
         .angle_gles = g_gles, .frame_dir = NULL, .frame_every = 0 };
     /* A test can ask the app to write the frames it presents to a directory --
@@ -3066,7 +3067,7 @@ static void start_updater(void)
     if (asking) return;
     asking = true;
     NSAlert *alert = [NSAlert new];
-    alert.messageText = @"Quit PvZ2 Reflourished?";
+    alert.messageText = [NSString stringWithFormat:@"Quit %@?", @(PVZ2_PROFILE_APP_NAME)];
     alert.informativeText = @"The game saves before it quits.";
     [alert addButtonWithTitle:@"Quit"];
     [alert addButtonWithTitle:@"Cancel"];
@@ -3195,12 +3196,12 @@ int main(int argc, char **argv)
         }
         [appMenu addItemWithTitle:@"Settings…" action:@selector(showPreferences:) keyEquivalent:@","];
         [appMenu addItem:[NSMenuItem separatorItem]];
-        [appMenu addItemWithTitle:@"Hide Reflourished" action:@selector(hide:) keyEquivalent:@"h"];
+        [appMenu addItemWithTitle:[NSString stringWithFormat:@"Hide %@", @(PVZ2_PROFILE_APP_NAME)] action:@selector(hide:) keyEquivalent:@"h"];
         [[appMenu addItemWithTitle:@"Hide Others" action:@selector(hideOtherApplications:) keyEquivalent:@"h"]
             setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagOption];
         [appMenu addItemWithTitle:@"Show All" action:@selector(unhideAllApplications:) keyEquivalent:@""];
         [appMenu addItem:[NSMenuItem separatorItem]];
-        [appMenu addItemWithTitle:@"Quit Reflourished" action:@selector(askToQuit:) keyEquivalent:@"q"];
+        [appMenu addItemWithTitle:[NSString stringWithFormat:@"Quit %@", @(PVZ2_PROFILE_APP_NAME)] action:@selector(askToQuit:) keyEquivalent:@"q"];
         item.submenu = appMenu;
         NSMenuItem *fileItem = [NSMenuItem new]; [menu addItem:fileItem];
         NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
@@ -3211,7 +3212,7 @@ int main(int argc, char **argv)
         [windowMenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
         [windowMenu addItemWithTitle:@"Zoom" action:@selector(performZoom:) keyEquivalent:@""];
         [windowMenu addItem:[NSMenuItem separatorItem]];
-        [windowMenu addItemWithTitle:@"PvZ2 Reflourished" action:@selector(showGameWindow:) keyEquivalent:@"0"];
+        [windowMenu addItemWithTitle:@(PVZ2_PROFILE_APP_NAME) action:@selector(showGameWindow:) keyEquivalent:@"0"];
         [windowMenu addItem:[NSMenuItem separatorItem]];
         [windowMenu addItemWithTitle:@"Bring All to Front" action:@selector(arrangeInFront:) keyEquivalent:@""];
         windowItem.submenu = windowMenu;

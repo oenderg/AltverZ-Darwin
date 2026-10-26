@@ -15,7 +15,9 @@
 set -euo pipefail
 
 R="$(cd "$(dirname "$0")/../.." && pwd)"
-. "$R/../scripts/app-version.sh"
+ROOT="$R/.."
+. "$ROOT/scripts/profile.sh"
+. "$ROOT/scripts/app-version.sh"
 N="$R/src/translation-layer-next"
 T="$R/src/translation-layer"
 ANGLE="$R/build/ios-arm64/sysroot/lib/libANGLE-shared.dylib"
@@ -26,14 +28,14 @@ SDKNAME=iphoneos
 TARGET="arm64-apple-ios$DEPLOY"
 SDK_ARGS=()
 if [ "${IOS_SIM:-0}" = 1 ]; then
-    APP="${IOS_SIM_APP:-$OUT/PvZ2-Reflourished-sim.app}"
+    APP="${IOS_SIM_APP:-$OUT/$PROFILE_ARTIFACT-sim.app}"
     ANGLE="$R/build/iossim-arm64/sysroot/lib/libANGLE-shared.dylib"
     SDKNAME=iphonesimulator
     TARGET="$TARGET-simulator"
     SDK_ARGS=(-isysroot "$(xcrun --sdk "$SDKNAME" --show-sdk-path)")
 fi
 # A specific provisioning profile fixes the bundle ID; override when signing with one.
-BUNDLE_ID="${BUNDLE_ID:-io.github.oenderg.reflourished-darwin}"
+BUNDLE_ID="${BUNDLE_ID:-$PROFILE_BUNDLE_ID}"
 
 [ -f "$ANGLE" ] || { echo "no ANGLE at $ANGLE -- run scripts/build_angle_ios.sh first" >&2; exit 1; }
 
@@ -45,11 +47,12 @@ mkdir -p "$APP/Frameworks"
 SRCS="$R/tools/pvz2-ios.m $(pvz2_runtime_sources | tr '\n' ' ')"
 [ "${AOT_DYLIB_TEST:-0}" = 1 ] && SRCS="$SRCS -DAOT_DYLIB_TEST=1"
 
+profile_generate "$OUT/profile"
 echo "==> compiling for $TARGET (this is the whole translation layer)"
 # -U: the console host asks the app glue which game is loaded; this host has none.
 xcrun --sdk "$SDKNAME" clang -target "$TARGET" ${SDK_ARGS[@]+"${SDK_ARGS[@]}"} -O1 -g -fobjc-arc \
     -Wall -Wno-unused-function -Wno-deprecated-declarations \
-    -I"$T" -I"$N" \
+    -I"$T" -I"$N" -I"$OUT/profile" \
     -Wl,-U,_husk_native_loaded_apk -Wl,-rpath,@executable_path/Frameworks \
     $SRCS \
     -framework UIKit -framework QuartzCore -framework Metal -framework Foundation \
@@ -105,8 +108,8 @@ cat > "$APP/Info.plist" <<PLIST
 <dict>
 	<key>CFBundleExecutable</key><string>PvZ2</string>
 	<key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
-	<key>CFBundleName</key><string>PvZ2 Reflourished</string>
-	<key>CFBundleDisplayName</key><string>PvZ2 Reflourished</string>
+	<key>CFBundleName</key><string>$PROFILE_APP_NAME</string>
+	<key>CFBundleDisplayName</key><string>$PROFILE_APP_NAME</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleVersion</key><string>${APP_BUILD}</string>
 	<key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
@@ -173,10 +176,10 @@ fi
 # invalidates the signature and the bundle has to be sealed exactly once.
 if [ -n "${GAME_APK:-}" ]; then
     [ -f "$GAME_APK" ] || { echo "no game apk at $GAME_APK" >&2; exit 1; }
-    GAME_OBB="${GAME_OBB:-/tmp/1.4.2.main.tar}"
+    GAME_OBB="${GAME_OBB:-}"
     mkdir -p "$APP/Game"
     cp "$GAME_APK" "$APP/Game/pvz2.apk"
-    if [ "$GAME_OBB" = none ]; then
+    if [ "$GAME_OBB" = none ] || [ -z "$GAME_OBB" ]; then
         # the slim app: the host downloads the expansion file on the first launch
         # (OBB_URLS below), so the bundle carries the apk only
         echo "==> bundled the game: $(du -h "$GAME_APK" | cut -f1) apk, no obb (it is downloaded on the first launch)"
@@ -185,7 +188,7 @@ if [ -n "${GAME_APK:-}" ]; then
         mkdir -p "$APP/Game/obb"
         # the host finds the expansion file by its extension, and the game's data is exactly
         # what the expansion file holds, so the name is all that matters here
-        cp "$GAME_OBB" "$APP/Game/obb/${OBB_NAME:-main.675.com.ea.game.pvz2_rfl.obb}"
+        cp "$GAME_OBB" "$APP/Game/obb/${OBB_NAME:-main.675.${PROFILE_PACKAGE}.obb}"
         echo "==> bundled the game: $(du -h "$GAME_APK" | cut -f1) apk, $(du -h "$GAME_OBB" | cut -f1) obb"
     fi
 fi
@@ -201,7 +204,7 @@ if [ -n "${OBB_URLS:-}" ]; then
     done
     $PB -c "Add :PVZ2ObbSHA256 string $OBB_SHA256" "$APP/Info.plist"
     $PB -c "Add :PVZ2ObbSize integer $OBB_SIZE" "$APP/Info.plist"
-    $PB -c "Add :PVZ2ObbName string ${OBB_NAME:-main.675.com.ea.game.pvz2_rfl.obb}" "$APP/Info.plist"
+    $PB -c "Add :PVZ2ObbName string ${OBB_NAME:-main.675.${PROFILE_PACKAGE}.obb}" "$APP/Info.plist"
     echo "==> the expansion file is downloaded from $i link(s) when it is missing"
 fi
 # The mod's CDN content. The game asks for it over the network, and a device that is
@@ -210,7 +213,7 @@ fi
 if [ -n "${GAME_CDN_TAR:-}" ]; then
     [ -f "$GAME_CDN_TAR" ] || { echo "no cdn tar at $GAME_CDN_TAR" >&2; exit 1; }
     mkdir -p "$APP/Game"
-    cp "$GAME_CDN_TAR" "$APP/Game/1.4.2.main.tar"
+    cp "$GAME_CDN_TAR" "$APP/Game/$PROFILE_CDN_ARCHIVE"
     echo "==> bundled the CDN archive: $(du -h "$GAME_CDN_TAR" | cut -f1)"
 fi
 if [ -n "${ICON_PNG:-}" ]; then
@@ -233,7 +236,7 @@ if [ -n "${ICON_PNG:-}" ]; then
         $PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles: string $n" \
             "$APP/Info.plist"
     done
-    echo "==> set Reflourished's icon"
+    echo "==> set the mod's icon"
 fi
 
 
@@ -319,7 +322,7 @@ next, for a stock device (needs a development profile with get-task-allow):
        xcrun devicectl device install app --device <udid> "$APP"
   2. put the game files in once the app is installed (Files app, or Finder):
        Documents/pvz2.apk
-       Documents/obb/main.675.com.ea.game.pvz2_rfl.obb
+       Documents/obb/main.675.${PROFILE_PACKAGE}.obb
   3. attach StikDebug (it must be attached at launch, before the game starts,
      or there is no executable memory and the app logs "JIT prewarm FAILED").
   4. read Documents/pvz2.log from Files for the runtime log.

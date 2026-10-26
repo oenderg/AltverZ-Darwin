@@ -17,6 +17,7 @@ converter/                    ELF .so -> signed Mach-O dylib, with the mod's hoo
 VERSION                       our release version, separate from the game
 data/game-1.4.2.json          the supported game build: hashes, OBB links, CDN archive
 data/hooks-1.4.2.json         the mod's 290 inline hooks, recorded once for that build
+data/profiles/                one mod each: package, app identity, mod library, hooks, CDN (docs/MOD-PROFILES.md)
 runtime/src/translation-layer-next/   the runtime (bionic libc, JNI, EGL/GLES, audio, loader)
   husk-tl-pvz2.c              THE GAME DRIVER: Java contract, lifecycle, GL loop, PvZ2 features
 runtime/tools/pvz2-macos.m    Mac host (window, input, menus, OBB download, updater)
