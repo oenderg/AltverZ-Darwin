@@ -55,7 +55,8 @@ You need the game's APK (the user's own file; never commit it, or the OBB, or an
 
 ## Rules
 
-- **Never commit game files** (APK, OBB, `.so`, extracted assets, saves) or personal data
+- **Never commit game files** (APK, OBB, `.so`, extracted assets, saves) except the single
+  badge font `runtime/tools/fonts/level-ui.ttf`, or personal data
   (paths under your home folder, device IDs, signing identities).
 - **Never change the app IDs** (`io.github.oenderg.altverz-darwin` for AltVerZ,
   `io.github.oenderg.reflourished-darwin` for the comparison profile): players' saves and
