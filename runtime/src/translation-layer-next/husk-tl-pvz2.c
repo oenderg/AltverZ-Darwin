@@ -3147,15 +3147,20 @@ ignored:
  * including its destructor: it keeps the pool stable across callbacks.
  *
  * CollectableSun (vtable 0x2395208), real CollectableCoin (0x23bb9b8),
- * CollectableGem (0x2399d48) and CollectablePlantfood (0x24250b8) all use the
- * same Collectable layout and the same base pointer-down path: 64f804 ->
- * vtable+0x198 (64f998). The latter emits the native collect request;
- * Board::OnCollectableClicked (a9c5cc) chooses the counter and flight, and
- * a9d838 awards its value on arrival. The gem's and plant food's vtable slots
- * from +0x20 to +0x138 are identical to the sun's; their own classes only add
- * their value/type members. Never write sun/currency/plant-food counters or
- * object state. Exact vtables exclude rewards, fake coins and other
- * interactive objects: CollectableCoinFake is 0x23bbc18 and is not accepted. */
+ * CollectableGem (0x2399d48), CollectablePlantfood (0x24250b8) and
+ * CollectableSprout (0x24d5ce0) all use the same Collectable layout and the
+ * same base pointer-down path: 64f804 -> vtable+0x198 (64f998). The latter
+ * emits the native collect request; Board::OnCollectableClicked (a9c5cc)
+ * chooses the counter and flight, and a9d838 awards its value on arrival. The
+ * gem's, plant food's and sprout's vtable slots from +0x20 to +0x1b8 match
+ * the sun's except +0x188 and +0x1a8, which every one of the five classes
+ * overrides with its own; +0x198 is 64f998 in all five. Their own classes
+ * only add their value/type members. The sprout is the lawn drop that "You found a sprout!"
+ * sends to the Zen Garden, and the game counts it like the sun: its
+ * collected-listener at 0x83d35c adds one to a sprout counter at +0xd8.
+ * Never write sun/currency/plant-food counters or object state. Exact vtables
+ * exclude rewards, fake coins and other interactive objects:
+ * CollectableCoinFake is 0x23bbc18 and is not accepted. */
 #define GUEST_COLLECTABLE_ITERATOR 0x11beef0
 #define GUEST_ITERATOR_HAS_NEXT    0x14ea3cc
 #define GUEST_ITERATOR_REFERENCE   0x14ea364
@@ -3167,6 +3172,7 @@ ignored:
 #define GUEST_COIN_VTABLE          0x23bb9b8
 #define GUEST_GEM_VTABLE           0x2399d48
 #define GUEST_PLANTFOOD_VTABLE     0x24250b8
+#define GUEST_SPROUT_VTABLE        0x24d5ce0
 
 static uint64_t guest_collectable_from_ref(uint64_t registry, uint64_t *ref, bool *ok)
 {
@@ -3210,7 +3216,8 @@ static void guest_collect_sun(void)
     uint64_t coin_vtable = (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(GUEST_COIN_VTABLE);
     uint64_t gem_vtable = (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(GUEST_GEM_VTABLE);
     uint64_t plantfood_vtable = (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(GUEST_PLANTFOOD_VTABLE);
-    if (!sun_vtable || !coin_vtable || !gem_vtable || !plantfood_vtable) return;
+    uint64_t sprout_vtable = (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(GUEST_SPROUT_VTABLE);
+    if (!sun_vtable || !coin_vtable || !gem_vtable || !plantfood_vtable || !sprout_vtable) return;
     bool ok = false;
     uint64_t registry = guest_call2(guest_code(GUEST_UI_REGISTRY), 0, 0, &ok);
     if (!ok || !registry) return;
@@ -3219,7 +3226,7 @@ static void guest_collect_sun(void)
     uint64_t iterator[4] __attribute__((aligned(16))) = { 0 };
     guest_call_x8(guest_code(GUEST_COLLECTABLE_ITERATOR), 0, 0x48, iterator, &ok);
     if (!ok) return;
-    int suns = 0, coins = 0, gems = 0, plantfood = 0, value = 0, seen = 0;
+    int suns = 0, coins = 0, gems = 0, plantfood = 0, sprouts = 0, value = 0, seen = 0;
     int32_t sun_before = 0;
     guest_read_bytes(board + 0x184, &sun_before, sizeof sun_before);
     while (ok && seen < 4096) {
@@ -3250,7 +3257,8 @@ static void guest_collect_sun(void)
              * collect callback refuses 40. State 1 is already collecting;
              * flag 10 marks a retired object. Repeated Space cannot award twice. */
             bool accepted = vtable == sun_vtable || vtable == coin_vtable ||
-                            vtable == gem_vtable || vtable == plantfood_vtable;
+                            vtable == gem_vtable || vtable == plantfood_vtable ||
+                            vtable == sprout_vtable;
             if (accepted && !(flags & 0xd0) && state != 1) {
                 int amount = 0;
                 if (vtable == sun_vtable) {
@@ -3263,15 +3271,16 @@ static void guest_collect_sun(void)
                 if (vtable == sun_vtable) { suns++; value += amount; }
                 else if (vtable == coin_vtable) coins++;
                 else if (vtable == gem_vtable) gems++;
-                else plantfood++;
+                else if (vtable == plantfood_vtable) plantfood++;
+                else sprouts++;
             }
         }
         guest_call2(guest_code(GUEST_ITERATOR_NEXT), (uint64_t)(uintptr_t)iterator, 0, &ok);
     }
     bool destroy_ok = false;
     guest_call2(guest_code(GUEST_ITERATOR_DESTROY), (uint64_t)(uintptr_t)iterator, 0, &destroy_ok);
-    tl_log_line("pvz2: the collect shortcut: sun before=%d; requested %d sun(s), value=%d, %d coin(s), %d gem(s), %d plant food, scanned=%d%s",
-                sun_before, suns, value, coins, gems, plantfood, seen,
+    tl_log_line("pvz2: the collect shortcut: sun before=%d; requested %d sun(s), value=%d, %d coin(s), %d gem(s), %d plant food, %d sprout(s), scanned=%d%s",
+                sun_before, suns, value, coins, gems, plantfood, sprouts, seen,
                 ok && destroy_ok && seen < 4096 ? " (the native flight awards on arrival)" : " (stopped: native state unavailable)");
 }
 
