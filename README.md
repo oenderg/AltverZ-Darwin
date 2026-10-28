@@ -40,7 +40,7 @@ and the mod's own content built in.
 * **Touch, mouse and trackpad** work as on Android.
 * **Keyboard** (Mac, and iPad with a keyboard)
   * `1`-`8` take a seed packet, `S` the shovel.
-  * `Space` collects every sun, coin, gem and plant food drop on the lawn.
+  * `Space` collects every sun, coin, gem, plant food and sprout drop on the lawn.
   * `F` toggles fast-forward, `Q` picks up plant food, and `Z`, `X`, `C` select the level's
     power-ups from left to right.
   * `Esc` pauses and resumes. The keys rest while the game is paused.

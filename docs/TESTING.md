@@ -225,7 +225,7 @@ Start a level from the map and use the tap script's `press:` to exercise the key
 names each action and why it was refused:
 
 - `press:` (Space) logs `pvz2: the collect shortcut: ... requested N sun(s) ... N coin(s),
-  N gem(s), N plant food, scanned=N`; no crash with zero drops is a pass.
+  N gem(s), N plant food, N sprout(s), scanned=N`; no crash with zero drops is a pass.
 - `press:f` logs `pvz2: the fast-forward shortcut: pressed the game's own button (state 0 -> 1)`;
   press it again for `1 -> 0`. The button's picture changes with it.
 - `press:q` logs `pvz2: the plant food shortcut: picked up from the game's own counter at (x,y)`
