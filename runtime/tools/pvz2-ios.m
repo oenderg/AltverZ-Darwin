@@ -26,6 +26,7 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <AVFAudio/AVFAudio.h>
+#import <GameController/GameController.h>
 
 #include <pthread.h>
 #include <signal.h>
@@ -47,6 +48,7 @@
 #include "pvz2-open-url.h"
 #include "pvz2-notifications.h"
 #include "pvz2-file-picker.h"
+#include "pvz2-badge-style.h"
 
 static bool open_game_url(const char *url)
 {
@@ -497,6 +499,7 @@ static void packet_take_in_hand(double x, double y)
 @interface PVZ2View : UIView
 - (void)updateViewport:(const char *)reason;
 - (void)updateSafeInsets;
+- (void)badgeKeyPressed;
 @property(nonatomic, strong) CAMetalLayer *metal;
 @end
 
@@ -512,6 +515,22 @@ static void metal_paused(bool paused)
 }
 
 static CGRect _lastViewport;
+enum { IOS_BADGE_COUNT = TL_PVZ2_BADGE_SLOTS + 3 + TL_PVZ2_BADGE_POWERUPS };
+static CALayer *ios_badge_boxes[IOS_BADGE_COUNT];
+static CATextLayer *ios_badge_text[IOS_BADGE_COUNT];
+static CADisplayLink *ios_badge_link;
+static unsigned ios_badge_generation;
+
+static NSString *ios_badge_label(int i)
+{
+    if (i < TL_PVZ2_BADGE_SLOTS) return @(pvz2_default_slot_keys[i]);
+    i -= TL_PVZ2_BADGE_SLOTS;
+    if (i == 0) return @(PVZ2_DEFAULT_SHOVEL_KEY);
+    if (i == 1) return @(PVZ2_DEFAULT_FAST_FORWARD_KEY);
+    if (i == 2) return @(PVZ2_DEFAULT_PLANT_FOOD_KEY);
+    return @(pvz2_default_powerup_keys[i - 3]);
+}
+
 @implementation PVZ2View
 /* The view's own layer is a plain one, and the Metal layer lives inside it.
  * UIKit owns the view's layer -- it sets its frame to the view's bounds on
@@ -539,8 +558,84 @@ static CGRect _lastViewport;
         metal.bounds = CGRectMake(0, 0, g_w / metal.contentsScale, g_h / metal.contentsScale);
         [self.layer addSublayer:metal];
         _metal = metal;
+        metal.masksToBounds = YES;
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(badgeKeyboardDisconnected:)
+                                                     name:GCKeyboardDidDisconnectNotification object:nil];
     }
     return self;
+}
+
+- (void)badgeKeyPressed
+{
+    if (ios_badge_link) return;
+    pvz2_badge_prepare();
+    for (int i = 0; i < IOS_BADGE_COUNT; i++) {
+        if (ios_badge_boxes[i]) continue;
+        CALayer *box = [CALayer layer];
+        box.hidden = YES;
+        box.contentsScale = self.metal.contentsScale;
+        CATextLayer *text = [CATextLayer layer];
+        CATextLayer *back = [CATextLayer layer];
+        back.alignmentMode = kCAAlignmentCenter;
+        back.contentsScale = self.metal.contentsScale;
+        [box addSublayer:back];
+        text.alignmentMode = kCAAlignmentCenter;
+        text.contentsScale = self.metal.contentsScale;
+        [box addSublayer:text];
+        [self.metal addSublayer:box];
+        ios_badge_boxes[i] = box;
+        ios_badge_text[i] = text;
+    }
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (int i = 0; i < IOS_BADGE_COUNT; i++)
+        pvz2_badge_prime(ios_badge_text[i], ios_badge_label(i));
+    [CATransaction commit];
+    ios_badge_generation = 0;
+    tl_pvz2_set_badges_enabled(1);
+    ios_badge_link = [CADisplayLink displayLinkWithTarget:self selector:@selector(badgeTick:)];
+    [ios_badge_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    tl_log_line("ios: key badges enabled by a hardware key press");
+}
+
+- (void)badgeKeyboardDisconnected:(NSNotification *)notification
+{
+    (void)notification;
+    if (!ios_badge_link) return;
+    [ios_badge_link invalidate];
+    ios_badge_link = nil;
+    tl_pvz2_set_badges_enabled(0);
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (int i = 0; i < IOS_BADGE_COUNT; i++) ios_badge_boxes[i].hidden = YES;
+    [CATransaction commit];
+    tl_log_line("ios: key badges disabled on keyboard disconnect");
+}
+
+- (void)badgeTick:(CADisplayLink *)link
+{
+    (void)link;
+    tl_pvz2_badge_snapshot s;
+    tl_pvz2_badges(&s);
+    if (s.generation == ios_badge_generation) return;
+    ios_badge_generation = s.generation;
+    CGFloat sx = s.surface_w ? self.metal.bounds.size.width / s.surface_w : 0;
+    CGFloat sy = s.surface_h ? self.metal.bounds.size.height / s.surface_h : 0;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (int i = 0; i < IOS_BADGE_COUNT; i++) {
+        const int *r = pvz2_badge_rect(i, &s);
+        BOOL show = s.live && sx > 0 && sy > 0 && r && r[2] > 0 && r[3] > 0;
+        ios_badge_boxes[i].hidden = !show;
+        if (show) pvz2_badge_draw(ios_badge_boxes[i], ios_badge_text[i], ios_badge_label(i), i, r, sx, sy);
+    }
+    [CATransaction commit];
+}
+
+- (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event
+{
+    for (UIPress *press in presses) if (press.key) { [self badgeKeyPressed]; break; }
+    [super pressesBegan:presses withEvent:event];
 }
 
 /* The game keeps its aspect ratio: whatever shape the window is, the game is
@@ -719,6 +814,11 @@ static UIInterfaceOrientationMask allowed_orientations(void)
 @implementation PVZ2ViewController
 - (void)loadView { self.view = [[PVZ2View alloc] initWithFrame:[UIScreen mainScreen].bounds]; }
 - (void)viewDidLoad { [super viewDidLoad]; keyboard_install(self.view); }
+- (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event
+{
+    for (UIPress *press in presses) if (press.key) { [(PVZ2View *)self.view badgeKeyPressed]; break; }
+    [super pressesBegan:presses withEvent:event];
+}
 - (void)viewWillTransitionToSize:(CGSize)size
        withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator
 {
@@ -928,6 +1028,7 @@ static int native_seed_pick_mode(void)
 - (void)pvz2_shortcut:(UIKeyCommand *)cmd
 {
     if (!atomic_load(&g_ready)) return;
+    [(PVZ2View *)self.view badgeKeyPressed];
     const char *chars = cmd.input.UTF8String;
     if ([cmd.input isEqualToString:UIKeyInputEscape]) { tl_pvz2_request_escape(); return; }
     /* While the guest is typing a name, the keys are the guest's. The event

@@ -39,6 +39,7 @@ BUNDLE_ID="${BUNDLE_ID:-io.github.oenderg.reflourished-darwin}"
 
 rm -rf "$APP"
 mkdir -p "$APP/Frameworks"
+cp "$R/tools/fonts/level-ui.ttf" "$APP/level-ui.ttf"
 # Same source set as the macOS harness (tools/regress/build.sh), minus the app
 # glue the harness does not use, plus the iOS JIT helper.
 . "$R/tools/regress/pvz2-sources.sh"
@@ -56,7 +57,7 @@ xcrun --sdk "$SDKNAME" clang -target "$TARGET" ${SDK_ARGS[@]+"${SDK_ARGS[@]}"} -
     -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework Security \
     -framework IOSurface -framework ImageIO -framework AudioToolbox -framework AVFAudio -framework VideoToolbox \
     -framework CoreMedia -framework CoreVideo -framework Accelerate -framework WebKit \
-    -framework CoreMotion -framework UserNotifications -framework UniformTypeIdentifiers \
+    -framework CoreMotion -framework GameController -framework UserNotifications -framework UniformTypeIdentifiers \
     -lz -lm -lresolv -lsqlite3 \
     -o "$APP/PvZ2"
 
