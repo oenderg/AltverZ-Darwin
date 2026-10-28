@@ -25,6 +25,7 @@
  * and the log is next to it.
  */
 #import <Cocoa/Cocoa.h>
+#import <QuartzCore/QuartzCore.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Sparkle/Sparkle.h>
 #include <CommonCrypto/CommonDigest.h>
@@ -49,6 +50,7 @@
 #include "pvz2-keys.h"
 #include "pvz2-open-url.h"
 #include "pvz2-file-picker.h"
+#include "pvz2-badge-style.h"
 
 static bool open_game_url(const char *url)
 {
@@ -87,6 +89,9 @@ static char g_apk[1024], g_data[1024], g_egl[1024], g_gles[1024];
 - (void)windowTap:(int)phase at:(NSPoint)p;
 - (void)applyPresentation;
 - (void)followDisplayScale;
+- (void)badgesSettingChanged;
+- (void)badgeTick:(NSTimer *)timer;
+- (void)refreshBadges:(BOOL)force;
 @end
 static PVZ2View *g_view;
 static NSWindow *g_window;
@@ -1195,6 +1200,12 @@ static NSString *const kSlotKey[PVZ2_SLOT_COUNT] = {
     @"seedSlot5", @"seedSlot6", @"seedSlot7", @"seedSlot8"
 };
 static NSString *const kShovelKey = @"shovelKey";
+static NSString *const kFastForwardKey = @"fastForwardKey";
+static NSString *const kPlantFoodKey = @"plantFoodKey";
+static NSString *const kPowerupKey[PVZ2_POWERUP_COUNT] = {
+    @"powerup1Key", @"powerup2Key", @"powerup3Key"
+};
+static NSString *const kShowLevelKeys = @"showLevelKeys";   /* the in-level key badges */
 static NSString *const kPacketX = @"packetX";         /* the first packet's centre */
 static NSString *const kPacketY = @"packetY";
 static NSString *const kPacketStep = @"packetStep";   /* how far apart they are */
@@ -1360,6 +1371,13 @@ static NSString *shown_key(NSString *key, NSString *fallback)
     NSString *v = setting_key(key);
     if (!v) return fallback;
     return v.length ? v : @"None";
+}
+
+/* The in-level key badges are opt-in: nothing changes for a player who has
+ * never asked for them. */
+static bool show_level_keys(void)
+{
+    return [[NSUserDefaults standardUserDefaults] boolForKey:kShowLevelKeys];
 }
 
 /* A point of the surface's pixels, in the game's own 1748x804 space: the
@@ -1922,6 +1940,172 @@ static void prefs_shot(NSWindow *window, const char *path)
 }
 @end
 
+/* ------------------------------------------------------------------ the key badges
+ *
+ * A small dark plaque with the key that works a control, at the control's top
+ * left corner: the eight seed packets, the shovel, fast-forward, plant food
+ * and up to three power-ups. The driver says where the controls are and
+ * whether the keys work; the labels come from the same settings the keyboard
+ * reads, so a remapped key shows its new letter at once.
+ *
+ * The plaques are sublayers of the game's CAMetalLayer, not a sibling view.
+ * That is the whole reason a live window resize cannot make them trail the
+ * picture: the metal layer's position and transform are set by
+ * tl_viewport_present, and every badge is inside that layer, so the window
+ * server moves the game and its badges in the same commit by construction.
+ * Their places are in the surface's pixels, the same coordinates the driver
+ * reports. The size is a fraction of the control, not a window point size.
+ *
+ * They are non-interactive (a plain CALayer has no input path), so clicks
+ * still reach the game.
+ */
+
+#define PVZ2_BADGE_COUNT (TL_PVZ2_BADGE_SLOTS + 1 + 1 + 1 + TL_PVZ2_BADGE_POWERUPS)
+
+typedef struct {
+    CALayer *box;
+    CATextLayer *text;
+    NSString *label;
+} pvz2_badge_layer;
+
+static pvz2_badge_layer g_badges[PVZ2_BADGE_COUNT];
+static bool g_badges_attached;
+static bool g_badges_on;
+static bool g_badges_live;                 /* what the overlay shows now */
+static unsigned int g_badges_generation;   /* the snapshot last drawn */
+static NSTimer *g_badge_timer;             /* runs only while the setting is on */
+static id g_badge_activity;
+
+static NSString *badge_key_text(NSString *key)
+{
+    if (!key.length || [key isEqualToString:@"None"]) return nil;
+    if ([key isEqualToString:@"Left"]) return @"←";
+    if ([key isEqualToString:@"Right"]) return @"→";
+    if ([key isEqualToString:@"Up"]) return @"↑";
+    if ([key isEqualToString:@"Down"]) return @"↓";
+    if ([key isEqualToString:@"Tab"]) return @"⇥";
+    return key;
+}
+
+/* Which key works a badge, by the host's own index. nil means the shortcut is
+ * set to None (or there is no such key), and no badge is drawn. */
+static NSString *badge_label_for(int index)
+{
+    if (index < TL_PVZ2_BADGE_SLOTS)
+        return badge_key_text(shown_key(kSlotKey[index], default_slot_key(index)));
+    index -= TL_PVZ2_BADGE_SLOTS;
+    if (index == 0)
+        return badge_key_text(shown_key(kShovelKey, @(PVZ2_DEFAULT_SHOVEL_KEY)));
+    if (index == 1)
+        return badge_key_text(shown_key(kFastForwardKey, @(PVZ2_DEFAULT_FAST_FORWARD_KEY)));
+    if (index == 2)
+        return badge_key_text(shown_key(kPlantFoodKey, @(PVZ2_DEFAULT_PLANT_FOOD_KEY)));
+    index -= 3;
+    if (index >= 0 && index < PVZ2_POWERUP_COUNT)
+        return badge_key_text(shown_key(kPowerupKey[index], @(pvz2_default_powerup_keys[index])));
+    return nil;
+}
+
+/* The control's rectangle in the snapshot, by badge index. */
+static bool badge_control_rect(int index, const tl_pvz2_badge_snapshot *s, int *r)
+{
+    const int *src = NULL;
+    if (index < TL_PVZ2_BADGE_SLOTS) {
+        if (index >= s->slot_count) return false;
+        src = s->packet[index];
+    } else {
+        index -= TL_PVZ2_BADGE_SLOTS;
+        if (index == 0) src = s->shovel;
+        else if (index == 1) src = s->fast_forward;
+        else if (index == 2) src = s->plant_food;
+        else {
+            index -= 3;
+            if (index < 0 || index >= s->powerup_count) return false;
+            src = s->powerup[index];
+        }
+    }
+    if (!src || src[2] <= 0 || src[3] <= 0) return false;
+    memcpy(r, src, 4 * sizeof *r);
+    return true;
+}
+
+static void badges_attach(CAMetalLayer *metal)
+{
+    if (g_badges_attached) return;
+    g_badges_attached = true;
+    /* The badges follow moving packets and never leave the game's picture. */
+    metal.masksToBounds = YES;
+    for (int i = 0; i < PVZ2_BADGE_COUNT; i++) {
+        CALayer *box = [CALayer layer];
+        box.hidden = YES;
+        box.opacity = 0;
+        box.contentsScale = metal.contentsScale;
+        CATextLayer *text = [CATextLayer layer];
+        CATextLayer *back = [CATextLayer layer];
+        back.alignmentMode = kCAAlignmentCenter;
+        back.contentsScale = metal.contentsScale;
+        [box addSublayer:back];
+        text.alignmentMode = kCAAlignmentCenter;
+        text.contentsScale = metal.contentsScale;
+        text.truncationMode = kCATruncationNone;
+        [box addSublayer:text];
+        [metal addSublayer:box];
+        g_badges[i].box = box;
+        g_badges[i].text = text;
+    }
+}
+
+/* The layer's contents are already the game's pixels; a change of display
+ * scale must re-rasterise the labels at the new density. */
+static void badges_follow_scale(CAMetalLayer *metal)
+{
+    double scale = metal.contentsScale > 0 ? metal.contentsScale : 1.0;
+    for (int i = 0; i < PVZ2_BADGE_COUNT; i++) {
+        g_badges[i].box.contentsScale = scale;
+        g_badges[i].text.contentsScale = scale;
+        g_badges[i].box.sublayers.firstObject.contentsScale = scale;
+    }
+}
+
+static void badges_hide_all(bool fade)
+{
+    [CATransaction begin];
+    [CATransaction setDisableActions:!fade];
+    if (fade) [CATransaction setAnimationDuration:0.12];
+    for (int i = 0; i < PVZ2_BADGE_COUNT; i++) {
+        g_badges[i].box.opacity = 0;
+        if (!fade) g_badges[i].box.hidden = YES;
+    }
+    [CATransaction commit];
+}
+
+/* A short fade, on the presentation only: the model value is final at once,
+ * so a new frame's positions are never held back by the animation. */
+static void badges_fade(float to)
+{
+    for (int i = 0; i < PVZ2_BADGE_COUNT; i++) {
+        CALayer *box = g_badges[i].box;
+        if (box.hidden && to > 0) continue;
+        CABasicAnimation *anim = [CABasicAnimation animationWithKeyPath:@"opacity"];
+        anim.fromValue = @(box.presentationLayer ? box.presentationLayer.opacity : box.opacity);
+        anim.toValue = @(to);
+        anim.duration = 0.12;
+        anim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        box.opacity = to;
+        [CATransaction commit];
+        [box addAnimation:anim forKey:@"badge-fade"];
+    }
+}
+
+static double host_now(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
+}
+
 /* ------------------------------------------------------------------ the window */
 
 @implementation PVZ2View
@@ -1962,6 +2146,129 @@ static void prefs_shot(NSWindow *window, const char *path)
         tl_pvz2_set_surface_size(sw, sh);
     }
     [self updateFitButton];
+    /* The same bounds, so the badges use the fit that was just applied: during
+     * a live drag the game is only scaled, and this is the scale it got. */
+    [self refreshBadges:YES];
+}
+
+/* The setting, the labels and the driver's switch, together. Called at start
+ * and whenever the app's defaults change. */
+- (void)badgesSettingChanged
+{
+    bool on = show_level_keys();
+    tl_pvz2_set_badges_enabled(on ? 1 : 0);
+    static int logged = -1;
+    if ((int)on != logged) {
+        logged = on;
+        tl_log_line("macos: the in-level key badges are %s", on ? "on (the setting)" : "off (the setting)");
+    }
+    g_badges_on = on;
+    /* The labels are settings too: a remapped key must show at once. */
+    g_badges_generation = 0;
+    if (!on) {
+        g_badges_live = false;
+        [g_badge_timer invalidate];
+        g_badge_timer = nil;
+        if (g_badge_activity) {
+            [NSProcessInfo.processInfo endActivity:g_badge_activity];
+            g_badge_activity = nil;
+        }
+        badges_hide_all(false);
+        return;
+    }
+    if (!g_badge_timer) {
+        pvz2_badge_prepare();
+        /* A background test explicitly asks to keep running; App Nap would
+         * otherwise coalesce its timer even while its game keeps drawing. */
+        if (background_launch())
+            g_badge_activity = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityLatencyCritical
+                                                                             reason:@"Keep game labels in step"];
+        /* The timer only reads the driver's snapshot; it is stopped when the
+         * setting is off, so an off run has no per-frame work at all. */
+        g_badge_timer = [NSTimer timerWithTimeInterval:1.0 / 120.0 repeats:YES
+                                                  block:^(NSTimer *timer) {
+            [g_view badgeTick:timer];
+        }];
+        g_badge_timer.tolerance = 0;
+        [[NSRunLoop mainRunLoop] addTimer:g_badge_timer forMode:NSRunLoopCommonModes];
+    }
+    /* Prepare labels while the board is hidden, not on its first live frame. */
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (int i = 0; i < PVZ2_BADGE_COUNT; i++)
+        pvz2_badge_prime(g_badges[i].text, badge_label_for(i));
+    [CATransaction commit];
+    [self refreshBadges:YES];
+}
+
+- (void)badgeTick:(NSTimer *)timer
+{
+    (void)timer;
+    if (!g_badges_on) return;
+    [self refreshBadges:NO];
+}
+
+/* Draw the snapshot the driver published. The geometry is in the surface's
+ * pixels and the badges live inside the metal layer, whose bounds are those
+ * pixels divided by its contents scale: a resize moves both together. */
+- (void)refreshBadges:(BOOL)force
+{
+    if (!g_badges_on || !g_badges_attached || !self.metal) return;
+    double started = host_now();
+    tl_pvz2_badge_snapshot s;
+    tl_pvz2_badges(&s);
+    if (!force && s.generation == g_badges_generation) return;
+    g_badges_generation = s.generation;
+
+    bool live = s.live != 0;
+    bool shown_now = live && !g_badges_live;
+    bool hidden_now = !live && g_badges_live;
+    g_badges_live = live;
+
+    if (!live) {
+        if (hidden_now) {
+            tl_log_line("macos: the key badges are hidden (the driver changed %.1f ms ago)",
+                        (host_now() - s.live_at) * 1000.0);
+            badges_fade(0.0f);
+        }
+        return;
+    }
+
+    CAMetalLayer *metal = self.metal;
+    CGSize bounds = metal.bounds.size;
+    if (s.surface_w <= 0 || s.surface_h <= 0 || bounds.width <= 0 || bounds.height <= 0)
+        return;
+    double sx = bounds.width / (double)s.surface_w;
+    double sy = bounds.height / (double)s.surface_h;
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (int i = 0; i < PVZ2_BADGE_COUNT; i++) {
+        NSString *label = badge_label_for(i);
+        int r[4];
+        bool has = badge_control_rect(i, &s, r);
+        CALayer *box = g_badges[i].box;
+        if (!label || !has) {
+            box.hidden = YES;
+            box.opacity = 0;
+            continue;
+        }
+        pvz2_badge_draw(box, g_badges[i].text, label, i, r, sx, sy);
+        if (i == 0 && (shown_now || force))
+            tl_log_line("macos: badge size %.1f for control %.1f, surface %dx%d, window %.0fx%.0f",
+                        r[3] * sy * 0.46, r[3] * sy, s.surface_w, s.surface_h,
+                        self.bounds.size.width, self.bounds.size.height);
+        box.hidden = NO;
+        box.opacity = 1;
+    }
+    [CATransaction commit];
+
+    if (shown_now) {
+        tl_log_line("macos: key badge layout took %.1f ms", (host_now() - started) * 1000.0);
+        tl_log_line("macos: the key badges are shown (the driver changed %.1f ms ago)",
+                    (host_now() - s.live_at) * 1000.0);
+        badges_fade(1.0f);
+    }
 }
 
 - (void)viewDidEndLiveResize
@@ -1980,6 +2287,7 @@ static void prefs_shot(NSWindow *window, const char *path)
     if (g_starting || !self.window || fabs(s - self.metal.contentsScale) < 0.01) return;
     tl_log_line("macos: the game draws at %.0fx now (was %.0fx)", s, self.metal.contentsScale);
     self.metal.contentsScale = s;
+    badges_follow_scale(self.metal);
     [self applyPresentation];
 }
 
@@ -2598,6 +2906,7 @@ static void start_updater(void)
                                                       usingBlock:^(NSNotification *note) {
             (void)note;
             [g_view followDisplayScale];
+            [g_view badgesSettingChanged];
             /* the settings window's "Check for updates automatically" */
             id checks = [[NSUserDefaults standardUserDefaults] objectForKey:@"SUEnableAutomaticChecks"];
             if (g_updater && checks && [checks boolValue] != g_updater.updater.automaticallyChecksForUpdates)
@@ -2715,6 +3024,12 @@ static void start_updater(void)
     view.layer.backgroundColor = NSColor.blackColor.CGColor;
     [view.layer addSublayer:layer];
     view.metal = layer;
+    /* The badges are sublayers of the game's layer: the window server moves
+     * them with the picture in one commit, so a live resize cannot make them
+     * trail it. The timer only reads the driver's snapshot; when the setting is
+     * off it returns at once. */
+    badges_attach(layer);
+    [view badgesSettingChanged];
     view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     /* The surface: the window's own pixels, in the shape the window has now --
      * the game lays itself out for it. */

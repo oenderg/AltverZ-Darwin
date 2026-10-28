@@ -76,6 +76,7 @@ GLES="${ANGLE_GLES:-$CEF/libGLESv2.dylib}"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources" "$APP/Contents/Game"
+cp "$R/tools/fonts/level-ui.ttf" "$APP/Contents/Resources/level-ui.ttf"
 
 echo "==> compiling the host and the translation layer"
 # The same source set as the off-screen harness (tools/regress/build.sh), with the Mac

@@ -36,6 +36,8 @@ private enum Key {
     static let closeAction = "closeAction"
     static let confirmQuit = "confirmQuit"
     static let renderSharp = "renderSharp"
+    /// The in-level key badges, off by default.
+    static let showLevelKeys = "showLevelKeys"
     /// Sparkle's own key; the host hands a change to the updater
     static let automaticChecks = "SUEnableAutomaticChecks"
 }
@@ -367,6 +369,8 @@ private struct GeneralPane: View {
 // MARK: - Keyboard
 
 private struct KeyboardPane: View {
+    @AppStorage(Key.showLevelKeys) private var showLevelKeys = false
+
     var body: some View {
         Pane {
             Section {
@@ -379,12 +383,18 @@ private struct KeyboardPane: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                ResettableRow(title: "Show keys in levels", isDefault: !showLevelKeys,
+                              reset: { showLevelKeys = false }) {
+                    Toggle("", isOn: $showLevelKeys)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
                 KeyRow(label: "Fast-forward", key: Key.fastForward, fallback: Key.defaultFastForward)
                 KeyRow(label: "Plant food", key: Key.plantFood, fallback: Key.defaultPlantFood)
             } header: {
                 Text("Playing")
             } footer: {
-                Text("Fast-forward presses the game's own button. Plant food is picked up from the counter.")
+                Text("Fast-forward presses the game's own button. Plant food is picked up from the counter. “Show keys in levels” writes the key that works each control on its corner, in the game's own font (seed packets, shovel, fast-forward, plant food and the level's power-ups); it is off by default.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
