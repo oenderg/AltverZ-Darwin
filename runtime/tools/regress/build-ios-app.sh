@@ -139,6 +139,12 @@ cat > "$APP/Info.plist" <<PLIST
 	</array>
 	<key>UIStatusBarHidden</key><true/>
 	<key>UIViewControllerBasedStatusBarAppearance</key><false/>
+	<!-- An iPhone caps every app at 60 Hz unless this is set, whatever the
+	     display can do; on a ProMotion iPhone the game would then present at 60
+	     while its own "Target 60 FPS" setting asks the host for the display's
+	     maximum. iPad and Mac have no such cap, so the key changes nothing
+	     there. -->
+	<key>CADisableMinimumFrameDurationOnPhone</key><true/>
 	<!-- No storyboard: an empty UILaunchScreen opts into native full-screen (and
 	     landscape) instead of compatibility letterboxing. -->
 	<key>UILaunchScreen</key><dict/>
