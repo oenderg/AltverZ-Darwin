@@ -63,6 +63,47 @@ through a guard that turns a fault into a log line instead of a crash.
   and no modal is up. Never write the game's sun, currency or object state directly: call the game's
   own functions and let it do its bookkeeping.
 
+## In-level key badges
+
+The Mac host can draw the current key on each control a shortcut works: seed packets 1-8, the
+shovel, fast-forward, plant food and the level's power-ups. It is off by default (Settings,
+Keyboard, "Show keys in levels"), and with it off the driver's frame loop does one atomic load and
+returns.
+
+- **The snapshot.** `tl_pvz2_badges()` (in `husk-tl-pvz2.h`) publishes `live`, the surface size,
+  the eight packet rectangles, shovel, fast-forward, plant food, up to three power-ups and a
+  `conveyor` flag. Rectangles are in the surface's pixels, the same space the host uses for
+  touches. `generation` moves only when something changed, so the host does no work on an
+  unchanged frame; `live_at` is the driver's clock at the last `live` change, for the host's
+  latency line.
+- **Live means the keys work.** `live` is `guest_live_board_probe`: the host is not paused or in
+  the background, the board is in state 5, the game's own pause predicate is false and the widget
+  manager's modal (`manager + 0xe0`) is null. The seed chooser and cutscenes are board state 3, a
+  popup is a modal, and leaving the level drops the board: all of them hide the badges.
+- **Per-slot rectangles.** The cards are resolved through the seed bank's own getter and managed
+  references (`0xaa1be8`, `0x12d2374`, then the UI registry), the same path the seed keys use;
+  each card is a `UIWidget`, so its rectangle is `0x5c1788`. A card that is not there yet answers
+  with a null reference, and the resolver faults if it is called: the resolver is guarded per
+  call and runs outside the snapshot's batch, two cards a frame. `ConveyorSeedBank` answers the
+  same getter, so conveyor packets are followed while they move.
+- **The other controls** are found by name once per level and retried four times a second:
+  `UIShovel`, `UIFastForwardButton`, `UIPlantfood`, `UIPowerupHolder` and `UIPowerup`. The
+  power-up count comes from the holder's width against one button's (1.5, 2.9 or 4.2 buttons).
+  A rectangle with no size or no part on the surface is not published.
+- **Cost.** The probe and all rectangle reads share one guest-call guard per frame: the per-call
+  guard is four `sigaction` calls, and a dozen of those cost more than the reads. The board's
+  fields are read directly inside that guard, the design height is cached, and the HUD widget
+  pointers are cached per level. `TL_PVZ2_BADGE_STATS=1` logs the average and worst frame.
+- **The drawing.** Both hosts put the badge `CALayer`s inside the game's `CAMetalLayer`, positioned in
+  its surface pixels. `tl_viewport_present` moves and scales that layer, so the window server
+  moves the picture and its badges in one commit: a live resize cannot separate them, and a badge
+  is clipped by the game's rectangle. The labels come from the same `UserDefaults` keys the
+  keyboard reads, so a remapped key changes at once. The font size is 46% of the control height;
+  the outlined yellow text uses the bundled level UI font, registered in-process with CoreText.
+- **The iPad.** `guest_surface_scale` falls back to the root `UIScreen` widget's height when the
+  app object cannot be read (iOS has no `guest_read`). The first hardware key press in a launch
+  enables snapshot work and the overlay; a keyboard disconnect disables both until another press.
+
 ## Generated IDs
 
 `Util_GetUUIDString` returns a fresh lowercase version-4 UUID per call, like

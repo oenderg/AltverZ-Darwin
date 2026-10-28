@@ -47,7 +47,8 @@ You need the game's APK (the user's own file; never commit it, or the OBB, or an
 
 ## Rules
 
-- **Never commit game files** (APK, OBB, `.so`, extracted assets, saves) or personal data
+- **Never commit game files** (APK, OBB, `.so`, extracted assets, saves) except the single
+  badge font `runtime/tools/fonts/level-ui.ttf`, or personal data
   (paths under your home folder, device IDs, signing identities).
 - **Never change the app IDs** (`io.github.oenderg.reflourished-darwin` on iOS and Mac): players' saves and settings hang off them.
 - **Never change `sparkle/public-key`**: installed Mac apps accept only updates signed with its private half ([docs/RELEASING.md](docs/RELEASING.md)).

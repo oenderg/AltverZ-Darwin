@@ -47,7 +47,9 @@ and the mod's own content built in.
   * `F` toggles fast-forward, `Q` picks up plant food, and `Z`, `X`, `C` select the level's
     power-ups from left to right.
   * `Esc` pauses and resumes. The keys rest while the game is paused.
-  * On the Mac, Settings (`Cmd-,`) lets you pick any keys.
+  * On the Mac, Settings (`Cmd-,`) lets you pick any keys; Keyboard → **Show keys in levels**
+    (off by default) writes each key at its control's corner in the game's font.
+  * On iPad, keys appear after a hardware key press and disappear when the keyboard disconnects.
 * **Mac window**
   * Keeps the game's shape at any size, or, in Settings, adapts to any shape from 4:3 to 21:9.
   * Drawn at the sharpness of the display it is on; Settings can draw it sharper on a
