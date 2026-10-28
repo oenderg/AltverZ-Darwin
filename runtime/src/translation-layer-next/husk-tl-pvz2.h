@@ -197,6 +197,51 @@ void tl_pvz2_request_low_memory(void);
  * host then uses its measured numbers. */
 bool tl_pvz2_ui_geometry(int *tray, int *shovel);
 
+/* ---- the in-level key badges -------------------------------------------
+ *
+ * The host draws a badge on each control a shortcut works: the eight seed
+ * packets, the shovel, fast-forward, plant food and up to three power-ups.
+ * The driver publishes where they are and whether the keys work; the host
+ * supplies the labels, because it owns the key settings.
+ *
+ * Everything here is in the surface's pixels (the same space the host gives
+ * the driver), so the host only has to apply the presentation it already uses
+ * for touches. `live` is the same predicate the shortcuts use: an unpaused
+ * board in state 5 with no modal. Rectangles of controls that are not there
+ * (or not on the surface) are zero, and a slot past `slot_count` is zero.
+ *
+ * The snapshot is published on change, not on a timer: `generation` changes
+ * when `live`, the surface size or any rectangle does. The host compares it
+ * and does no work while it is unchanged. `live_at` is when `live` last
+ * changed, for the host's latency log.
+ *
+ * With the feature off the driver does no guest work at all: the frame loop
+ * makes one atomic load and returns. */
+#define TL_PVZ2_BADGE_SLOTS     8
+#define TL_PVZ2_BADGE_POWERUPS  3
+
+typedef struct {
+    unsigned int generation;
+    int live;
+    int conveyor;                    /* the level's bank is a conveyor */
+    int surface_w, surface_h;        /* the space the rectangles are in */
+    int slot_count;                  /* packets the bank has, at most 8 */
+    int packet[TL_PVZ2_BADGE_SLOTS][4];
+    int shovel[4];
+    int fast_forward[4];
+    int plant_food[4];
+    int powerup_count;
+    int powerup[TL_PVZ2_BADGE_POWERUPS][4];
+    double live_at;                  /* CLOCK_MONOTONIC, driver-side */
+} tl_pvz2_badge_snapshot;
+
+/* The switch. Off by default; the host sets it from its own setting. Turning
+ * it off publishes one empty snapshot so a visible overlay clears at once. */
+void tl_pvz2_set_badges_enabled(int on);
+
+/* A copy of the last snapshot. Always safe on any thread. */
+void tl_pvz2_badges(tl_pvz2_badge_snapshot *out);
+
 #ifdef __cplusplus
 }
 #endif

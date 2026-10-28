@@ -28,6 +28,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <pthread.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -2725,10 +2726,13 @@ static void lifecycle_foreground_now(void);
  * further down, with the rest of the guest-call helpers). */
 static sigjmp_buf g_guest_jmp;
 static volatile sig_atomic_t g_guest_fault;
+static volatile uintptr_t g_guest_fault_addr;
 static void guest_guard_enter(void);
 static void guest_guard_leave(void);
-/* Reading the guest's memory without the risk of a fault (on the Mac through
- * the kernel, on the iPad directly -- the guest's heap is this process's). */
+/* Reading the guest's memory without the risk of a fault: on the Mac through
+ * the kernel. On iOS guest_read is a stub (mach_vm is not available there);
+ * callers that must work on iOS read the process's own memory directly, which
+ * is safe only for addresses the guest has just given us. */
 static bool guest_read(uint64_t addr, void *out, size_t size);
 
 /* The native shovel: the guest's own "the shovel button was pressed".
@@ -2954,6 +2958,27 @@ static uint64_t guest_call2(void *fn, uint64_t a0, uint64_t a1, bool *ok)
     return 0;
 }
 
+/* Raw versions for a batch that has entered the guard once. Installing and
+ * restoring two signal handlers is four sigaction system calls, and the badge
+ * snapshot makes a dozen guest calls a frame: the batch is what keeps that
+ * under a tenth of a millisecond. A fault longjmps to the batch's own
+ * sigsetjmp. Never call these without guest_guard_enter(). */
+static uint64_t guest_call2_raw(void *fn, uint64_t a0, uint64_t a1, bool *ok)
+{
+    register void *x16 __asm__("x16") = fn;
+    register uint64_t x0 __asm__("x0") = a0;
+    register uint64_t x1 __asm__("x1") = a1;
+    *ok = false;
+    if (!fn) return 0;
+    __asm__ volatile("blr %1"
+                     : "+r"(x0), "+r"(x16), "+r"(x1)
+                     :
+                     : "x2","x3","x4","x5","x6","x7","x8","x9","x10","x11","x12",
+                       "x13","x14","x15","x17","memory","cc");
+    *ok = true;
+    return x0;
+}
+
 /* The game's own pointer-event struct: 0x34 bytes, and the int at +0x30 is
  * the type (0 is a pointer down -- the same object the shovel's call takes). */
 typedef struct { uint8_t b[0x34]; } guest_pointer_event;
@@ -2971,6 +2996,16 @@ static bool guest_read_bytes(uint64_t addr, void *out, size_t size)
 #endif
 }
 
+/* The same, for a batch that has entered the guard: the guest's memory is this
+ * process's memory, and a bad address is caught by the batch's handler instead
+ * of a mach system call per field. */
+static bool guest_read_bytes_raw(uint64_t addr, void *out, size_t size)
+{
+    if (!addr || !out || !size) return false;
+    memcpy(out, (const void *)(uintptr_t)addr, size);
+    return true;
+}
+
 /* Keyboard presses bypass the widget manager's pointer dispatch. Apply its
  * modal ownership and the board's pause/state checks before calling a HUD
  * handler. Reflourished 1.4.2: ab6858 names state 5 PlayingLevel; ab21dc and
@@ -2979,45 +3014,85 @@ static bool guest_read_bytes(uint64_t addr, void *out, size_t size)
  * +c8 is keyboard focus, NOT the modal. All reads/calls run on the game thread.
  * Unknown state fails closed, including a board that is being torn down. */
 #define GUEST_ANY_PAUSED 0x7dec64
-static uint64_t guest_live_shortcut_board(const char *what)
+
+/* The predicate itself, without the log: the badge snapshot asks every frame,
+ * so it gets the answer and the reason only (the caller logs a transition). */
+static uint64_t guest_live_board_probe_raw(bool raw, const char **reason, int *state_out,
+                                           uint64_t *modal_out, uint64_t *board_out)
 {
-    const char *reason = NULL;
+    const char *why = NULL;
     bool ok = false;
     uint64_t board = 0, pause_registry = 0, manager = 0, modal = 0;
     int32_t state = -1;
+    if (state_out) *state_out = state;
+    if (modal_out) *modal_out = 0;
+    if (board_out) *board_out = 0;
     if (atomic_load(&P.paused) || atomic_load(&P.in_background)) {
-        reason = "the host is paused or in the background";
+        why = "the host is paused or in the background";
         goto ignored;
     }
-    board = guest_call2(guest_code(GUEST_BOARD_GETTER), 0, 0, &ok);
+    board = raw ? guest_call2_raw(guest_code(GUEST_BOARD_GETTER), 0, 0, &ok)
+                : guest_call2(guest_code(GUEST_BOARD_GETTER), 0, 0, &ok);
     if (!ok || !board) {
-        reason = "there is no board";
+        why = "there is no board";
         goto ignored;
     }
-    if (!guest_read_bytes(board + 0xe0, &state, sizeof state) ||
-        !guest_read_bytes(board + 0x6c8, &pause_registry, sizeof pause_registry) ||
-        !guest_read_bytes(board + 0x20, &manager, sizeof manager) ||
-        !manager || !pause_registry ||
-        !guest_read_bytes(manager + 0xe0, &modal, sizeof modal)) {
-        reason = "the board's input state is unavailable";
+    if (board_out) *board_out = board;
+    bool reads = raw
+        ? (guest_read_bytes_raw(board + 0xe0, &state, sizeof state) &&
+           guest_read_bytes_raw(board + 0x6c8, &pause_registry, sizeof pause_registry) &&
+           guest_read_bytes_raw(board + 0x20, &manager, sizeof manager) &&
+           manager && pause_registry &&
+           guest_read_bytes_raw(manager + 0xe0, &modal, sizeof modal))
+        : (guest_read_bytes(board + 0xe0, &state, sizeof state) &&
+           guest_read_bytes(board + 0x6c8, &pause_registry, sizeof pause_registry) &&
+           guest_read_bytes(board + 0x20, &manager, sizeof manager) &&
+           manager && pause_registry &&
+           guest_read_bytes(manager + 0xe0, &modal, sizeof modal));
+    if (!reads) {
+        why = "the board's input state is unavailable";
         goto ignored;
     }
     if (state != 5) {
-        reason = "the board is not PlayingLevel";
+        why = "the board is not PlayingLevel";
         goto ignored;
     }
-    uint64_t paused = guest_call2(guest_code(GUEST_ANY_PAUSED), pause_registry, 0, &ok);
+    uint64_t paused = raw ? guest_call2_raw(guest_code(GUEST_ANY_PAUSED), pause_registry, 0, &ok)
+                          : guest_call2(guest_code(GUEST_ANY_PAUSED), pause_registry, 0, &ok);
     if (!ok || paused) {
-        reason = ok ? "the game is paused" : "the pause predicate is unavailable";
+        why = ok ? "the game is paused" : "the pause predicate is unavailable";
         goto ignored;
     }
     if (modal) {
-        reason = "a modal widget covers the board";
+        why = "a modal widget covers the board";
         goto ignored;
     }
-    tl_log_line("pvz2: %s: live board (state=%d, paused=0, modal=nil)", what, state);
+    if (state_out) *state_out = state;
+    if (modal_out) *modal_out = modal;
+    if (reason) *reason = NULL;
     return board;
 ignored:
+    if (state_out) *state_out = state;
+    if (modal_out) *modal_out = modal;
+    if (reason) *reason = why;
+    return 0;
+}
+
+static uint64_t guest_live_board_probe(const char **reason, int *state_out, uint64_t *modal_out)
+{
+    return guest_live_board_probe_raw(false, reason, state_out, modal_out, NULL);
+}
+
+static uint64_t guest_live_shortcut_board(const char *what)
+{
+    int32_t state = -1;
+    uint64_t modal = 0;
+    const char *reason = NULL;
+    uint64_t board = guest_live_board_probe(&reason, &state, &modal);
+    if (board) {
+        tl_log_line("pvz2: %s: live board (state=%d, paused=0, modal=nil)", what, state);
+        return board;
+    }
     tl_log_line("pvz2: %s: ignored: %s (state=%d, modal=%p)",
                 what, reason, state, (void *)modal);
     return 0;
@@ -3296,18 +3371,19 @@ static void guest_powerup(int index)
                 index + 1, count, x, y);
 }
 
-/* The card of a slot, the game's own way. */
-static void *guest_seed_packet(int slot, bool *ok, uint64_t *board_out)
+/* The card of a slot, the game's own way. Quiet when the badge snapshot is
+ * asking: it runs every frame and a level start resolves eight cards. */
+static void *guest_seed_packet_log(int slot, bool *ok, uint64_t *board_out, bool quiet)
 {
     *ok = false;
     if (board_out) *board_out = 0;
     /* Where does the chain break? The getter reads a GOT slot, then the app
      * pointer that slot holds, and then the board at app+0x9a8. The host can
      * read the same three things, so the log can say which one is empty. */
-    {
+    if (!quiet) {
         uint64_t got_slot = 0, app_ptr = 0, board_ptr = 0;
-        void *slot = tl_aot_guest_data_ptr_any(0x2511918);
-        if (slot && guest_read((uint64_t)(uintptr_t)slot, &got_slot, sizeof got_slot)) {
+        void *slot_addr = tl_aot_guest_data_ptr_any(0x2511918);
+        if (slot_addr && guest_read((uint64_t)(uintptr_t)slot_addr, &got_slot, sizeof got_slot)) {
             app_ptr = got_slot;
             if (app_ptr) {
                 uint64_t at_9a8 = 0;
@@ -3320,18 +3396,20 @@ static void *guest_seed_packet(int slot, bool *ok, uint64_t *board_out)
     bool call_ok = false;
     void *board_fn = guest_code(GUEST_BOARD_GETTER);
     uint64_t board = guest_call2(board_fn, 0, 0, &call_ok);
-    tl_log_line("pvz2: the seed pick: the board getter is at %p, the board is %p (%s)",
-                board_fn, (void *)board, call_ok ? "the call went through" : "the call faulted");
+    if (!quiet)
+        tl_log_line("pvz2: the seed pick: the board getter is at %p, the board is %p (%s)",
+                    board_fn, (void *)board, call_ok ? "the call went through" : "the call faulted");
     if (!call_ok || !board) {
-        tl_log_line("pvz2: the seed pick: there is no board");
+        if (!quiet) tl_log_line("pvz2: the seed pick: there is no board");
         return NULL;
     }
     void *bank_fn = guest_code(GUEST_SEED_BANK);
     if (board_out) *board_out = board;
     uint64_t bank = guest_call2(bank_fn, board, 0, &call_ok);
-    tl_log_line("pvz2: the seed pick: the seed bank is at %p (the getter at %p)", (void *)bank, bank_fn);
+    if (!quiet)
+        tl_log_line("pvz2: the seed pick: the seed bank is at %p (the getter at %p)", (void *)bank, bank_fn);
     if (!call_ok || !bank) {
-        tl_log_line("pvz2: the seed pick: there is no seed bank");
+        if (!quiet) tl_log_line("pvz2: the seed pick: there is no seed bank");
         return NULL;
     }
     /* How many cards are in the bank: a signed byte at +0x1f8. The index is
@@ -3339,13 +3417,14 @@ static void *guest_seed_packet(int slot, bool *ok, uint64_t *board_out)
      * own, and an index past the end reads whatever is there. */
     int8_t count = 0;
     if (!guest_read_bytes(bank + 0x1f8, &count, sizeof count)) {
-        tl_log_line("pvz2: the seed pick: the bank's count cannot be read");
+        if (!quiet) tl_log_line("pvz2: the seed pick: the bank's count cannot be read");
         return NULL;
     }
-    tl_log_line("pvz2: the seed pick: the bank has %d card(s)", (int)count);
+    if (!quiet) tl_log_line("pvz2: the seed pick: the bank has %d card(s)", (int)count);
     if (slot < 0 || slot >= (int)count) {
-        tl_log_line("pvz2: the seed pick: there is no card in slot %d (the bank has %d)",
-                    slot, (int)count);
+        if (!quiet)
+            tl_log_line("pvz2: the seed pick: there is no card in slot %d (the bank has %d)",
+                        slot, (int)count);
         return NULL;
     }
     /* The card's managed reference, and the object behind it. */
@@ -3355,9 +3434,15 @@ static void *guest_seed_packet(int slot, bool *ok, uint64_t *board_out)
                                (uint64_t)(uintptr_t)&index, (void *)&ref, &call_ok);
     if (!call_ok) return NULL;
     (void)r;
+    /* A slot the bank has not filled yet answers with a null reference; the
+     * game's resolver dereferences it, so it is not called until there is one. */
+    if (!ref) {
+        if (!quiet) tl_log_line("pvz2: the seed pick: the card of slot %d is not there", slot);
+        return NULL;
+    }
     uint64_t registry = guest_call2(guest_code(GUEST_UI_REGISTRY), 0, 0, &call_ok);
     if (!call_ok || !registry) {
-        tl_log_line("pvz2: the seed pick: there is no UI registry");
+        if (!quiet) tl_log_line("pvz2: the seed pick: there is no UI registry");
         return NULL;
     }
     uint64_t rr = guest_call_x8(guest_code(GUEST_UI_REF_RESOLVE), registry,
@@ -3368,16 +3453,17 @@ static void *guest_seed_packet(int slot, bool *ok, uint64_t *board_out)
                                    (uint64_t)(uintptr_t)&resolved, 0, &call_ok);
     if (!call_ok) return NULL;
     if (is_null) {
-        tl_log_line("pvz2: the seed pick: the card of slot %d is not there", slot);
+        if (!quiet) tl_log_line("pvz2: the seed pick: the card of slot %d is not there", slot);
         return NULL;
     }
     uint64_t type = guest_call2(guest_code(GUEST_UI_REF_TYPE),
                                 (uint64_t)(uintptr_t)&resolved, 0, &call_ok);
     if (!call_ok) return NULL;
-    tl_log_line("pvz2: the seed pick: the reference resolved (type %llu)", (unsigned long long)type);
+    if (!quiet)
+        tl_log_line("pvz2: the seed pick: the reference resolved (type %llu)", (unsigned long long)type);
     uint64_t pool = guest_call_x8(guest_code(GUEST_UI_POOL), registry, type, NULL, &call_ok);
     if (!call_ok || !pool) {
-        tl_log_line("pvz2: the seed pick: there is no UI pool for the card");
+        if (!quiet) tl_log_line("pvz2: the seed pick: there is no UI pool for the card");
         return NULL;
     }
     uint64_t packet = guest_call_x8(guest_code(GUEST_UI_POOL_ITEM), pool,
@@ -3386,11 +3472,16 @@ static void *guest_seed_packet(int slot, bool *ok, uint64_t *board_out)
     guest_call2(guest_code(GUEST_UI_REF_RELEASE), (uint64_t)(uintptr_t)&resolved, 0, &call_ok);
     guest_call2(guest_code(GUEST_UI_REF_RELEASE), (uint64_t)(uintptr_t)&ref, 0, &call_ok);
     if (!call_ok || !packet) {
-        tl_log_line("pvz2: the seed pick: the card of slot %d cannot be found", slot);
+        if (!quiet) tl_log_line("pvz2: the seed pick: the card of slot %d cannot be found", slot);
         return NULL;
     }
     *ok = true;
     return (void *)(uintptr_t)packet;
+}
+
+static void *guest_seed_packet(int slot, bool *ok, uint64_t *board_out)
+{
+    return guest_seed_packet_log(slot, ok, board_out, false);
 }
 
 /* The pick itself, on the game's own thread. */
@@ -3942,9 +4033,11 @@ static void *guest_code(uint64_t guest_vaddr)
  * around the call, not the host. */
 static struct sigaction g_guest_prev_segv, g_guest_prev_bus;
 
-static void guest_fault_handler(int sig)
+static void guest_fault_handler(int sig, siginfo_t *info, void *context)
 {
+    (void)context;
     g_guest_fault = sig;
+    g_guest_fault_addr = info ? (uintptr_t)info->si_addr : 0;
     siglongjmp(g_guest_jmp, 1);
 }
 
@@ -3952,8 +4045,8 @@ static void guest_guard_enter(void)
 {
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
-    sa.sa_handler = guest_fault_handler;
-    sa.sa_flags = SA_NODEFER | SA_RESETHAND;
+    sa.sa_sigaction = guest_fault_handler;
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER | SA_RESETHAND;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, &g_guest_prev_segv);
     sigaction(SIGBUS, &sa, &g_guest_prev_bus);
@@ -4021,22 +4114,74 @@ static bool guest_anchored_rect(void *widget, int *out)
     return false;
 }
 
+/* The rect query without the per-call guard, for a batch that has one. */
+static bool guest_anchored_rect_raw(void *widget, int *out)
+{
+    void *fn = guest_code(GUEST_ANCHORED_RECT);
+    if (!fn || !widget) return false;
+    register void *x16 __asm__("x16") = fn;
+    register void *x8 __asm__("x8") = out;
+    register void *x0 __asm__("x0") = widget;
+    __asm__ volatile("blr %1"
+                     : "+r"(x0), "+r"(x16)
+                     : "r"(x8)
+                     : "x1","x2","x3","x4","x5","x6","x7","x9","x10","x11","x12",
+                       "x13","x14","x15","x17","memory","cc");
+    return true;
+}
+
 /* The scale from the app's own space to the surface's.
  *
  * The game's design size is the app's logical size (3339x1536 for this game),
  * and the surface is the app's size as the host told it (1748x804): the same
  * shape, so the scale is the surface's height over the design's height. The
- * design height is in the guest's own app object; without it (the iPad, where
- * the app object cannot be found) the measured numbers are used. */
-static double guest_surface_scale(void)
+ * design height is in the guest's own app object. On iOS there is no app
+ * object (guest_read is a stub there), so the root widget gives the same
+ * answer: UIScreen is the saved tree's root and its rect is the design size. */
+static void *g_screen_widget;   /* UIScreen, on iOS where the app object is not readable */
+static uint64_t g_design_app;   /* the app object the cached design height belongs to */
+static float g_design_h;        /* its design height (1536): it does not change */
+
+static double guest_surface_scale_common(bool raw)
 {
     uint64_t app = atomic_load(&g_app_object);
-    if (!app) return 0.0;
-    float design_h = 0.0f;
-    if (!guest_read(app + 0x9c4, &design_h, sizeof design_h)) return 0.0;
-    if (!(design_h > 1.0f && design_h < 100000.0f)) return 0.0;
-    if (P.h <= 0) return 0.0;
-    return (double)P.h / (double)design_h;
+    if (app) {
+        if (app != g_design_app) {
+            float design_h = 0.0f;
+            bool read_ok = raw ? guest_read_bytes_raw(app + 0x9c4, &design_h, sizeof design_h)
+                               : guest_read(app + 0x9c4, &design_h, sizeof design_h);
+            if (read_ok && design_h > 1.0f && design_h < 100000.0f) {
+                g_design_h = design_h;
+                g_design_app = app;
+            } else {
+                g_design_h = 0.0f;
+                g_design_app = 0;
+            }
+        }
+        if (g_design_h > 1.0f && P.h > 0)
+            return (double)P.h / (double)g_design_h;
+    }
+    /* The iPad: the root widget's height is the design height. It is looked up
+     * once; app changes do not rebuild the root. */
+    void *w = g_screen_widget ? g_screen_widget : guest_find_widget("UIScreen");
+    int rect[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
+    bool ok = raw ? guest_anchored_rect_raw(w, rect) : guest_anchored_rect(w, rect);
+    if (!w || !ok || rect[3] <= 0 || P.h <= 0) {
+        g_screen_widget = NULL;
+        return 0.0;
+    }
+    g_screen_widget = w;
+    return (double)P.h / (double)rect[3];
+}
+
+static double guest_surface_scale(void)
+{
+    return guest_surface_scale_common(false);
+}
+
+static double guest_surface_scale_raw(void)
+{
+    return guest_surface_scale_common(true);
 }
 
 /* Ask the guest where the seed tray and the shovel are, and keep the answer.
@@ -4047,7 +4192,7 @@ static void guest_ui_geometry(void)
 {
     int tray[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
     int shovel[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
-    void *tw = guest_find_widget("UI_SeedPackets");
+    void *tw = guest_find_widget("UISeedBank");
     void *sw = guest_find_widget("UIShovel");
     bool got_tray = tw && guest_anchored_rect(tw, tray);
     bool got_shovel = sw && guest_anchored_rect(sw, shovel);
@@ -4106,6 +4251,389 @@ bool tl_pvz2_ui_geometry(int *tray, int *shovel)
     if (shovel) memcpy(shovel, g_shovel, sizeof g_shovel);
     pthread_mutex_unlock(&g_geometry_lock);
     return true;
+}
+
+/* ---- the in-level key badges ---------------------------------------------
+ *
+ * The host draws a badge on every control a shortcut works, so it needs the
+ * control's rectangle in the surface's space and one flag saying whether the
+ * keys work now. The flag is the shortcuts' own predicate
+ * (guest_live_board_probe): an unpaused, unobscured board in state 5.
+ *
+ * The rectangles are the game's own (guest_anchored_rect), scaled by the
+ * design-to-surface scale the shortcuts already use. The cards are the
+ * expensive part to resolve (the bank's managed references), so their widget
+ * pointers are cached for as long as the board and the bank's count stay the
+ * same; only their rectangles are read again. The single HUD widgets are found
+ * by name once per level (a missing one is retried four times a second):
+ * UIFastForwardButton, UIPlantfood, UIShovel and the power-up holder can appear
+ * or go away, but not every frame.
+ *
+ * A widget whose rectangle is zero, absurd or entirely off the surface is not
+ * published: a badge for a control that is not there is worse than no badge.
+ * Conveyor levels use the same bank getter (ConveyorSeedBank is a SeedBank),
+ * so their moving cards are followed when the getter answers; `conveyor` says
+ * which kind it is, for the log and the host's own decision. */
+
+static atomic_int g_badges_enabled;
+static pthread_mutex_t g_badge_lock = PTHREAD_MUTEX_INITIALIZER;
+static tl_pvz2_badge_snapshot g_badge_published;    /* written under g_badge_lock */
+static double g_badge_live_at;              /* the published live_at */
+static const char *g_badge_stage;           /* the last step, for a fault's log */
+
+/* The per-level cache, on the game thread only. */
+static uint64_t g_badge_board;
+static uint64_t g_badge_bank;
+static int g_badge_bank_count = -1;
+static int g_badge_conveyor_checked;
+static int g_badge_conveyor;
+static void *g_badge_packet[TL_PVZ2_BADGE_SLOTS];
+static void *g_badge_widget[5];     /* shovel, fast forward, plant food, holder, first power-up */
+static double g_badge_retry_at;
+static double g_badge_widget_retry_at;
+static int g_badge_need_resolve = 1;
+
+static void badge_cache_reset(uint64_t board)
+{
+    g_badge_board = board;
+    g_badge_bank = 0;
+    g_badge_bank_count = -1;
+    g_badge_conveyor_checked = 0;
+    g_badge_conveyor = 0;
+    g_badge_retry_at = 0;
+    g_badge_widget_retry_at = 0;
+    g_badge_need_resolve = 1;
+    memset(g_badge_packet, 0, sizeof g_badge_packet);
+    memset(g_badge_widget, 0, sizeof g_badge_widget);
+}
+
+/* A rectangle in the app's design space, scaled into the surface: usable only
+ * when it has a size and some of it is on the surface. */
+static bool badge_rect_scale(const int *in, double scale, int surface_w, int surface_h, int *out)
+{
+    if (!in || in[2] <= 0 || in[3] <= 0) return false;
+    if (in[0] < -100000 || in[1] < -100000 || in[0] > 100000 || in[1] > 100000) return false;
+    for (int i = 0; i < 4; i++) out[i] = (int)llround(in[i] * scale);
+    if (out[2] <= 0 || out[3] <= 0) return false;
+    if (out[0] >= surface_w || out[1] >= surface_h ||
+        out[0] + out[2] <= 0 || out[1] + out[3] <= 0) return false;
+    return true;
+}
+
+static bool badge_widget_rect(void *widget, double scale, int surface_w, int surface_h, int *out)
+{
+    int r[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
+    return widget && guest_anchored_rect_raw(widget, r) &&
+           badge_rect_scale(r, scale, surface_w, surface_h, out);
+}
+
+/* Publish a snapshot if it differs from the last one. The generation moves
+ * only on a real change, so the host can skip every unchanged frame. */
+static void badge_publish(tl_pvz2_badge_snapshot *next, const char *reason)
+{
+    tl_pvz2_badge_snapshot before;
+    bool changed = false, live_changed = false;
+    double t = now_s();
+
+    /* The switch may have been turned off while this frame was being read:
+     * the empty snapshot wins, and the next frame returns at the top. */
+    if (!atomic_load(&g_badges_enabled)) {
+        memset(next, 0, sizeof *next);
+        reason = "the setting is off";
+    }
+
+    pthread_mutex_lock(&g_badge_lock);
+    before = g_badge_published;
+    live_changed = before.live != next->live;
+    if (live_changed) g_badge_live_at = t;
+    next->live_at = g_badge_live_at;
+    {
+        tl_pvz2_badge_snapshot a = before, b = *next;
+        a.generation = b.generation = 0;
+        a.live_at = b.live_at = 0;
+        changed = memcmp(&a, &b, sizeof a) != 0;
+    }
+    if (changed) {
+        next->generation = before.generation + 1;
+        if (next->generation == 0) next->generation = 1;
+        g_badge_published = *next;
+    }
+    pthread_mutex_unlock(&g_badge_lock);
+
+    /* A change of reason while hidden is worth one line (a pause, a modal,
+     * leaving the level); the same reason on every frame is not. This runs
+     * even when the snapshot itself did not change: the board being up but
+     * not playing is a state the host should be able to read from the log. */
+    static char last_reason[96];
+    if (!next->live) {
+        const char *why = reason ? reason : "not in live play";
+        if (strcmp(last_reason, why) != 0) {
+            snprintf(last_reason, sizeof last_reason, "%s", why);
+            tl_log_line("pvz2: key badges: hidden: %s", why);
+        }
+    } else {
+        last_reason[0] = 0;
+    }
+    if (!changed) return;
+    if (live_changed && next->live) {
+        int controls = (next->fast_forward[2] > 0) + (next->plant_food[2] > 0) +
+                       (next->shovel[2] > 0);
+        tl_log_line("pvz2: key badges: shown: %d packet(s), %d power-up(s), %d other control(s)%s",
+                    next->slot_count, next->powerup_count, controls,
+                    next->conveyor ? " (a conveyor bank)" : "");
+    }
+}
+
+/* The single HUD widgets are found once per level: the lookup builds a string
+ * object and walks the registry, and they do not come and go during a level.
+ * A missing one (a level without fast-forward, a power-up holder that arrives
+ * late) is retried four times a second. */
+static void badge_cache_widgets(void)
+{
+    static const char *const names[5] = {
+        "UIShovel", "UIFastForwardButton", "UIPlantfood", "UIPowerupHolder", "UIPowerup"
+    };
+    double now = now_s();
+    if (now < g_badge_widget_retry_at) return;
+    bool missing = false;
+    for (int i = 0; i < 5; i++) {
+        if (g_badge_widget[i]) continue;
+        g_badge_widget[i] = guest_find_widget(names[i]);
+        if (!g_badge_widget[i]) missing = true;
+    }
+    g_badge_widget_retry_at = missing ? now + 0.25 : 0;
+}
+
+/* Resolve the cards of a level, outside the snapshot's guard: a slot the bank
+ * has not filled can fault inside the game's resolver, and each call is
+ * guarded here so one unready card cannot lose the whole snapshot. Two cards
+ * a frame is enough for the bank to appear within about four frames, and the
+ * per-call cost only happens while a level is starting. */
+static void badge_resolve_cards(uint64_t board)
+{
+    if (board != g_badge_board) badge_cache_reset(board);
+    if (!g_badge_bank) {
+        bool ok = false;
+        uint64_t bank = guest_call2(guest_code(GUEST_SEED_BANK), board, 0, &ok);
+        if (ok && bank) g_badge_bank = bank;
+    }
+    if (!g_badge_conveyor_checked) {
+        g_badge_conveyor = guest_find_widget("UIConveyorSeedBank") != NULL;
+        g_badge_conveyor_checked = 1;
+    }
+    if (!g_badge_bank) return;
+    if (g_badge_bank_count < 0) {
+        int8_t count = -1;
+        if (!guest_read_bytes(g_badge_bank + 0x1f8, &count, sizeof count) || count < 0) return;
+        g_badge_bank_count = (int)count;
+    }
+    int n = g_badge_bank_count;
+    if (n > TL_PVZ2_BADGE_SLOTS) n = TL_PVZ2_BADGE_SLOTS;
+    if (now_s() < g_badge_retry_at) return;
+    bool missing = false;
+    int budget = 2;
+    for (int i = 0; i < n && budget > 0; i++) {
+        if (g_badge_packet[i]) continue;
+        bool ok = false;
+        void *packet = guest_seed_packet_log(i, &ok, NULL, true);
+        if (ok && packet) g_badge_packet[i] = packet;
+        else missing = true;
+        budget--;
+    }
+    for (int i = 0; i < n; i++) if (!g_badge_packet[i]) missing = true;
+    g_badge_retry_at = missing ? now_s() + (budget == 0 ? 0.02 : 0.25) : 0;
+    g_badge_need_resolve = missing ? 1 : 0;
+}
+
+/* Read one snapshot's worth of guest state. Runs inside the caller's one
+ * guard (guest_badges_update), so every guest call here is a raw one. */
+static void badge_collect(tl_pvz2_badge_snapshot *next, uint64_t *board_out, const char **reason_out)
+{
+    const char *reason = NULL;
+    double scale = 0.0;
+    uint64_t board = 0;
+
+    g_badge_stage = "probe";
+    uint64_t live_board = guest_live_board_probe_raw(true, &reason, NULL, NULL, &board);
+    if (board_out) *board_out = board;
+    if (!live_board) goto done;
+
+    g_badge_stage = "cache";
+    if (board && board != g_badge_board) badge_cache_reset(board);
+    badge_cache_widgets();
+
+    g_badge_stage = "scale";
+    scale = guest_surface_scale_raw();
+    if (!(scale > 0.0)) {
+        reason = "the design scale is unavailable";
+        goto done;
+    }
+    if (next->surface_w <= 0 || next->surface_h <= 0) {
+        reason = "there is no surface";
+        goto done;
+    }
+    next->live = 1;
+    next->conveyor = g_badge_conveyor;
+
+    g_badge_stage = "cards";
+    if (g_badge_bank) {
+        int8_t count = -1;
+        if (guest_read_bytes_raw(g_badge_bank + 0x1f8, &count, sizeof count) && count >= 0) {
+            if ((int)count != g_badge_bank_count) {
+                g_badge_bank_count = (int)count;
+                memset(g_badge_packet, 0, sizeof g_badge_packet);
+                g_badge_retry_at = 0;
+                g_badge_need_resolve = 1;
+            }
+            int n = (int)count;
+            if (n > TL_PVZ2_BADGE_SLOTS) n = TL_PVZ2_BADGE_SLOTS;
+            next->slot_count = n;
+            for (int i = 0; i < n; i++) {
+                if (!g_badge_packet[i]) {
+                    g_badge_need_resolve = 1;
+                    continue;
+                }
+                badge_widget_rect(g_badge_packet[i], scale, next->surface_w, next->surface_h,
+                                  next->packet[i]);
+            }
+        }
+    }
+
+    g_badge_stage = "controls";
+    badge_widget_rect(g_badge_widget[0], scale,
+                      next->surface_w, next->surface_h, next->shovel);
+    badge_widget_rect(g_badge_widget[1], scale,
+                      next->surface_w, next->surface_h, next->fast_forward);
+    badge_widget_rect(g_badge_widget[2], scale,
+                      next->surface_w, next->surface_h, next->plant_food);
+
+    g_badge_stage = "powerups";
+    {
+        void *holder = g_badge_widget[3];
+        void *first = g_badge_widget[4];
+        int hr[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
+        int fr[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
+        if (holder && first && guest_anchored_rect_raw(holder, hr) &&
+            guest_anchored_rect_raw(first, fr) && hr[2] > 0 && fr[2] > 0) {
+            /* The buttons' reference layout in the holder: 73 wide, 98 apart,
+             * 19 from its left and 2 from its top. The holder's width tells how
+             * many this level has (1.5, 2.9 or 4.2 buttons wide). */
+            double ratio = (double)hr[2] / (double)fr[2];
+            int count = ratio > 3.5 ? 3 : ratio > 2.2 ? 2 : 1;
+            double design_scale = (double)fr[2] / PVZ2_POWERUP_WIDTH;
+            int used = 0;
+            for (int i = 0; i < count && i < TL_PVZ2_BADGE_POWERUPS; i++) {
+                int r[4] = {
+                    (int)llround(hr[0] + (PVZ2_POWERUP_FIRST_X + PVZ2_POWERUP_STEP * i) * design_scale),
+                    (int)llround(hr[1] + PVZ2_POWERUP_FIRST_Y * design_scale),
+                    fr[2], fr[3]
+                };
+                if (badge_rect_scale(r, scale, next->surface_w, next->surface_h,
+                                     next->powerup[used]))
+                    used++;
+            }
+            next->powerup_count = used;
+        }
+    }
+
+done:
+    g_badge_stage = "done";
+    if (!next->live) {
+        next->slot_count = 0;
+        next->powerup_count = 0;
+        next->conveyor = 0;
+        memset(next->packet, 0, sizeof next->packet);
+        memset(next->shovel, 0, sizeof next->shovel);
+        memset(next->fast_forward, 0, sizeof next->fast_forward);
+        memset(next->plant_food, 0, sizeof next->plant_food);
+        memset(next->powerup, 0, sizeof next->powerup);
+    }
+    *reason_out = reason;
+}
+
+/* The per-frame work, on the game thread, right after the frame is drawn. */
+static void guest_badges_update(void)
+{
+    if (!atomic_load(&g_badges_enabled)) return;
+
+    double started = now_s();
+    tl_pvz2_badge_snapshot next;
+    memset(&next, 0, sizeof next);
+    next.surface_w = P.w;
+    next.surface_h = P.h;
+
+    const char *reason = NULL;
+    uint64_t board = 0;
+    guest_guard_enter();
+    if (sigsetjmp(g_guest_jmp, 1) == 0) {
+        badge_collect(&next, &board, &reason);
+        guest_guard_leave();
+    } else {
+        int fault = (int)g_guest_fault;
+        uintptr_t fault_addr = g_guest_fault_addr;
+        guest_guard_leave();
+        reason = "a guest read faulted";
+        static const char *last_stage;
+        if (last_stage != g_badge_stage) {
+            last_stage = g_badge_stage;
+            tl_log_line("pvz2: key badges: the guest read faulted while reading %s (signal %d at %p)",
+                        g_badge_stage, fault, (void *)fault_addr);
+        }
+        if (board) badge_cache_reset(board);
+        memset(&next, 0, sizeof next);
+        next.surface_w = P.w;
+        next.surface_h = P.h;
+    }
+    /* Cards are resolved after the snapshot, with their own guard: one that is
+     * not ready can fault inside the game, and it must not lose the frame. */
+    if (board && g_badge_need_resolve) badge_resolve_cards(board);
+
+    /* The statistics are opt-in: a shipping run must not write a line a
+     * second. TL_PVZ2_BADGE_STATS=1 logs the average and worst frame every
+     * five seconds at 60 fps. */
+    {
+        double used_us = (now_s() - started) * 1e6;
+        static double total_us, worst_us;
+        static unsigned long frames;
+        static const char *wanted;
+        if (!wanted && getenv("TL_PVZ2_BADGE_STATS")) wanted = "1";
+        if (wanted) {
+            total_us += used_us;
+            if (used_us > worst_us) worst_us = used_us;
+            if (++frames >= 300) {
+                tl_log_line("pvz2: key badges: %.3f ms a frame on average, %.3f ms at worst (%lu frames)",
+                            total_us / frames / 1000.0, worst_us / 1000.0, frames);
+                total_us = worst_us = 0;
+                frames = 0;
+            }
+        }
+    }
+    badge_publish(&next, reason);
+}
+
+void tl_pvz2_set_badges_enabled(int on)
+{
+    atomic_store(&g_badges_enabled, on ? 1 : 0);
+    if (on) return;
+    /* Clear a visible overlay now instead of waiting for a frame: the host
+     * reads the snapshot from its own thread. */
+    pthread_mutex_lock(&g_badge_lock);
+    if (g_badge_published.live || g_badge_published.slot_count ||
+        g_badge_published.powerup_count) {
+        memset(&g_badge_published, 0, sizeof g_badge_published);
+        g_badge_published.generation++;
+        if (g_badge_published.generation == 0) g_badge_published.generation = 1;
+    }
+    g_badge_live_at = 0;
+    pthread_mutex_unlock(&g_badge_lock);
+}
+
+void tl_pvz2_badges(tl_pvz2_badge_snapshot *out)
+{
+    if (!out) return;
+    pthread_mutex_lock(&g_badge_lock);
+    *out = g_badge_published;
+    pthread_mutex_unlock(&g_badge_lock);
 }
 
 static void *guest_app_finder(void *arg)
@@ -4527,6 +5055,9 @@ static void *gl_main(void *arg)
          * thread, right after the frame: the widget tree is the guest's, and it
          * is the guest's thread that owns it. */
         if ((tl_pvz2_frames() % 30) == 0) guest_ui_geometry();
+        /* The key badges' snapshot: after the frame, so the rectangles are the
+         * ones just drawn. One atomic load per frame when the setting is off. */
+        guest_badges_update();
         /* The memory warning, on the game's own thread. */
         if (atomic_exchange(&g_low_memory_pending, 0)) guest_low_memory_warning();
         /* The host's own touches: any that are left down are released. */
