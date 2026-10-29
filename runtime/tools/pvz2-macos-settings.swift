@@ -38,6 +38,7 @@ private enum Key {
     static let renderSharp = "renderSharp"
     /// The in-level key badges, on by default.
     static let showLevelKeys = "showLevelKeys"
+    static let showCursorPlant = "showCursorPlant"
     /// Sparkle's own key; the host hands a change to the updater
     static let automaticChecks = "SUEnableAutomaticChecks"
 }
@@ -370,6 +371,7 @@ private struct GeneralPane: View {
 
 private struct KeyboardPane: View {
     @AppStorage(Key.showLevelKeys) private var showLevelKeys = true
+    @AppStorage(Key.showCursorPlant) private var showCursorPlant = true
 
     var body: some View {
         Pane {
@@ -386,6 +388,12 @@ private struct KeyboardPane: View {
                 ResettableRow(title: "Show keys in levels", isDefault: showLevelKeys,
                               reset: { showLevelKeys = true }) {
                     Toggle("", isOn: $showLevelKeys)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+                ResettableRow(title: "Show the selected plant at the pointer", isDefault: showCursorPlant,
+                              reset: { showCursorPlant = true }) {
+                    Toggle("", isOn: $showCursorPlant)
                         .toggleStyle(.switch)
                         .labelsHidden()
                 }
