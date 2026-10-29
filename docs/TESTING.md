@@ -88,7 +88,8 @@ What to check:
 - **Import Save**: import another profile's `pp.dat`, quit, then start the same data folder
   again. The next start logs that it read `pp.dat.imported`, and the title shows the imported
   profile. The imported file is consumed and a new `pp.dat` is written.
-- **Import Quests**: import the exported zip; unzip it elsewhere and `diff -r` the two
+- **Import Quests**: the tap opens an import picker that shows zip files only (on the Mac an
+  open panel, "Choose the quests zip to import."), not a save panel. Import the exported zip; unzip it elsewhere and `diff -r` the two
   `activequests` folders (the game may rewrite its quest save on exit, so compare right after
   the import or use the log's file count).
 - **Import Level**: import a known level JSON; it lands byte-identical at

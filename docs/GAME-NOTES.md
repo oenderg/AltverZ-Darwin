@@ -137,7 +137,8 @@ The paths are the ones libRFLib passes, relative to Android's
 | Export Quests | `exportFolder` | `No_Backup/activequests` (zipped, suggested `activequests_<timestamp>.zip`, entries `activequests/...`) |
 | Import Level | `importFile` | `No_Backup/CDN.1.4.2/levels/egypt1.json` |
 
-Import Quests follows Android's `importZipToDir`: for each top-level name in the zip it
+Import Quests is an import like the other two: the host opens its picker for zip files only
+(`UTTypeZIP`). Import Quests follows Android's `importZipToDir`: for each top-level name in the zip it
 deletes that name under `No_Backup` before extracting, so a quests backup replaces
 `activequests` rather than merging into it. Entries with a `..` component or a backslash are
 skipped with a log line; a leading slash is treated as relative to `No_Backup`, as Android's
