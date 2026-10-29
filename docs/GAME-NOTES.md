@@ -35,6 +35,9 @@ through a guard that turns a fault into a log line instead of a crash.
 | 0xaa1be8, 0x12d2374 | the seed bank and one packet in it | key 1-8 picks a packet |
 | packet vtable +0x90 | the packet's own pointer-down handler (normal packet vtable 0x24b2940) | the pick itself |
 | 0x761074 | the game's release decision for a new cursor (PlantCursor vtable 0x2491a60) | a second press cancels, like a second tap |
+| board +0x408 | pending cursor; null when no item is held | read-only selection state |
+| cursor vtables 0x2491a60, 0x24d8b60 | plant and shovel cursors, respectively | distinguish held plants from the shovel |
+| plant cursor +0x38, packet +0x1a8 | managed reference to the packet, and its libc++ TypeName string | identify the held plant |
 | 0x13ab0a0, vtable 0x24d8b60 | the shovel's pointer-down, and the shovel cursor | S |
 | 0x11beef0, 0x14ea3cc / 0x14ea364 / 0x14ea3b0 / 0x14ea1fc | the iterator over the board's collectables (pool 0x48) | Space |
 | 0x64f998 | a collectable's own "clicked" request (the game picks the flight and awards the value) | Space collects suns (vtable 0x2395208), real coins (0x23bb9b8), gems (0x2399d48), plant food (0x24250b8) and sprouts (0x24d5ce0) only; fake coins (0x23bbc18) and rewards are not accepted |
@@ -62,6 +65,26 @@ through a guard that turns a fault into a log line instead of a crash.
 - Every action is refused, with a log line saying why, unless the board is live, nothing is paused
   and no modal is up. Never write the game's sun, currency or object state directly: call the game's
   own functions and let it do its bookkeeping.
+- **Held item art.** In the 1.4.2 resource metadata a plant's packet picture is named
+  `IMAGE_UI_PACKETS_<uppercase TypeName>`; the shovel picture is
+  `IMAGE_UI_HUD_INGAME_SHOVEL_ICON`. The resource metadata supplies atlas rectangles, and the
+  OBB contains the corresponding RGBA atlas data. These names and layouts are version-sensitive.
+  The plant food cursor's class and image have not been confirmed in a live selection.
+
+## Selected item at the pointer
+
+The Mac reads a separate selection snapshot on the game thread after each frame. It uses the
+same live-play predicate as the badges, resolves the plant cursor's packet reference only when
+the pending pointer changes, and publishes the TypeName or shovel kind. Unknown cursor classes
+are hidden, including plant food until its cursor vtable is verified. The host draws a passive
+layer inside the game's Metal layer, and never changes input.
+
+The Mac reads `PROPERTIES/RESOURCES.RTON` and the 768 seed-packet and always-loaded atlases from
+the player's bundled or downloaded OBB, on a background queue. It uses the resource IDs above
+and the RTON atlas rectangles, premultiplies the straight-alpha RGBA pixels, and caches the
+cropped images for the launch. Missing images are hidden. This avoids depending on a window
+capture, which can fail or return stale pixels. The setting is on by default; launch with
+`-showCursorPlant NO` to turn it off for a test. `TL_PVZ2_CURSOR_STATS=1` logs frame costs.
 
 ## In-level key badges
 

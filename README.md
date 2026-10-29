@@ -51,6 +51,7 @@ and the mod's own content built in.
     (off by default) writes each key at its control's corner in the game's font.
   * On iPad, keys appear after a hardware key press and disappear when the keyboard disconnects.
 * **Mac window**
+  * Shows the selected plant or shovel at the pointer during a level; turn it off in Keyboard settings.
   * Keeps the game's shape at any size, or, in Settings, adapts to any shape from 4:3 to 21:9.
   * Drawn at the sharpness of the display it is on; Settings can draw it sharper on a
     display that isn't Retina.
