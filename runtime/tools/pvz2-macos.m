@@ -51,6 +51,7 @@
 #include "pvz2-open-url.h"
 #include "pvz2-file-picker.h"
 #include "pvz2-badge-style.h"
+#include "pvz2-cursor-art.h"
 
 static bool open_game_url(const char *url)
 {
@@ -69,6 +70,7 @@ static atomic_uint g_packet_hand_generation;
 static double g_packet_hand_x, g_packet_hand_y;
 static void packet_carry_to(double gx, double gy);
 static void cursor_set_game(double gx, double gy);
+static bool pointer_in_game(double *gx, double *gy);
 static NSString *apkPath, *dataPath, *eglPath, *glesPath;
 static const int surfaceWidth = 1748, surfaceHeight = 804;
 
@@ -86,10 +88,12 @@ static char g_apk[1024], g_data[1024], g_egl[1024], g_gles[1024];
  * the mapping from the window to the game is checked. */
 @interface PVZ2View : NSView
 @property(nonatomic, strong) CAMetalLayer *metal;
+@property(nonatomic, strong) NSTrackingArea *cursorTracking;
 - (void)windowTap:(int)phase at:(NSPoint)p;
 - (void)applyPresentation;
 - (void)followDisplayScale;
 - (void)badgesSettingChanged;
+- (void)cursorSettingChanged;
 - (void)badgeTick:(NSTimer *)timer;
 - (void)refreshBadges:(BOOL)force;
 @end
@@ -1206,6 +1210,7 @@ static NSString *const kPowerupKey[PVZ2_POWERUP_COUNT] = {
     @"powerup1Key", @"powerup2Key", @"powerup3Key"
 };
 static NSString *const kShowLevelKeys = @"showLevelKeys";   /* the in-level key badges */
+static NSString *const kShowCursorPlant = @"showCursorPlant";
 static NSString *const kPacketX = @"packetX";         /* the first packet's centre */
 static NSString *const kPacketY = @"packetY";
 static NSString *const kPacketStep = @"packetStep";   /* how far apart they are */
@@ -1378,6 +1383,12 @@ static NSString *shown_key(NSString *key, NSString *fallback)
 static bool show_level_keys(void)
 {
     return [[NSUserDefaults standardUserDefaults] boolForKey:kShowLevelKeys];
+}
+
+static bool show_cursor_plant(void)
+{
+    id value = [[NSUserDefaults standardUserDefaults] objectForKey:kShowCursorPlant];
+    return value ? [value boolValue] : true;
 }
 
 /* A point of the surface's pixels, in the game's own 1748x804 space: the
@@ -1975,6 +1986,16 @@ static bool g_badges_live;                 /* what the overlay shows now */
 static unsigned int g_badges_generation;   /* the snapshot last drawn */
 static NSTimer *g_badge_timer;             /* runs only while the setting is on */
 static id g_badge_activity;
+static CALayer *g_cursor_layer;
+static NSTimer *g_cursor_timer;
+static id g_cursor_activity;
+static bool g_cursor_event_known, g_cursor_event_inside;
+static NSPoint g_cursor_event_point;
+static unsigned int g_cursor_drawn_generation;
+static NSDictionary<NSString *, id> *g_cursor_art;
+static bool g_cursor_art_loading;
+static void cursor_preview_tick(void);
+static void cursor_load_art(void);
 
 static NSString *badge_key_text(NSString *key)
 {
@@ -2035,6 +2056,11 @@ static void badges_attach(CAMetalLayer *metal)
     g_badges_attached = true;
     /* The badges follow moving packets and never leave the game's picture. */
     metal.masksToBounds = YES;
+    g_cursor_layer = [CALayer layer];
+    g_cursor_layer.hidden = YES;
+    g_cursor_layer.opacity = 0.6;
+    g_cursor_layer.contentsGravity = kCAGravityResizeAspect;
+    [metal addSublayer:g_cursor_layer];
     for (int i = 0; i < PVZ2_BADGE_COUNT; i++) {
         CALayer *box = [CALayer layer];
         box.hidden = YES;
@@ -2111,6 +2137,71 @@ static double host_now(void)
 @implementation PVZ2View
 - (BOOL)isFlipped { return YES; }
 
+- (void)updateTrackingAreas
+{
+    if (self.cursorTracking) [self removeTrackingArea:self.cursorTracking];
+    self.cursorTracking = [[NSTrackingArea alloc] initWithRect:NSZeroRect
+        options:NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect
+        owner:self userInfo:nil];
+    [self addTrackingArea:self.cursorTracking];
+    [super updateTrackingAreas];
+}
+
+- (void)mouseMoved:(NSEvent *)event
+{
+    g_cursor_event_point = [self convertPoint:event.locationInWindow fromView:nil];
+    g_cursor_event_known = true;
+    g_cursor_event_inside = NSPointInRect(g_cursor_event_point, self.bounds);
+}
+
+- (void)mouseEntered:(NSEvent *)event
+{
+    [self mouseMoved:event];
+}
+
+- (void)mouseExited:(NSEvent *)event
+{
+    (void)event;
+    g_cursor_event_known = true;
+    g_cursor_event_inside = false;
+}
+
+- (void)cursorSettingChanged
+{
+    bool on = show_cursor_plant();
+    static int logged = -1;
+    if (logged != (int)on) {
+        logged = (int)on;
+        tl_log_line("macos: cursor preview is %s", on ? "on" : "off");
+    }
+    tl_pvz2_set_cursor_enabled(on);
+    if (!on) {
+        [g_cursor_timer invalidate];
+        g_cursor_timer = nil;
+        if (g_cursor_activity) [NSProcessInfo.processInfo endActivity:g_cursor_activity];
+        g_cursor_activity = nil;
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        g_cursor_layer.hidden = YES;
+        g_cursor_layer.contents = nil;
+        [CATransaction commit];
+        g_cursor_drawn_generation = 0;
+        return;
+    }
+    cursor_load_art();
+    if (!g_cursor_timer) {
+        if (background_launch())
+            g_cursor_activity = [NSProcessInfo.processInfo beginActivityWithOptions:NSActivityLatencyCritical
+                                                                            reason:@"Keep the pointer preview in step"];
+        g_cursor_timer = [NSTimer timerWithTimeInterval:1.0 / 120.0 repeats:YES block:^(NSTimer *timer) {
+            (void)timer;
+            cursor_preview_tick();
+        }];
+        g_cursor_timer.tolerance = 0;
+        [[NSRunLoop mainRunLoop] addTimer:g_cursor_timer forMode:NSRunLoopCommonModes];
+    }
+}
+
 /* How the game is put on the screen.
  *
  * Letterbox (the default): the surface is the game's own size and only the
@@ -2123,6 +2214,7 @@ static double host_now(void)
  */
 - (void)applyPresentation
 {
+    g_cursor_event_known = false;
     NSRect b = self.bounds;
     double scale = self.metal.contentsScale;
     /* The surface keeps the shape the game laid itself out for. Its size: the
@@ -2423,10 +2515,10 @@ static NSButton *round_button(NSString *symbol, NSString *tip, SEL action, NSVie
     tl_log_line("macos: the mouse pressed at (%.0f,%.0f) in the window", p.x, p.y);
     [self touch:0 event:event];
 }
-- (void)mouseDragged:(NSEvent *)event { [self touch:1 event:event]; }
+- (void)mouseDragged:(NSEvent *)event { [self mouseMoved:event]; [self touch:1 event:event]; }
 - (void)mouseUp:(NSEvent *)event { [self touch:3 event:event]; }
 - (void)rightMouseDown:(NSEvent *)event { [self touch:0 event:event]; }
-- (void)rightMouseDragged:(NSEvent *)event { [self touch:1 event:event]; }
+- (void)rightMouseDragged:(NSEvent *)event { [self mouseMoved:event]; [self touch:1 event:event]; }
 - (void)rightMouseUp:(NSEvent *)event { [self touch:3 event:event]; }
 
 /* The guest asks for a keyboard when the player taps the name field
@@ -2569,6 +2661,88 @@ static bool pointer_in_game(double *gx, double *gy)
         return false;
     surface_to_game(sx, sy, gx, gy);
     return true;
+}
+
+/* Load the player's own art away from both the game and the UI threads. */
+static void cursor_load_art(void)
+{
+    if (g_cursor_art || g_cursor_art_loading) return;
+    g_cursor_art_loading = true;
+    NSString *name = obb_info()[@"name"] ?: @"main.675.com.ea.game.pvz2_rfl.obb";
+    NSString *path = [obb_dir() stringByAppendingPathComponent:name];
+    if (![NSFileManager.defaultManager fileExistsAtPath:path])
+        path = [bundle_dir(@"Game/obb") stringByAppendingPathComponent:name];
+    double start = host_now();
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        @autoreleasepool {
+            NSDictionary *art = pvz2_cursor_art(path) ?: @{};
+            dispatch_async(dispatch_get_main_queue(), ^{
+                g_cursor_art = art;
+                g_cursor_art_loading = false;
+                g_cursor_drawn_generation = 0;
+                tl_log_line("macos: cursor art: %lu images loaded in %.1f ms",
+                            (unsigned long)art.count, (host_now() - start) * 1000);
+            });
+        }
+    });
+}
+
+static void cursor_preview_tick(void)
+{
+    double started = host_now();
+    tl_pvz2_cursor_snapshot s;
+    tl_pvz2_cursor(&s);
+    double gx = 0, gy = 0, sx = 0, sy = 0;
+    bool inside;
+    if (g_cursor_event_known && !atomic_load(&g_cursor_set)) {
+        double x, y, w, h;
+        inside = g_cursor_event_inside &&
+            tl_viewport_fit(g_view.bounds.size.width, g_view.bounds.size.height,
+                            s.surface_w, s.surface_h, &x, &y, &w, &h) &&
+            tl_viewport_map(g_cursor_event_point.x, g_cursor_event_point.y,
+                            x, y, w, h, s.surface_w, s.surface_h, &sx, &sy);
+    } else {
+        inside = pointer_in_game(&gx, &gy);
+        if (inside) game_to_surface(gx, gy, &sx, &sy);
+    }
+    bool changed = s.generation != g_cursor_drawn_generation;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    if (changed) {
+        g_cursor_drawn_generation = s.generation;
+        g_cursor_layer.contents = nil;
+        g_cursor_layer.hidden = YES;
+        NSString *key = s.kind == TL_PVZ2_CURSOR_PLANT
+            ? [@"IMAGE_UI_PACKETS_" stringByAppendingString:[@(s.plant) uppercaseString]]
+            : s.kind == TL_PVZ2_CURSOR_SHOVEL ? @"IMAGE_UI_HUD_INGAME_SHOVEL_ICON"
+            : s.kind == TL_PVZ2_CURSOR_PLANT_FOOD ? @"IMAGE_UI_HUD_INGAME_PLANTFOOD_BANK_COLLECT" : nil;
+        g_cursor_layer.contents = key ? g_cursor_art[key] : nil;
+    }
+    bool visible = s.live && s.kind != TL_PVZ2_CURSOR_NONE && inside && g_cursor_layer.contents;
+    if (visible && s.surface_w > 0 && s.surface_h > 0) {
+        CGSize size = g_view.metal.bounds.size;
+        double side = size.height * 0.14;
+        g_cursor_layer.frame = CGRectMake(sx * size.width / s.surface_w - side / 2,
+                                         sy * size.height / s.surface_h - side / 2, side, side);
+    }
+    g_cursor_layer.hidden = !visible;
+    [CATransaction commit];
+    static bool last_visible;
+    if (getenv("TL_PVZ2_CURSOR_STATS") && changed && (visible || last_visible))
+        tl_log_line("macos: cursor preview %s, kind %d, driver changed %.1f ms ago",
+                    visible ? "shown" : "hidden", s.kind, (host_now() - s.changed_at) * 1000);
+    last_visible = visible;
+    if (getenv("TL_PVZ2_CURSOR_STATS")) {
+        static double total, worst;
+        static unsigned frames;
+        double used = (host_now() - started) * 1000;
+        total += used;
+        if (used > worst) worst = used;
+        if (++frames == 300) {
+            tl_log_line("macos: cursor preview: %.3f ms average, %.3f ms worst (%u ticks)", total / frames, worst, frames);
+            total = worst = 0; frames = 0;
+        }
+    }
 }
 
 /* The keys. Escape pauses a level and is Android's Back elsewhere (keycode 4), Return is the IME's done key
@@ -2907,6 +3081,7 @@ static void start_updater(void)
             (void)note;
             [g_view followDisplayScale];
             [g_view badgesSettingChanged];
+            [g_view cursorSettingChanged];
             /* the settings window's "Check for updates automatically" */
             id checks = [[NSUserDefaults standardUserDefaults] objectForKey:@"SUEnableAutomaticChecks"];
             if (g_updater && checks && [checks boolValue] != g_updater.updater.automaticallyChecksForUpdates)
@@ -3024,12 +3199,14 @@ static void start_updater(void)
     view.layer.backgroundColor = NSColor.blackColor.CGColor;
     [view.layer addSublayer:layer];
     view.metal = layer;
+    self.window.acceptsMouseMovedEvents = YES;
     /* The badges are sublayers of the game's layer: the window server moves
      * them with the picture in one commit, so a live resize cannot make them
      * trail it. The timer only reads the driver's snapshot; when the setting is
      * off it returns at once. */
     badges_attach(layer);
     [view badgesSettingChanged];
+    [view cursorSettingChanged];
     view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     /* The surface: the window's own pixels, in the shape the window has now --
      * the game lays itself out for it. */
