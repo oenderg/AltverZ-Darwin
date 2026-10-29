@@ -12,9 +12,10 @@
  */
 #import <Foundation/Foundation.h>
 #import <TargetConditionals.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#include <stdbool.h>
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #else
 #import <AppKit/AppKit.h>
 #endif
@@ -22,6 +23,16 @@
 #include "husk-tl-pvz2.h"
 
 void tl_log_line(const char *fmt, ...);
+
+/* Three kinds are imports and answer with the chosen file; two are exports and
+ * hand over a file the driver prepared.  Import Quests is an import too: it
+ * used to fall into the export branch, and there the missing prepared path
+ * became a nil URL in the exporter's array, which throws before any panel. */
+static bool pvz2_picker_is_import(int kind)
+{
+    return kind == TL_PVZ2_PICK_IMPORT_FILE || kind == TL_PVZ2_PICK_IMPORT_TO_DIR ||
+           kind == TL_PVZ2_PICK_IMPORT_ZIP;
+}
 
 #if TARGET_OS_IPHONE
 @interface PVZ2FilePicker : NSObject <UIDocumentPickerDelegate>
@@ -44,11 +55,18 @@ void tl_log_line(const char *fmt, ...);
         self.kind = kind;
         self.prepared = prepared;
         UIDocumentPickerViewController *picker;
-        if (kind == TL_PVZ2_PICK_IMPORT_FILE || kind == TL_PVZ2_PICK_IMPORT_TO_DIR) {
-            picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeItem] asCopy:YES];
+        if (pvz2_picker_is_import(kind)) {
+            NSArray<UTType *> *types = kind == TL_PVZ2_PICK_IMPORT_ZIP ? @[UTTypeZIP] : @[UTTypeItem];
+            picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:YES];
             picker.allowsMultipleSelection = NO;
-            tl_log_line("pvz2: file picker: presenting the document picker to import a file");
+            tl_log_line("pvz2: file picker: presenting the document picker to import %s",
+                        kind == TL_PVZ2_PICK_IMPORT_ZIP ? "a quests zip" : "a file");
         } else {
+            if (prepared.length == 0) {
+                tl_log_line("pvz2: file picker: no prepared file to export");
+                tl_pvz2_file_picker_answer(NULL);
+                return;
+            }
             NSURL *url = [NSURL fileURLWithPath:prepared];
             picker = [[UIDocumentPickerViewController alloc] initForExportingURLs:@[url] asCopy:YES];
             tl_log_line("pvz2: file picker: presenting the document picker to export %s",
@@ -62,7 +80,7 @@ void tl_log_line(const char *fmt, ...);
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 {
     (void)controller;
-    if (self.kind == TL_PVZ2_PICK_IMPORT_FILE || self.kind == TL_PVZ2_PICK_IMPORT_TO_DIR) {
+    if (pvz2_picker_is_import(self.kind)) {
         NSString *path = urls.firstObject.path;
         tl_log_line("pvz2: file picker: the document picker chose %s", path.UTF8String ?: "(nothing)");
         tl_pvz2_file_picker_answer(path.UTF8String);
@@ -132,14 +150,19 @@ static void pvz2_file_picker_install(UIViewController *root)
             tl_pvz2_file_picker_answer(NULL);
             return;
         }
-        if (kind == TL_PVZ2_PICK_IMPORT_FILE || kind == TL_PVZ2_PICK_IMPORT_TO_DIR) {
+        if (pvz2_picker_is_import(kind)) {
             NSOpenPanel *panel = [NSOpenPanel openPanel];
             panel.canChooseFiles = YES;
             panel.canChooseDirectories = NO;
             panel.allowsMultipleSelection = NO;
             panel.title = @"Import into PvZ2 Reflourished";
             panel.prompt = @"Import";
-            panel.message = [NSString stringWithFormat:@"Choose the file to import as %@.", suggested];
+            if (kind == TL_PVZ2_PICK_IMPORT_ZIP) {
+                panel.allowedContentTypes = @[UTTypeZIP];
+                panel.message = @"Choose the quests zip to import.";
+            } else {
+                panel.message = [NSString stringWithFormat:@"Choose the file to import as %@.", suggested];
+            }
             tl_log_line("pvz2: file picker: showing the open panel over the game");
             [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
                 NSString *path = response == NSModalResponseOK ? panel.URL.path : nil;
