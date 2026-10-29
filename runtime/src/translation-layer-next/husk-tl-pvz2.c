@@ -4636,6 +4636,131 @@ void tl_pvz2_badges(tl_pvz2_badge_snapshot *out)
     pthread_mutex_unlock(&g_badge_lock);
 }
 
+/* The selected cursor belongs to the game. The host only receives a copy,
+ * and unknown cursor types deliberately have no picture. */
+static atomic_int g_cursor_enabled;
+static atomic_uint g_cursor_epoch;
+static pthread_mutex_t g_cursor_lock = PTHREAD_MUTEX_INITIALIZER;
+static tl_pvz2_cursor_snapshot g_cursor_published;
+static uint64_t g_cursor_board, g_cursor_pending;
+static int g_cursor_kind;
+static char g_cursor_plant[24];
+
+static void guest_cursor_update(void)
+{
+    static unsigned last_epoch;
+    unsigned epoch = atomic_load(&g_cursor_epoch);
+    if (epoch != last_epoch) {
+        last_epoch = epoch;
+        g_cursor_board = g_cursor_pending = 0;
+        g_cursor_kind = TL_PVZ2_CURSOR_NONE;
+        g_cursor_plant[0] = 0;
+    }
+    if (!atomic_load(&g_cursor_enabled)) {
+        g_cursor_board = g_cursor_pending = 0;
+        g_cursor_kind = TL_PVZ2_CURSOR_NONE;
+        g_cursor_plant[0] = 0;
+        return;
+    }
+    double started = now_s();
+    uint64_t board = guest_live_board_probe(NULL, NULL, NULL), pending = 0, vt = 0;
+    if (board) {
+        guest_guard_enter();
+        if (sigsetjmp(g_guest_jmp, 1) == 0) {
+            guest_read_bytes_raw(board + 0x408, &pending, sizeof pending);
+            if (pending) guest_read_bytes_raw(pending, &vt, sizeof vt);
+        } else {
+            pending = 0;
+        }
+        guest_guard_leave();
+    }
+    if (board != g_cursor_board || pending != g_cursor_pending) {
+        g_cursor_board = board;
+        g_cursor_pending = pending;
+        g_cursor_kind = TL_PVZ2_CURSOR_NONE;
+        memset(g_cursor_plant, 0, sizeof g_cursor_plant);
+        if (pending && vt == (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(0x24d8b60)) {
+            g_cursor_kind = TL_PVZ2_CURSOR_SHOVEL;
+        } else if (pending && vt == (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(0x2491a60)) {
+            bool ok = false;
+            uint64_t registry = guest_call2(guest_code(GUEST_UI_REGISTRY), 0, 0, &ok);
+            uint64_t packet = ok && registry
+                ? guest_collectable_from_ref(registry, (uint64_t *)(uintptr_t)(pending + 0x38), &ok) : 0;
+            unsigned char str[24] = { 0 };
+            volatile bool got_string = false;
+            if (ok && packet) {
+                guest_guard_enter();
+                if (sigsetjmp(g_guest_jmp, 1) == 0)
+                    got_string = guest_read_bytes_raw(packet + 0x1a8, str, sizeof str);
+                guest_guard_leave();
+            }
+            if (got_string &&
+                !(str[0] & 1) && (str[0] >> 1) > 0 && (str[0] >> 1) < sizeof g_cursor_plant) {
+                size_t n = str[0] >> 1;
+                memcpy(g_cursor_plant, str + 1, n);
+                g_cursor_kind = TL_PVZ2_CURSOR_PLANT;
+            }
+        }
+    }
+    pthread_mutex_lock(&g_cursor_lock);
+    if (!atomic_load(&g_cursor_enabled) || epoch != atomic_load(&g_cursor_epoch)) {
+        pthread_mutex_unlock(&g_cursor_lock);
+        return;
+    }
+    if (g_cursor_published.kind != g_cursor_kind ||
+        g_cursor_published.live != (board != 0) || g_cursor_published.surface_w != P.w ||
+        g_cursor_published.surface_h != P.h ||
+        strcmp(g_cursor_published.plant, g_cursor_plant)) {
+        bool selected_changed = g_cursor_published.kind != g_cursor_kind ||
+                                strcmp(g_cursor_published.plant, g_cursor_plant);
+        g_cursor_published.kind = g_cursor_kind;
+        g_cursor_published.live = board != 0;
+        g_cursor_published.surface_w = P.w;
+        g_cursor_published.surface_h = P.h;
+        memcpy(g_cursor_published.plant, g_cursor_plant, sizeof g_cursor_plant);
+        if (++g_cursor_published.generation == 0) ++g_cursor_published.generation;
+        g_cursor_published.changed_at = now_s();
+        if (selected_changed && getenv("TL_PVZ2_CURSOR_STATS"))
+            tl_log_line("pvz2: cursor selection: kind %d plant %s", g_cursor_kind,
+                        g_cursor_plant[0] ? g_cursor_plant : "none");
+    }
+    pthread_mutex_unlock(&g_cursor_lock);
+    if (getenv("TL_PVZ2_CURSOR_STATS")) {
+        static double total, worst;
+        static unsigned frames;
+        double used = (now_s() - started) * 1000;
+        total += used;
+        if (used > worst) worst = used;
+        if (++frames == 300) {
+            tl_log_line("pvz2: cursor snapshot: %.3f ms average, %.3f ms worst (%u frames)", total / frames, worst, frames);
+            frames = 0; total = worst = 0;
+        }
+    }
+}
+
+void tl_pvz2_set_cursor_enabled(int on)
+{
+    int next = on != 0;
+    if (atomic_exchange(&g_cursor_enabled, next) == next) return;
+    atomic_fetch_add(&g_cursor_epoch, 1);
+    if (on) return;
+    pthread_mutex_lock(&g_cursor_lock);
+    g_cursor_published.kind = TL_PVZ2_CURSOR_NONE;
+    g_cursor_published.live = 0;
+    g_cursor_published.plant[0] = 0;
+    ++g_cursor_published.generation;
+    g_cursor_published.changed_at = now_s();
+    pthread_mutex_unlock(&g_cursor_lock);
+}
+
+void tl_pvz2_cursor(tl_pvz2_cursor_snapshot *out)
+{
+    if (!out) return;
+    pthread_mutex_lock(&g_cursor_lock);
+    *out = g_cursor_published;
+    pthread_mutex_unlock(&g_cursor_lock);
+}
+
 static void *guest_app_finder(void *arg)
 {
     (void)arg;
@@ -5029,6 +5154,8 @@ static void *gl_main(void *arg)
             lc_report_done(lc_seq);
         }
         if (atomic_load(&P.paused)) {
+            /* A paused host draws no further frames, so clear the preview here. */
+            guest_cursor_update();
             /* The app is not in front, but the thread is still running: the
              * guest's jobs keep being queued and they are run here, so that a
              * job the guest queued on the way out (its save) is not left in the
@@ -5043,6 +5170,7 @@ static void *gl_main(void *arg)
          * queue is left alone until it comes back. The save it made on the way
          * out was made by the event itself, which is over. */
         if (atomic_load(&P.in_background)) {
+            guest_cursor_update();
             if (pump && pump_when() != 0) pump(tl_jni_env(), P.view);
             pace_frame(20000000L);   /* 20 ms: the guest's thread idles, it does not draw */
             continue;
@@ -5058,6 +5186,7 @@ static void *gl_main(void *arg)
         /* The key badges' snapshot: after the frame, so the rectangles are the
          * ones just drawn. One atomic load per frame when the setting is off. */
         guest_badges_update();
+        guest_cursor_update();
         /* The memory warning, on the game's own thread. */
         if (atomic_exchange(&g_low_memory_pending, 0)) guest_low_memory_warning();
         /* The host's own touches: any that are left down are released. */
