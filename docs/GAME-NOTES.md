@@ -69,14 +69,14 @@ through a guard that turns a fault into a log line instead of a crash.
   `IMAGE_UI_PACKETS_<uppercase TypeName>`; the shovel picture is
   `IMAGE_UI_HUD_INGAME_SHOVEL_ICON`. The resource metadata supplies atlas rectangles, and the
   OBB contains the corresponding RGBA atlas data. These names and layouts are version-sensitive.
-  The plant food cursor's class and image have not been confirmed in a live selection.
+  Plant food uses the HUD button's leaf; the bank collect image is a glow, not the held leaf.
 
 ## Selected item at the pointer
 
 The Mac reads a separate selection snapshot on the game thread after each frame. It uses the
 same live-play predicate as the badges, resolves the plant cursor's packet and parent references
-only when the pending pointer changes, and publishes the TypeName or shovel kind. Unknown cursor classes
-are hidden, including plant food until its cursor vtable is verified. The host draws a passive
+only when the pending pointer changes, and publishes the TypeName, shovel or plant food kind.
+Plant food's pending cursor vtable is `0x241d3a0`. Unknown cursor classes are hidden. The host draws a passive
 layer inside the game's Metal layer, and never changes input.
 
 The Mac reads `PROPERTIES/RESOURCES.RTON`, the 1536 seed-packet atlas and the 768 always-loaded atlas from

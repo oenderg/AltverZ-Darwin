@@ -2689,6 +2689,8 @@ static void cursor_load_art(void)
                 g_cursor_drawn_generation = 0;
                 tl_log_line("macos: cursor art: %lu images loaded in %.1f ms",
                             (unsigned long)art.count, (host_now() - start) * 1000);
+                if (getenv("TL_PVZ2_CURSOR_STATS"))
+                    tl_log_line("macos: cursor art: plant food %s", art[@"IMAGE_UI_HUD_INGAME_PLANTFOOD_BUTTON"] ? "present" : "missing");
             });
         }
     });
@@ -2722,13 +2724,14 @@ static void cursor_preview_tick(void)
         NSString *key = s.kind == TL_PVZ2_CURSOR_PLANT
             ? [@"IMAGE_UI_PACKETS_" stringByAppendingString:[@(s.plant) uppercaseString]]
             : s.kind == TL_PVZ2_CURSOR_SHOVEL ? @"IMAGE_UI_HUD_INGAME_SHOVEL_ICON"
-            : s.kind == TL_PVZ2_CURSOR_PLANT_FOOD ? @"IMAGE_UI_HUD_INGAME_PLANTFOOD_BANK_COLLECT" : nil;
+            : s.kind == TL_PVZ2_CURSOR_PLANT_FOOD ? @"IMAGE_UI_HUD_INGAME_PLANTFOOD_BUTTON" : nil;
         g_cursor_layer.contents = key ? g_cursor_art[key] : nil;
     }
     bool visible = s.live && s.kind != TL_PVZ2_CURSOR_NONE && inside && g_cursor_layer.contents;
     bool cross = false;
     int col = -1, row = -1, x0 = 0, x1 = 0, y0 = 0, y1 = 0, left = 0, right = 0, top = 0, bottom = 0;
-    if (visible && (s.kind == TL_PVZ2_CURSOR_PLANT || s.kind == TL_PVZ2_CURSOR_SHOVEL) && s.grid_valid) {
+    if (visible && (s.kind == TL_PVZ2_CURSOR_PLANT || s.kind == TL_PVZ2_CURSOR_SHOVEL ||
+                    s.kind == TL_PVZ2_CURSOR_PLANT_FOOD) && s.grid_valid) {
         col = tl_cursor_grid_axis(&s, 0, (int)((float)sx + .5f));
         row = tl_cursor_grid_axis(&s, 1, (int)((float)sy + .5f));
         cross = col >= 0 && col < s.columns && row >= 0 && row < s.rows;

@@ -112,7 +112,8 @@ answers the few calls into those parts). The pieces that matter here:
   `macos-icon.swift` at build time.
   The optional pointer preview adds a passive row-and-column layer beneath the item picture.
   The game thread publishes the live board transform with the selected cursor; the host finds
-  tile edges by searching the forward mapping. The overlay does not send input or check whether
+  tile edges by searching the forward mapping. It also previews a selected plant food leaf.
+  The overlay does not send input or check whether
   a plant is allowed on the target tile.
 - `pvz2-ios.m`: the iPhone/iPad app. UIKit scene, touch, hardware-keyboard shortcuts, the OBB
   download, files under `Documents/` (visible in the Files app).
