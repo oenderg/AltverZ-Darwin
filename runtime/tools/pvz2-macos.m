@@ -2698,6 +2698,9 @@ static void cursor_load_art(void)
 
 static void cursor_preview_tick(void)
 {
+    static unsigned band_generation, waiting_generation;
+    static int band_col = -1, band_row = -1, waiting_col = -1, waiting_row = -1;
+    static double waiting_since;
     double started = host_now();
     tl_pvz2_cursor_snapshot s;
     tl_pvz2_cursor(&s);
@@ -2728,7 +2731,7 @@ static void cursor_preview_tick(void)
         g_cursor_layer.contents = key ? g_cursor_art[key] : nil;
     }
     bool visible = s.live && s.kind != TL_PVZ2_CURSOR_NONE && inside && g_cursor_layer.contents;
-    bool cross = false;
+    bool cross = false, keep_band = false;
     int col = -1, row = -1, x0 = 0, x1 = 0, y0 = 0, y1 = 0, left = 0, right = 0, top = 0, bottom = 0;
     if (visible && (s.kind == TL_PVZ2_CURSOR_PLANT || s.kind == TL_PVZ2_CURSOR_SHOVEL ||
                     s.kind == TL_PVZ2_CURSOR_PLANT_FOOD) && s.grid_valid) {
@@ -2737,8 +2740,25 @@ static void cursor_preview_tick(void)
         cross = col >= 0 && col < s.columns && row >= 0 && row < s.rows;
         tl_pvz2_cursor_target((int)((float)sx + .5f), (int)((float)sy + .5f),
                               cross && s.kind == TL_PVZ2_CURSOR_PLANT);
-        if (cross && s.kind == TL_PVZ2_CURSOR_PLANT)
-            cross = s.placement_known && s.placement_allowed && s.placement_col == col && s.placement_row == row;
+        if (cross && s.kind == TL_PVZ2_CURSOR_PLANT) {
+            bool answer_matches = s.placement_col == col && s.placement_row == row;
+            if (!answer_matches) {
+                if (waiting_col != col || waiting_row != row || waiting_generation != s.generation) {
+                    waiting_col = col; waiting_row = row; waiting_generation = s.generation;
+                    waiting_since = host_now();
+                }
+                /* Keep only the last confirmed band, and never wait indefinitely for a reply. */
+                keep_band = s.placement_known && s.placement_allowed &&
+                            s.placement_col == band_col && s.placement_row == band_row &&
+                            band_generation == s.generation && !g_cursor_cross.hidden &&
+                            host_now() - waiting_since < 0.1;
+            } else {
+                waiting_col = waiting_row = -1;
+            }
+            cross = s.placement_known && s.placement_allowed && answer_matches;
+        } else {
+            waiting_col = waiting_row = -1;
+        }
         if (cross) {
             int values[8] = {col, col + 1, row, row + 1, 0, s.columns, 0, s.rows};
             int *out[8] = {&x0, &x1, &y0, &y1, &left, &right, &top, &bottom};
@@ -2760,10 +2780,45 @@ static void cursor_preview_tick(void)
             g_cursor_cross.frame = g_view.metal.bounds;
             g_cursor_cross.path = path;
             CGPathRelease(path);
+            band_col = col; band_row = row; band_generation = s.generation;
         }
     }
-    else tl_pvz2_cursor_target(0, 0, 0);
-    g_cursor_cross.hidden = !cross;
+    else {
+        tl_pvz2_cursor_target(0, 0, 0);
+        waiting_col = waiting_row = -1;
+    }
+    g_cursor_cross.hidden = !(cross || keep_band);
+    if (getenv("TL_PVZ2_CURSOR_STATS")) {
+        static unsigned generation;
+        static int previous_col = -1, previous_row = -1, hidden, ticks;
+        static bool previous_allowed, measuring;
+        static double began;
+        bool on_lawn = visible && s.kind == TL_PVZ2_CURSOR_PLANT && s.grid_valid &&
+                       col >= 0 && col < s.columns && row >= 0 && row < s.rows;
+        if (!on_lawn || generation != s.generation) {
+            generation = s.generation;
+            previous_col = previous_row = -1;
+            previous_allowed = measuring = false;
+        }
+        if (on_lawn) {
+            if (col != previous_col || row != previous_row) {
+                measuring = previous_col >= 0 && previous_allowed;
+                hidden = ticks = 0; began = host_now();
+                previous_col = col; previous_row = row;
+            }
+            if (measuring) {
+                ++ticks;
+                if (g_cursor_cross.hidden) ++hidden;
+                if (s.placement_known && s.placement_col == col && s.placement_row == row) {
+                    tl_log_line("macos: cursor transition: tile %d,%d allowed %d hidden %d/%d ticks wait %.1f ms",
+                                col, row, s.placement_allowed, hidden, ticks, (host_now() - began) * 1000);
+                    measuring = false;
+                }
+            }
+            previous_allowed = s.placement_known && s.placement_allowed &&
+                               s.placement_col == col && s.placement_row == row;
+        }
+    }
     if (visible && s.surface_w > 0 && s.surface_h > 0) {
         CGSize size = g_view.metal.bounds.size;
         /* The packet picture is larger than the lawn plant at a full row height. */
