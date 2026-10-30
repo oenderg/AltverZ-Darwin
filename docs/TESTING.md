@@ -223,6 +223,7 @@ Commands separated by `;`, run in order on their own thread:
 | `close`, `reopen`, `quit` | the close button, a Dock click, quitting (tests never get the quit prompt) |
 | `settings`, `settings:<pane>` | open the settings window (general, keyboard, about) |
 | `cursor:x,y` | where the pointer is (the person's mouse is never moved) |
+| `brightness:v` | set the test app's own Cross brightness setting (0 to 1), to check that the cross follows it live |
 | `mode:`, `aspect:`, `fit`, `keep` | window-mode tests. **`mode:` and `aspect:` write the app's saved settings** |
 
 ## Keyboard shortcuts
@@ -369,6 +370,7 @@ cursor during the down. A missing active cursor is not a successful comparison. 
 test's window to see the host overlay: `TL_PVZ2_FRAMES` records the game frame without that layer.
 For plant food, stock the counter in a copied save, pick it up with Q or a click, and check that
 the leaf and cross disappear after it is used on a plant.
+The Keyboard settings' Cross brightness slider defaults to 45%; `-cursorCrossBrightness 0.2` overrides it for a launch.
 Test resized and letterboxed windows as well as ordinary windows, and use an isolated save on an
 unusual lawn. With `TL_PVZ2_CURSOR_VALIDITY=1`, compare the `allowed` result and the cross with
 a native drag over the same tile, including an occupied tile, a gap and a changing tide. The
