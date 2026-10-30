@@ -366,6 +366,8 @@ For the pointer cross, use a test bundle ID and copied save, enable `-showCursor
 `cursor check` line compares the surface point's predicted column and row with the game's active
 cursor during the down. A missing active cursor is not a successful comparison. Capture the
 test's window to see the host overlay: `TL_PVZ2_FRAMES` records the game frame without that layer.
+For plant food, stock the counter in a copied save, pick it up with Q or a click, and check that
+the leaf and cross disappear after it is used on a plant.
 Test resized and letterboxed windows as well as ordinary windows, and use an isolated save on an
 unusual lawn. The cross deliberately does not report whether planting is allowed.
 

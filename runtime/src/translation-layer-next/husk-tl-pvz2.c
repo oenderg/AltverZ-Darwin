@@ -6004,6 +6004,8 @@ static void guest_cursor_update(void)
         memset(g_cursor_plant, 0, sizeof g_cursor_plant);
         if (pending && vt == (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(0x24d8b60)) {
             g_cursor_kind = TL_PVZ2_CURSOR_SHOVEL;
+        } else if (pending && vt == (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(0x241d3a0)) {
+            g_cursor_kind = TL_PVZ2_CURSOR_PLANT_FOOD;
         } else if (pending && vt == (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(0x2491a60)) {
             bool ok = false;
             uint64_t registry = guest_call2(guest_code(GUEST_UI_REGISTRY), 0, 0, &ok);
@@ -6028,7 +6030,8 @@ static void guest_cursor_update(void)
         }
     }
     tl_pvz2_cursor_snapshot geometry = {0};
-    if (board && pending && (g_cursor_kind == TL_PVZ2_CURSOR_PLANT || g_cursor_kind == TL_PVZ2_CURSOR_SHOVEL)) {
+    if (board && pending && (g_cursor_kind == TL_PVZ2_CURSOR_PLANT || g_cursor_kind == TL_PVZ2_CURSOR_SHOVEL ||
+                             g_cursor_kind == TL_PVZ2_CURSOR_PLANT_FOOD)) {
         uint64_t app = atomic_load(&g_app_object);
         int app_size[2] = {0}, board_xy[2] = {0}, dimensions[2] = {0};
         float camera[3] = {0}, app_scale = 0, row_offset = 0;

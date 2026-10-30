@@ -215,7 +215,7 @@ NSDictionary<NSString *, id> *pvz2_cursor_art(NSString *path)
                 NSString *key = r[@"id"];
                 BOOL wanted = [name isEqualToString:@"UI_SeedPackets_1536"] ? [key hasPrefix:@"IMAGE_UI_PACKETS_"] :
                     [key isEqualToString:@"IMAGE_UI_HUD_INGAME_SHOVEL_ICON"] ||
-                    [key isEqualToString:@"IMAGE_UI_HUD_INGAME_PLANTFOOD_BANK_COLLECT"];
+                    [key isEqualToString:@"IMAGE_UI_HUD_INGAME_PLANTFOOD_BUTTON"];
                 if (!wanted || !r[@"aw"] || !r[@"ah"]) continue;
                 CGImageRef image = crop_image(atlas, width, height, r);
                 if (image) { images[key] = (__bridge id)image; CGImageRelease(image); }
