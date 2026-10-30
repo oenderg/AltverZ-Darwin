@@ -2735,6 +2735,10 @@ static void cursor_preview_tick(void)
         col = tl_cursor_grid_axis(&s, 0, (int)((float)sx + .5f));
         row = tl_cursor_grid_axis(&s, 1, (int)((float)sy + .5f));
         cross = col >= 0 && col < s.columns && row >= 0 && row < s.rows;
+        tl_pvz2_cursor_target((int)((float)sx + .5f), (int)((float)sy + .5f),
+                              cross && s.kind == TL_PVZ2_CURSOR_PLANT);
+        if (cross && s.kind == TL_PVZ2_CURSOR_PLANT)
+            cross = s.placement_known && s.placement_allowed && s.placement_col == col && s.placement_row == row;
         if (cross) {
             int values[8] = {col, col + 1, row, row + 1, 0, s.columns, 0, s.rows};
             int *out[8] = {&x0, &x1, &y0, &y1, &left, &right, &top, &bottom};
@@ -2758,6 +2762,7 @@ static void cursor_preview_tick(void)
             CGPathRelease(path);
         }
     }
+    else tl_pvz2_cursor_target(0, 0, 0);
     g_cursor_cross.hidden = !cross;
     if (visible && s.surface_w > 0 && s.surface_h > 0) {
         CGSize size = g_view.metal.bounds.size;
