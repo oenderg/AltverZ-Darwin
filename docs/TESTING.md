@@ -32,7 +32,7 @@ What it sets (you can set these yourself when running the binary by hand):
 | `TL_PVZ2_LOG` | where the log goes |
 | `TL_PVZ2_CURSOR_CHECK=1` | compare the predicted tile with the native active plant cursor on touch down; log `match`, `MISMATCH`, or an unavailable result |
 | `TL_PVZ2_CURSOR_VALIDITY=1` | log the game's plant-placement result for each requested on-lawn tile and periodic recheck |
-| `TL_PVZ2_CURSOR_STATS=1` | log 300-frame snapshot and host preview costs, including the disabled snapshot cost |
+| `TL_PVZ2_CURSOR_STATS=1` | log 300-frame snapshot and host preview costs, including the disabled snapshot cost, and cross visibility while a new tile is checked |
 | `TL_PVZ2_IMPORT_FROM=<domain>` | import settings once from this domain; background tests otherwise skip import. Use a test bundle ID and test domains only. |
 | `TL_PVZ2_TAP`, `TL_PVZ2_TAP_DELAY` | the tap script, and the seconds before it starts (default 3) |
 | `TL_PVZ2_STATE` | write the current screen, modal and every clickable widget as one JSON line to this file, on change (test builds only) |
@@ -374,6 +374,9 @@ unusual lawn. With `TL_PVZ2_CURSOR_VALIDITY=1`, compare the `allowed` result and
 a native drag over the same tile, including an occupied tile, a gap and a changing tide. The
 picture should remain visible when the plant cross is hidden. Shovel and plant food do not use
 the plant placement check.
+For movement, the `cursor transition` lines count hidden host ticks while a previously allowed
+plant moves to another tile and the game answers. On a rejected tile, the cross must disappear
+when the rejection arrives; the last confirmed band can be retained for at most 100 ms.
 
 The arithmetic regression test needs no game files:
 
