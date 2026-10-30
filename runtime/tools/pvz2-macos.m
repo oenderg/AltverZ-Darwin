@@ -2060,7 +2060,7 @@ static void badges_attach(CAMetalLayer *metal)
     metal.masksToBounds = YES;
     g_cursor_cross = [CAShapeLayer layer];
     g_cursor_cross.hidden = YES;
-    g_cursor_cross.fillColor = [NSColor colorWithCalibratedWhite:1 alpha:0.32].CGColor;
+    g_cursor_cross.fillColor = [NSColor colorWithCalibratedWhite:1 alpha:0.45].CGColor;
     [metal addSublayer:g_cursor_cross];
     g_cursor_layer = [CALayer layer];
     g_cursor_layer.hidden = YES;
