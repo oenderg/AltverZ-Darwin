@@ -110,6 +110,10 @@ answers the few calls into those parts). The pieces that matter here:
   its HD art); the close/quit behaviour; the first-launch OBB download for slim builds; a scripted
   test mode ([TESTING.md](TESTING.md)). Settings UI: `pvz2-macos-settings.swift` (SwiftUI). Icon: the APK's, cut to a Mac icon's shape by
   `macos-icon.swift` at build time.
+  The optional pointer preview adds a passive row-and-column layer beneath the item picture.
+  The game thread publishes the live board transform with the selected cursor; the host finds
+  tile edges by searching the forward mapping. The overlay does not send input or check whether
+  a plant is allowed on the target tile.
 - `pvz2-ios.m`: the iPhone/iPad app. UIKit scene, touch, hardware-keyboard shortcuts, the OBB
   download, files under `Documents/` (visible in the Files app).
 - `regress/build-macos-app.sh`, `regress/build-ios-app.sh`, `regress/build-ios-ipa.sh`: compile the

@@ -251,6 +251,9 @@ typedef struct {
     int live, surface_w, surface_h;
     char plant[24];
     double changed_at;
+    int grid_valid, app_w, app_h, board_x, board_y;
+    int columns, rows;
+    float app_scale, camera_scale, camera_x, camera_y, row_offset;
 } tl_pvz2_cursor_snapshot;
 void tl_pvz2_set_cursor_enabled(int on);
 void tl_pvz2_cursor(tl_pvz2_cursor_snapshot *out);

@@ -45,6 +45,7 @@
 #include "husk-tl-jni.h"
 #include "husk-tl-ld.h"
 #include "husk-tl-pvz2.h"
+#include "husk-tl-cursor-grid.h"
 #include "husk-tl-cdn.h"
 #include "husk-tl-viewport.h"
 #include "pvz2-keys.h"
@@ -1987,6 +1988,7 @@ static unsigned int g_badges_generation;   /* the snapshot last drawn */
 static NSTimer *g_badge_timer;             /* runs only while the setting is on */
 static id g_badge_activity;
 static CALayer *g_cursor_layer;
+static CAShapeLayer *g_cursor_cross;
 static NSTimer *g_cursor_timer;
 static id g_cursor_activity;
 static bool g_cursor_event_known, g_cursor_event_inside;
@@ -2056,6 +2058,10 @@ static void badges_attach(CAMetalLayer *metal)
     g_badges_attached = true;
     /* The badges follow moving packets and never leave the game's picture. */
     metal.masksToBounds = YES;
+    g_cursor_cross = [CAShapeLayer layer];
+    g_cursor_cross.hidden = YES;
+    g_cursor_cross.fillColor = [NSColor colorWithCalibratedWhite:1 alpha:0.32].CGColor;
+    [metal addSublayer:g_cursor_cross];
     g_cursor_layer = [CALayer layer];
     g_cursor_layer.hidden = YES;
     g_cursor_layer.opacity = 0.6;
@@ -2183,6 +2189,7 @@ static double host_now(void)
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
         g_cursor_layer.hidden = YES;
+        g_cursor_cross.hidden = YES;
         g_cursor_layer.contents = nil;
         [CATransaction commit];
         g_cursor_drawn_generation = 0;
@@ -2719,9 +2726,39 @@ static void cursor_preview_tick(void)
         g_cursor_layer.contents = key ? g_cursor_art[key] : nil;
     }
     bool visible = s.live && s.kind != TL_PVZ2_CURSOR_NONE && inside && g_cursor_layer.contents;
+    bool cross = false;
+    int col = -1, row = -1, x0 = 0, x1 = 0, y0 = 0, y1 = 0, left = 0, right = 0, top = 0, bottom = 0;
+    if (visible && (s.kind == TL_PVZ2_CURSOR_PLANT || s.kind == TL_PVZ2_CURSOR_SHOVEL) && s.grid_valid) {
+        col = tl_cursor_grid_axis(&s, 0, (int)((float)sx + .5f));
+        row = tl_cursor_grid_axis(&s, 1, (int)((float)sy + .5f));
+        cross = col >= 0 && col < s.columns && row >= 0 && row < s.rows;
+        if (cross) {
+            int values[8] = {col, col + 1, row, row + 1, 0, s.columns, 0, s.rows};
+            int *out[8] = {&x0, &x1, &y0, &y1, &left, &right, &top, &bottom};
+            for (int i = 0; i < 8; i++) {
+                int axis = i == 2 || i == 3 || i == 6 || i == 7;
+                int lo = 0, hi = axis ? s.surface_h : s.surface_w;
+                while (lo < hi) {
+                    int mid = lo + (hi - lo) / 2;
+                    if (tl_cursor_grid_axis(&s, axis, mid) < values[i]) lo = mid + 1;
+                    else hi = mid;
+                }
+                *out[i] = lo;
+            }
+            CGSize size = g_view.metal.bounds.size;
+            CGFloat xs = size.width / s.surface_w, ys = size.height / s.surface_h;
+            CGMutablePathRef path = CGPathCreateMutable();
+            CGPathAddRect(path, NULL, CGRectMake(left * xs, y0 * ys, (right - left) * xs, (y1 - y0) * ys));
+            CGPathAddRect(path, NULL, CGRectMake(x0 * xs, top * ys, (x1 - x0) * xs, (bottom - top) * ys));
+            g_cursor_cross.frame = g_view.metal.bounds;
+            g_cursor_cross.path = path;
+            CGPathRelease(path);
+        }
+    }
+    g_cursor_cross.hidden = !cross;
     if (visible && s.surface_w > 0 && s.surface_h > 0) {
         CGSize size = g_view.metal.bounds.size;
-        double side = size.height * 0.14;
+        double side = cross ? (y1 - y0) * size.height / s.surface_h : size.height * 0.14;
         g_cursor_layer.frame = CGRectMake(sx * size.width / s.surface_w - side / 2,
                                          sy * size.height / s.surface_h - side / 2, side, side);
     }

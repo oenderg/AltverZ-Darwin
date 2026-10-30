@@ -79,12 +79,22 @@ the pending pointer changes, and publishes the TypeName or shovel kind. Unknown 
 are hidden, including plant food until its cursor vtable is verified. The host draws a passive
 layer inside the game's Metal layer, and never changes input.
 
-The Mac reads `PROPERTIES/RESOURCES.RTON` and the 768 seed-packet and always-loaded atlases from
+The Mac reads `PROPERTIES/RESOURCES.RTON`, the 1536 seed-packet atlas and the 768 always-loaded atlas from
 the player's bundled or downloaded OBB, on a background queue. It uses the resource IDs above
 and the RTON atlas rectangles, premultiplies the straight-alpha RGBA pixels, and caches the
 cropped images for the launch. Missing images are hidden. This avoids depending on a window
 capture, which can fail or return stale pixels. The setting is on by default; launch with
 `-showCursorPlant NO` to turn it off for a test. `TL_PVZ2_CURSOR_STATS=1` logs frame costs.
+
+The pointer cross uses the board's input transform, not fitted screen coordinates. The game
+thread reads app width/height `+0xf4/+0xf8`, app scale `+0x980`, board position `+0x44/+0x48`,
+board scale `+0x460`, pivot `+0x464/+0x468`, and the resolved plant cursor parent's row offset
+`+0xd4`. The shovel's grid uses no parent row offset. Board dimensions `+0xd8/+0xdc` bound the
+cross. The host mirrors the rounding in board input `0xab21dc`, cursor input `0x760a98`, and grid
+conversion `0x9b17d0` / `0x9b17f8`; it searches that forward mapping for tile edges. The game's
+normal drag hides its cross on invalid tiles, whereas this overlay intentionally does not check
+placement validity and can highlight an occupied tile or a water gap. While the board is not live,
+including the level introduction, both pointer layers are hidden.
 
 ## In-level key badges
 

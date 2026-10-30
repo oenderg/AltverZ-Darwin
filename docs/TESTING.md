@@ -28,6 +28,8 @@ What it sets (you can set these yourself when running the binary by hand):
 | `TL_PVZ2_MAIN_TAR` | override the writable CDN cache path; skips bundle staging (use a test copy) |
 | `TL_PVZ2_FRAMES`, `TL_PVZ2_FRAME_EVERY` | save only this app's rendered frame as `latest.bmp` in an existing directory, every N frames; works with the lid closed |
 | `TL_PVZ2_LOG` | where the log goes |
+| `TL_PVZ2_CURSOR_CHECK=1` | compare the predicted tile with the native active plant cursor on touch down; log `match`, `MISMATCH`, or an unavailable result |
+| `TL_PVZ2_CURSOR_STATS=1` | log 300-frame snapshot and host preview costs, including the disabled snapshot cost |
 | `TL_PVZ2_IMPORT_FROM=<domain>` | import settings once from this domain; background tests otherwise skip import. Use a test bundle ID and test domains only. |
 | `TL_PVZ2_TAP`, `TL_PVZ2_TAP_DELAY` | the tap script, and the seconds before it starts (default 3) |
 | `TL_PVZ2_QUIET=1` | a test window: small, in the corner, never takes the focus, never remembered |
@@ -219,6 +221,21 @@ names each action and why it was refused:
 - Outside a level, paused or behind a popup, each logs `ignored: ...` and does nothing.
 
 ## Reading the result
+
+For the pointer cross, use a test bundle ID and copied save, enable `-showCursorPlant YES` and
+`TL_PVZ2_CURSOR_CHECK=1`, then select a plant and click on either side of tile boundaries. The
+`cursor check` line compares the surface point's predicted column and row with the game's active
+cursor during the down. A missing active cursor is not a successful comparison. Capture the
+test's window to see the host overlay: `TL_PVZ2_FRAMES` records the game frame without that layer.
+Test resized and letterboxed windows as well as ordinary windows, and use an isolated save on an
+unusual lawn. The cross deliberately does not report whether planting is allowed.
+
+The arithmetic regression test needs no game files:
+
+```sh
+cc -std=c11 -Iruntime/src/translation-layer-next runtime/tools/regress/test-cursor-grid.c -lm -o /tmp/test-cursor-grid
+/tmp/test-cursor-grid
+```
 
 - Look at the shots yourself. A log that says "drawn" is not a picture of the game.
 - Useful log lines: `pvz2: the game has started` (past start-up, ~9 s), `macos: frames=..., last 5s=..
