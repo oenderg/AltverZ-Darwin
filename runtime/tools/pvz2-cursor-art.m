@@ -189,7 +189,7 @@ NSDictionary<NSString *, id> *pvz2_cursor_art(NSString *path)
             const uint8_t *e = (const uint8_t *)entries.bytes + (size_t)i * stride;
             if (!memchr(e, 0, 0x80)) continue;
             if (!strcmp((const char *)e, "__MANIFESTGROUP__")) manifest = e;
-            else if (!strcmp((const char *)e, "UI_SeedPackets_768")) packets = e;
+            else if (!strcmp((const char *)e, "UI_SeedPackets_1536")) packets = e;
             else if (!strcmp((const char *)e, "UI_AlwaysLoaded_768")) hud = e;
         }
         if (!manifest || !packets || !hud) @throw @"missing OBB groups";
@@ -201,7 +201,7 @@ NSDictionary<NSString *, id> *pvz2_cursor_art(NSString *path)
         NSMutableDictionary *images = [NSMutableDictionary dictionary];
         for (NSDictionary *group in root[@"groups"]) {
             NSString *name = group[@"id"];
-            const uint8_t *entry = [name isEqualToString:@"UI_SeedPackets_768"] ? packets :
+            const uint8_t *entry = [name isEqualToString:@"UI_SeedPackets_1536"] ? packets :
                                    [name isEqualToString:@"UI_AlwaysLoaded_768"] ? hud : NULL;
             if (!entry || u32(entry + 0xc4) != 1) continue;
             uint32_t index = u32(entry + 0xc8);
@@ -213,7 +213,7 @@ NSDictionary<NSString *, id> *pvz2_cursor_art(NSString *path)
             if (!atlas) continue;
             for (NSDictionary *r in group[@"resources"]) {
                 NSString *key = r[@"id"];
-                BOOL wanted = [name isEqualToString:@"UI_SeedPackets_768"] ? [key hasPrefix:@"IMAGE_UI_PACKETS_"] :
+                BOOL wanted = [name isEqualToString:@"UI_SeedPackets_1536"] ? [key hasPrefix:@"IMAGE_UI_PACKETS_"] :
                     [key isEqualToString:@"IMAGE_UI_HUD_INGAME_SHOVEL_ICON"] ||
                     [key isEqualToString:@"IMAGE_UI_HUD_INGAME_PLANTFOOD_BANK_COLLECT"];
                 if (!wanted || !r[@"aw"] || !r[@"ah"]) continue;
@@ -221,6 +221,12 @@ NSDictionary<NSString *, id> *pvz2_cursor_art(NSString *path)
                 if (image) { images[key] = (__bridge id)image; CGImageRelease(image); }
             }
         }
+        size_t bytes = 0;
+        for (id value in images.allValues) {
+            CGImageRef image = (__bridge CGImageRef)value;
+            bytes += CGImageGetBytesPerRow(image) * CGImageGetHeight(image);
+        }
+        NSLog(@"cursor art: %lu decoded image bytes", (unsigned long)bytes);
         result = images;
     } @catch (id error) {
         NSLog(@"cursor art: %@", error);
