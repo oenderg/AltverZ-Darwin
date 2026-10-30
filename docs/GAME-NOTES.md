@@ -92,6 +92,8 @@ board scale `+0x460`, pivot `+0x464/+0x468`, and the resolved plant cursor paren
 `+0xd4`. The shovel's grid uses no parent row offset. Board dimensions `+0xd8/+0xdc` bound the
 cross. The host mirrors the rounding in board input `0xab21dc`, cursor input `0x760a98`, and grid
 conversion `0x9b17d0` / `0x9b17f8`; it searches that forward mapping for tile edges. The game's
+plant-specific row offset selects the row but does not shift its drawn band.
+The game's
 normal drag hides its cross on invalid tiles, whereas this overlay intentionally does not check
 placement validity and can highlight an occupied tile or a water gap. While the board is not live,
 including the level introduction, both pointer layers are hidden.

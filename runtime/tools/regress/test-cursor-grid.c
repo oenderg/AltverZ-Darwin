@@ -18,6 +18,11 @@ int main(void)
     assert(tl_cursor_grid_axis(&s, 0, 1044) == 3);
     assert(tl_cursor_grid_axis(&s, 1, 465) == 2);
     assert(tl_cursor_grid_axis(&s, 1, 466) == 3);
+    s.row_offset = 15;
+    assert(tl_cursor_grid_axis(&s, 1, 465) == 3);
+    assert(tl_cursor_grid_band_axis(&s, 1, 465) == 2);
+    assert(tl_cursor_grid_band_axis(&s, 1, 466) == 3);
+    s.row_offset = 0;
     s.surface_w = 1200; s.surface_h = 552;
     assert(tl_cursor_grid_axis(&s, 0, 716) == 2);
     assert(tl_cursor_grid_axis(&s, 0, 717) == 3);

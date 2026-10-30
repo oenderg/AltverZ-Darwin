@@ -4778,6 +4778,14 @@ static void guest_cursor_update(void)
             geometry.row_offset = row_offset;
         }
     }
+    if (getenv("TL_PVZ2_CURSOR_STATS")) {
+        static uint64_t last_pending;
+        if (pending != last_pending) {
+            last_pending = pending;
+            if (pending) tl_log_line("pvz2: cursor probe: plant %s kind %d row_offset %.2f valid %d",
+                                     g_cursor_plant, g_cursor_kind, geometry.row_offset, geometry.grid_valid);
+        }
+    }
     pthread_mutex_lock(&g_cursor_lock);
     if (!atomic_load(&g_cursor_enabled) || epoch != atomic_load(&g_cursor_epoch)) {
         pthread_mutex_unlock(&g_cursor_lock);

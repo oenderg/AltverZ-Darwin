@@ -2740,7 +2740,7 @@ static void cursor_preview_tick(void)
                 int lo = 0, hi = axis ? s.surface_h : s.surface_w;
                 while (lo < hi) {
                     int mid = lo + (hi - lo) / 2;
-                    if (tl_cursor_grid_axis(&s, axis, mid) < values[i]) lo = mid + 1;
+                    if (tl_cursor_grid_band_axis(&s, axis, mid) < values[i]) lo = mid + 1;
                     else hi = mid;
                 }
                 *out[i] = lo;
