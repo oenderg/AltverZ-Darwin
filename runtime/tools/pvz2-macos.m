@@ -937,6 +937,15 @@ static void *tapper(void *arg)
             sleep(2);
             continue;
         }
+        if (!strncmp(tok, "brightness:", 11)) {
+            double value = atof(tok + 11);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[NSUserDefaults standardUserDefaults] setDouble:value forKey:@"cursorCrossBrightness"];
+                tl_log_line("macos: test sets cursor cross brightness %.2f", value);
+            });
+            sleep(2);
+            continue;
+        }
         int screen_no;
         if (sscanf(tok, "screen:%d", &screen_no) == 1) {
             /* The window onto another display (its top left corner, same size). */
@@ -1212,6 +1221,7 @@ static NSString *const kPowerupKey[PVZ2_POWERUP_COUNT] = {
 };
 static NSString *const kShowLevelKeys = @"showLevelKeys";   /* the in-level key badges */
 static NSString *const kShowCursorPlant = @"showCursorPlant";
+static NSString *const kCursorCrossBrightness = @"cursorCrossBrightness";
 static NSString *const kPacketX = @"packetX";         /* the first packet's centre */
 static NSString *const kPacketY = @"packetY";
 static NSString *const kPacketStep = @"packetStep";   /* how far apart they are */
@@ -1390,6 +1400,12 @@ static bool show_cursor_plant(void)
 {
     id value = [[NSUserDefaults standardUserDefaults] objectForKey:kShowCursorPlant];
     return value ? [value boolValue] : true;
+}
+
+static double cursor_cross_brightness(void)
+{
+    double value = setting_double(kCursorCrossBrightness, 0.45);
+    return isfinite(value) ? fmin(1.0, fmax(0.0, value)) : 0.45;
 }
 
 /* A point of the surface's pixels, in the game's own 1748x804 space: the
@@ -2060,7 +2076,7 @@ static void badges_attach(CAMetalLayer *metal)
     metal.masksToBounds = YES;
     g_cursor_cross = [CAShapeLayer layer];
     g_cursor_cross.hidden = YES;
-    g_cursor_cross.fillColor = [NSColor colorWithCalibratedWhite:1 alpha:0.45].CGColor;
+    g_cursor_cross.fillColor = [NSColor colorWithCalibratedWhite:1 alpha:cursor_cross_brightness()].CGColor;
     [metal addSublayer:g_cursor_cross];
     g_cursor_layer = [CALayer layer];
     g_cursor_layer.hidden = YES;
@@ -2174,6 +2190,16 @@ static double host_now(void)
 
 - (void)cursorSettingChanged
 {
+    double brightness = cursor_cross_brightness();
+    static double last_brightness = -1;
+    if (brightness != last_brightness) {
+        last_brightness = brightness;
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        g_cursor_cross.fillColor = [NSColor colorWithCalibratedWhite:1 alpha:brightness].CGColor;
+        [CATransaction commit];
+        tl_log_line("macos: cursor cross brightness %.2f", brightness);
+    }
     bool on = show_cursor_plant();
     static int logged = -1;
     if (logged != (int)on) {

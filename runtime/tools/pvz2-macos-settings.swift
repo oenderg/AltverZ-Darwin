@@ -39,6 +39,7 @@ private enum Key {
     /// The in-level key badges, off by default.
     static let showLevelKeys = "showLevelKeys"
     static let showCursorPlant = "showCursorPlant"
+    static let cursorCrossBrightness = "cursorCrossBrightness"
     /// Sparkle's own key; the host hands a change to the updater
     static let automaticChecks = "SUEnableAutomaticChecks"
 }
@@ -372,6 +373,7 @@ private struct GeneralPane: View {
 private struct KeyboardPane: View {
     @AppStorage(Key.showLevelKeys) private var showLevelKeys = false
     @AppStorage(Key.showCursorPlant) private var showCursorPlant = true
+    @AppStorage(Key.cursorCrossBrightness) private var cursorCrossBrightness = 0.45
 
     var body: some View {
         Pane {
@@ -396,6 +398,16 @@ private struct KeyboardPane: View {
                     Toggle("", isOn: $showCursorPlant)
                         .toggleStyle(.switch)
                         .labelsHidden()
+                }
+                ResettableRow(title: "Cross brightness", isDefault: cursorCrossBrightness == 0.45,
+                              reset: { cursorCrossBrightness = 0.45 }) {
+                    HStack(spacing: 8) {
+                        Slider(value: $cursorCrossBrightness, in: 0...1)
+                            .frame(width: 140)
+                        Text("\(Int(((cursorCrossBrightness.isFinite ? min(max(cursorCrossBrightness, 0), 1) : 0.45) * 100).rounded()))%")
+                            .monospacedDigit()
+                            .frame(width: 42, alignment: .trailing)
+                    }
                 }
                 KeyRow(label: "Fast-forward", key: Key.fastForward, fallback: Key.defaultFastForward)
                 KeyRow(label: "Plant food", key: Key.plantFood, fallback: Key.defaultPlantFood)
