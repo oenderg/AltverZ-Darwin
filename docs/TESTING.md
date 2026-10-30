@@ -31,6 +31,7 @@ What it sets (you can set these yourself when running the binary by hand):
 | `TL_PVZ2_FRAMES`, `TL_PVZ2_FRAME_EVERY` | save only this app's rendered frame as `latest.bmp` in an existing directory, every N frames; works with the lid closed |
 | `TL_PVZ2_LOG` | where the log goes |
 | `TL_PVZ2_CURSOR_CHECK=1` | compare the predicted tile with the native active plant cursor on touch down; log `match`, `MISMATCH`, or an unavailable result |
+| `TL_PVZ2_CURSOR_VALIDITY=1` | log the game's plant-placement result for each requested on-lawn tile and periodic recheck |
 | `TL_PVZ2_CURSOR_STATS=1` | log 300-frame snapshot and host preview costs, including the disabled snapshot cost |
 | `TL_PVZ2_IMPORT_FROM=<domain>` | import settings once from this domain; background tests otherwise skip import. Use a test bundle ID and test domains only. |
 | `TL_PVZ2_TAP`, `TL_PVZ2_TAP_DELAY` | the tap script, and the seconds before it starts (default 3) |
@@ -369,7 +370,10 @@ test's window to see the host overlay: `TL_PVZ2_FRAMES` records the game frame w
 For plant food, stock the counter in a copied save, pick it up with Q or a click, and check that
 the leaf and cross disappear after it is used on a plant.
 Test resized and letterboxed windows as well as ordinary windows, and use an isolated save on an
-unusual lawn. The cross deliberately does not report whether planting is allowed.
+unusual lawn. With `TL_PVZ2_CURSOR_VALIDITY=1`, compare the `allowed` result and the cross with
+a native drag over the same tile, including an occupied tile, a gap and a changing tide. The
+picture should remain visible when the plant cross is hidden. Shovel and plant food do not use
+the plant placement check.
 
 The arithmetic regression test needs no game files:
 

@@ -3089,6 +3089,28 @@ static uint64_t guest_call3(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, boo
     return 0;
 }
 
+static uint64_t guest_call4(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, bool *ok)
+{
+    register void *x16 __asm__("x16") = fn;
+    register uint64_t x0 __asm__("x0") = a0;
+    register uint64_t x1 __asm__("x1") = a1;
+    register uint64_t x2 __asm__("x2") = a2;
+    register uint64_t x3 __asm__("x3") = a3;
+    *ok = false;
+    if (!fn) return 0;
+    guest_guard_enter();
+    if (sigsetjmp(g_guest_jmp, 1) == 0) {
+        __asm__ volatile("blr %4" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x16) : :
+                         "x4","x5","x6","x7","x8","x9","x10","x11","x12","x13","x14","x15","x17","memory","cc");
+        guest_guard_leave();
+        *ok = true;
+        return x0;
+    }
+    guest_guard_leave();
+    tl_log_line("pvz2: cursor placement check: guest call faulted (signal %d)", (int)g_guest_fault);
+    return 0;
+}
+
 /* Raw versions for a batch that has entered the guard once. Installing and
  * restoring two signal handlers is four sigaction system calls, and the badge
  * snapshot makes a dozen guest calls a frame: the batch is what keeps that
@@ -5919,9 +5941,66 @@ static atomic_int g_cursor_enabled;
 static atomic_uint g_cursor_epoch;
 static pthread_mutex_t g_cursor_lock = PTHREAD_MUTEX_INITIALIZER;
 static tl_pvz2_cursor_snapshot g_cursor_published;
+static atomic_uint_fast64_t g_cursor_target;
 static uint64_t g_cursor_board, g_cursor_pending, g_cursor_parent;
 static int g_cursor_kind;
 static char g_cursor_plant[24];
+
+/* The native cursor initializes this service on its first validity query. */
+static uint64_t guest_cursor_placement_service(void)
+{
+    static bool init_failed;
+    uint64_t singleton = 0;
+    if (init_failed) return 0;
+    void *slot = tl_aot_guest_data_ptr_any(0x256ad20);
+    if (!slot || !guest_read_bytes((uint64_t)(uintptr_t)slot, &singleton, sizeof singleton)) return 0;
+    if (singleton) return singleton;
+    bool ok = false;
+    uint64_t object = guest_call2(guest_code(0x531190), 8, 0, &ok);
+    if (!ok || !object) return 0;
+    guest_call2(guest_code(0x9b9a50), object, 0, &ok);
+    if (!ok) { init_failed = true; return 0; }
+    if (!guest_read_bytes((uint64_t)(uintptr_t)slot, &singleton, sizeof singleton)) return 0;
+    return singleton;
+}
+
+static void guest_cursor_placement(tl_pvz2_cursor_snapshot *geometry, uint64_t board, uint64_t pending)
+{
+    static uint64_t last_board, last_pending;
+    static int last_col = -1, last_row = -1, known, allowed;
+    static double last_check;
+    uint64_t target = atomic_load(&g_cursor_target);
+    if (!target || !geometry->grid_valid || !board || !pending || g_cursor_kind != TL_PVZ2_CURSOR_PLANT) {
+        last_board = last_pending = 0; known = 0;
+        return;
+    }
+    int x = (int)(uint32_t)(target >> 32) - 1;
+    int y = (int)(uint32_t)target - 1;
+    int col = tl_cursor_grid_axis(geometry, 0, x), row = tl_cursor_grid_axis(geometry, 1, y);
+    if (col < 0 || col >= geometry->columns || row < 0 || row >= geometry->rows) {
+        last_board = last_pending = 0; known = 0;
+        return;
+    }
+    double now = now_s();
+    if (board != last_board || pending != last_pending || col != last_col || row != last_row || now - last_check >= 0.25) {
+        last_board = board; last_pending = pending; last_col = col; last_row = row; last_check = now;
+        known = 0;
+        uint64_t singleton = guest_cursor_placement_service();
+        uint32_t mode = 0;
+        bool ok = false;
+        int tile[2] = {col, row};
+        if (singleton && guest_read_bytes(pending + 0x4c, &mode, sizeof mode)) {
+            uint64_t result = guest_call4(guest_code(0x9ba7f4), singleton,
+                                          (uint64_t)(uintptr_t)tile, pending + 0x40, mode, &ok);
+            if (ok) { known = 1; allowed = (result & 1) != 0; }
+        }
+        if (getenv("TL_PVZ2_CURSOR_VALIDITY"))
+            tl_log_line("pvz2: cursor validity: %s tile %d,%d known %d allowed %d", g_cursor_plant, col, row, known, known && allowed);
+    }
+    geometry->placement_known = known;
+    geometry->placement_allowed = allowed;
+    geometry->placement_col = col; geometry->placement_row = row;
+}
 
 /* The live-board predicate and pending cursor share one fault guard. */
 static uint64_t guest_cursor_live_probe(uint64_t *pending, uint64_t *vt)
@@ -6051,6 +6130,8 @@ static void guest_cursor_update(void)
             geometry.row_offset = row_offset;
         }
     }
+    geometry.surface_w = P.w; geometry.surface_h = P.h;
+    guest_cursor_placement(&geometry, board, pending);
     if (getenv("TL_PVZ2_CURSOR_STATS")) {
         static uint64_t last_pending;
         if (pending != last_pending) {
@@ -6088,6 +6169,10 @@ static void guest_cursor_update(void)
     g_cursor_published.app_scale = geometry.app_scale; g_cursor_published.camera_scale = geometry.camera_scale;
     g_cursor_published.camera_x = geometry.camera_x; g_cursor_published.camera_y = geometry.camera_y;
     g_cursor_published.row_offset = geometry.row_offset;
+    g_cursor_published.placement_known = geometry.placement_known;
+    g_cursor_published.placement_allowed = geometry.placement_allowed;
+    g_cursor_published.placement_col = geometry.placement_col;
+    g_cursor_published.placement_row = geometry.placement_row;
     pthread_mutex_unlock(&g_cursor_lock);
     if (getenv("TL_PVZ2_CURSOR_STATS")) {
         static double total, worst;
@@ -6106,6 +6191,7 @@ void tl_pvz2_set_cursor_enabled(int on)
 {
     int next = on != 0;
     if (atomic_exchange(&g_cursor_enabled, next) == next) return;
+    if (!on) atomic_store(&g_cursor_target, 0);
     atomic_fetch_add(&g_cursor_epoch, 1);
     if (on) return;
     pthread_mutex_lock(&g_cursor_lock);
@@ -6115,6 +6201,14 @@ void tl_pvz2_set_cursor_enabled(int on)
     ++g_cursor_published.generation;
     g_cursor_published.changed_at = now_s();
     pthread_mutex_unlock(&g_cursor_lock);
+}
+
+void tl_pvz2_cursor_target(int x, int y, int on)
+{
+    uint64_t value = 0;
+    if (on && x >= 0 && y >= 0 && x < 100000 && y < 100000)
+        value = ((uint64_t)(uint32_t)(x + 1) << 32) | (uint32_t)(y + 1);
+    atomic_store(&g_cursor_target, value);
 }
 
 void tl_pvz2_cursor(tl_pvz2_cursor_snapshot *out)

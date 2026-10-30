@@ -92,10 +92,13 @@ board scale `+0x460`, pivot `+0x464/+0x468`, and the resolved plant cursor paren
 `+0xd4`. The shovel's grid uses no parent row offset. Board dimensions `+0xd8/+0xdc` bound the
 cross. The host mirrors the rounding in board input `0xab21dc`, cursor input `0x760a98`, and grid
 conversion `0x9b17d0` / `0x9b17f8`; it searches that forward mapping for tile edges. The game's
-plant-specific row offset selects the row but does not shift its drawn band.
-The game's
-normal drag hides its cross on invalid tiles, whereas this overlay intentionally does not check
-placement validity and can highlight an occupied tile or a water gap. While the board is not live,
+plant-specific row offset selects the row but does not shift its drawn band. For a plant, the host
+posts the pointer's surface coordinate to the game thread, which calls the native placement check
+`0x9ba7f4` with the tile, pending cursor reference `+0x40` and mode `+0x4c`. The service at
+`0x256ad20` is lazily initialized using the game's own constructor `0x9b9a50`. The result is
+rechecked on a tile or selection change and every quarter second while still; only the cross is
+hidden on an invalid tile. Shovel and plant food retain their cross without this plant-only check.
+While the board is not live,
 including the level introduction, both pointer layers are hidden.
 The picture uses 65% of the geometry's row height throughout the game view, including off the
 lawn, so it scales with the board without changing size at the lawn edge.
