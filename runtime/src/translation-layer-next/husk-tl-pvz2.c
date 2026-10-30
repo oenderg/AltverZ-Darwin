@@ -4649,9 +4649,49 @@ static atomic_int g_cursor_enabled;
 static atomic_uint g_cursor_epoch;
 static pthread_mutex_t g_cursor_lock = PTHREAD_MUTEX_INITIALIZER;
 static tl_pvz2_cursor_snapshot g_cursor_published;
-static uint64_t g_cursor_board, g_cursor_pending;
+static uint64_t g_cursor_board, g_cursor_pending, g_cursor_parent;
 static int g_cursor_kind;
 static char g_cursor_plant[24];
+
+/* The live-board predicate and pending cursor share one fault guard. */
+static uint64_t guest_cursor_live_probe(uint64_t *pending, uint64_t *vt)
+{
+    guest_guard_enter();
+    if (sigsetjmp(g_guest_jmp, 1) != 0) {
+        *pending = *vt = 0;
+        guest_guard_leave();
+        return 0;
+    }
+    uint64_t board = guest_live_board_probe_raw(true, NULL, NULL, NULL, NULL);
+    if (board) {
+        guest_read_bytes_raw(board + 0x408, pending, sizeof *pending);
+        if (*pending) guest_read_bytes_raw(*pending, vt, sizeof *vt);
+    }
+    guest_guard_leave();
+    return board;
+}
+
+/* One guard protects the whole geometry read instead of a Mach read per field. */
+static bool guest_cursor_geometry_read(uint64_t app, uint64_t board, uint64_t parent,
+                                       bool plant, int *app_size, int *board_xy,
+                                       int *dimensions, float *camera, float *app_scale,
+                                       float *row_offset)
+{
+    if (!app || !board || (plant && !parent)) return false;
+    guest_guard_enter();
+    if (sigsetjmp(g_guest_jmp, 1) != 0) {
+        guest_guard_leave();
+        return false;
+    }
+    guest_read_bytes_raw(app + 0xf4, app_size, 2 * sizeof *app_size);
+    guest_read_bytes_raw(app + 0x980, app_scale, sizeof *app_scale);
+    guest_read_bytes_raw(board + 0x44, board_xy, 2 * sizeof *board_xy);
+    guest_read_bytes_raw(board + 0xd8, dimensions, 2 * sizeof *dimensions);
+    guest_read_bytes_raw(board + 0x460, camera, 3 * sizeof *camera);
+    if (plant) guest_read_bytes_raw(parent + 0xd4, row_offset, sizeof *row_offset);
+    guest_guard_leave();
+    return true;
+}
 
 static void guest_cursor_update(void)
 {
@@ -4662,12 +4702,12 @@ static void guest_cursor_update(void)
     unsigned epoch = atomic_load(&g_cursor_epoch);
     if (epoch != last_epoch) {
         last_epoch = epoch;
-        g_cursor_board = g_cursor_pending = 0;
+        g_cursor_board = g_cursor_pending = g_cursor_parent = 0;
         g_cursor_kind = TL_PVZ2_CURSOR_NONE;
         g_cursor_plant[0] = 0;
     }
     if (!atomic_load(&g_cursor_enabled)) {
-        g_cursor_board = g_cursor_pending = 0;
+        g_cursor_board = g_cursor_pending = g_cursor_parent = 0;
         g_cursor_kind = TL_PVZ2_CURSOR_NONE;
         g_cursor_plant[0] = 0;
         if (stats_enabled) {
@@ -4684,20 +4724,12 @@ static void guest_cursor_update(void)
         return;
     }
     double started = now_s();
-    uint64_t board = guest_live_board_probe(NULL, NULL, NULL), pending = 0, vt = 0;
-    if (board) {
-        guest_guard_enter();
-        if (sigsetjmp(g_guest_jmp, 1) == 0) {
-            guest_read_bytes_raw(board + 0x408, &pending, sizeof pending);
-            if (pending) guest_read_bytes_raw(pending, &vt, sizeof vt);
-        } else {
-            pending = 0;
-        }
-        guest_guard_leave();
-    }
+    uint64_t pending = 0, vt = 0;
+    uint64_t board = guest_cursor_live_probe(&pending, &vt);
     if (board != g_cursor_board || pending != g_cursor_pending) {
         g_cursor_board = board;
         g_cursor_pending = pending;
+        g_cursor_parent = 0;
         g_cursor_kind = TL_PVZ2_CURSOR_NONE;
         memset(g_cursor_plant, 0, sizeof g_cursor_plant);
         if (pending && vt == (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(0x24d8b60)) {
@@ -4720,6 +4752,8 @@ static void guest_cursor_update(void)
                 size_t n = str[0] >> 1;
                 memcpy(g_cursor_plant, str + 1, n);
                 g_cursor_kind = TL_PVZ2_CURSOR_PLANT;
+                uint64_t image = registry ? guest_collectable_from_ref(registry, (uint64_t *)(uintptr_t)(pending + 0x40), &ok) : 0;
+                g_cursor_parent = ok && image ? guest_collectable_from_ref(registry, (uint64_t *)(uintptr_t)(image + 0x68), &ok) : 0;
             }
         }
     }
@@ -4728,20 +4762,8 @@ static void guest_cursor_update(void)
         uint64_t app = atomic_load(&g_app_object);
         int app_size[2] = {0}, board_xy[2] = {0}, dimensions[2] = {0};
         float camera[3] = {0}, app_scale = 0, row_offset = 0;
-        bool ok = true;
-        uint64_t parent = 0;
-        if (g_cursor_kind == TL_PVZ2_CURSOR_PLANT) {
-            uint64_t registry = guest_call2(guest_code(GUEST_UI_REGISTRY), 0, 0, &ok);
-            uint64_t image = ok && registry ? guest_collectable_from_ref(registry, (uint64_t *)(uintptr_t)(pending + 0x40), &ok) : 0;
-            parent = ok && image ? guest_collectable_from_ref(registry, (uint64_t *)(uintptr_t)(image + 0x68), &ok) : 0;
-            ok = ok && parent && guest_read_bytes(parent + 0xd4, &row_offset, sizeof row_offset);
-        }
-        if (app && ok &&
-            guest_read_bytes(app + 0xf4, app_size, sizeof app_size) &&
-            guest_read_bytes(app + 0x980, &app_scale, sizeof app_scale) &&
-            guest_read_bytes(board + 0x44, board_xy, sizeof board_xy) &&
-            guest_read_bytes(board + 0xd8, dimensions, sizeof dimensions) &&
-            guest_read_bytes(board + 0x460, camera, sizeof camera) &&
+        if (guest_cursor_geometry_read(app, board, g_cursor_parent, g_cursor_kind == TL_PVZ2_CURSOR_PLANT,
+                                       app_size, board_xy, dimensions, camera, &app_scale, &row_offset) &&
             app_size[0] > 0 && app_size[1] > 0 && isfinite(app_scale) && app_scale > 0 &&
             isfinite(camera[0]) && camera[0] > 0 && isfinite(camera[1]) && isfinite(camera[2]) &&
             isfinite(row_offset) && fabsf(row_offset) < 100000 &&

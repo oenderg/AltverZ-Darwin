@@ -2758,7 +2758,10 @@ static void cursor_preview_tick(void)
     g_cursor_cross.hidden = !cross;
     if (visible && s.surface_w > 0 && s.surface_h > 0) {
         CGSize size = g_view.metal.bounds.size;
-        double side = cross ? (y1 - y0) * size.height / s.surface_h : size.height * 0.14;
+        /* The packet picture is larger than the lawn plant at a full row height. */
+        double row_height = s.grid_valid ? 76.0 * s.app_scale * s.camera_scale * size.height / s.app_h
+                                         : size.height * 0.14;
+        double side = row_height * 0.65;
         g_cursor_layer.frame = CGRectMake(sx * size.width / s.surface_w - side / 2,
                                          sy * size.height / s.surface_h - side / 2, side, side);
     }

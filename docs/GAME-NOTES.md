@@ -74,8 +74,8 @@ through a guard that turns a fault into a log line instead of a crash.
 ## Selected item at the pointer
 
 The Mac reads a separate selection snapshot on the game thread after each frame. It uses the
-same live-play predicate as the badges, resolves the plant cursor's packet reference only when
-the pending pointer changes, and publishes the TypeName or shovel kind. Unknown cursor classes
+same live-play predicate as the badges, resolves the plant cursor's packet and parent references
+only when the pending pointer changes, and publishes the TypeName or shovel kind. Unknown cursor classes
 are hidden, including plant food until its cursor vtable is verified. The host draws a passive
 layer inside the game's Metal layer, and never changes input.
 
@@ -95,6 +95,8 @@ conversion `0x9b17d0` / `0x9b17f8`; it searches that forward mapping for tile ed
 normal drag hides its cross on invalid tiles, whereas this overlay intentionally does not check
 placement validity and can highlight an occupied tile or a water gap. While the board is not live,
 including the level introduction, both pointer layers are hidden.
+The picture uses 65% of the geometry's row height throughout the game view, including off the
+lawn, so it scales with the board without changing size at the lawn edge.
 
 ## In-level key badges
 
