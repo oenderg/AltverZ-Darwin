@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from aotlib import Elf, sdk_for_target
+from aotlib import Elf, sdk_for_target, MACOS_TARGET
 
 # Symbols that are data, not functions. Defining one of these as a function would compile
 # and then fault at run time on the caller's side, so they are declared as objects.
@@ -146,7 +146,7 @@ def imports_of(paths):
     return out
 
 
-def probe(names, target="arm64-apple-macos", driver="clang++", link=()):
+def probe(names, target=MACOS_TARGET, driver="clang++", link=()):
     """The subset of `names` the linker cannot resolve against the system libraries.
 
     One link answers the whole question. The references are emitted in assembly rather
@@ -223,7 +223,7 @@ def main(argv):
                     help="forward this name to the translation layer's own implementation")
     ap.add_argument("--forward-data", action="append", default=[],
                     help="define this imported constant as storage the host fills in")
-    ap.add_argument("--target", default="arm64-apple-macos")
+    ap.add_argument("--target", default=MACOS_TARGET)
     ap.add_argument("--driver", default="clang++",
                     help="the clang driver to ask; match whatever the target links with")
     ap.add_argument("--record", default=None,

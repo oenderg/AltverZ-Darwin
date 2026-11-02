@@ -40,6 +40,15 @@ ABS64 = 257
 # relocation types whose slot is a GOT entry bound to an imported symbol
 BIND_TYPES = {1025, 1026}
 
+# The Mac target, with the oldest macOS the app supports in it. A triple without a version
+# ("arm64-apple-macos") means "the macOS this build runs on": a library built on a macOS 26
+# runner then refuses to load on anything older (issue #18: 1.2.0 would not open on 15).
+# It also decides what the shim probe finds in libSystem: the SDK hides names that are
+# newer than the target, so the probe gives those a placeholder rather than binding the
+# game to a function the oldest supported macOS does not have.
+# runtime/tools/regress/build-macos-app.sh has the same version (MACOS_MIN) and checks it.
+MACOS_TARGET = "arm64-apple-macos14.0"
+
 
 def sdk_for_target(target):
     """Which SDK a clang target triple wants, or None for macOS (where the default is

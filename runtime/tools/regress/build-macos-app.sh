@@ -44,6 +44,13 @@ OUT="${1:-$R/build/pvz2-macos}"
 APP="$OUT/PvZ2 Reflourished.app"
 AOT_DYLIB_DIR="${AOT_DYLIB_DIR:-$R/build/macos-dylibs}"
 OBB_NAME="${OBB_NAME:-main.675.com.ea.game.pvz2_rfl.obb}"
+# The oldest macOS the app runs on. The settings window needs 14 (SwiftUI's @Observable and
+# toolbar(removing:)). Every piece is built for it explicitly: without a version clang takes
+# the build machine's own, and an app built on a macOS 26 runner then refuses to open on
+# anything older, whatever LSMinimumSystemVersion says (issue #18). The converted libraries
+# take the same version from converter/aotlib.py (MACOS_TARGET); the check after signing
+# fails the build if any of the bundle's code asks for more.
+MACOS_MIN="${MACOS_MIN:-14.0}"
 SPARKLE_DIR="${SPARKLE_DIR:-$R/build/sparkle}"
 SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/sparkle/appcast.xml}"
 if [ -z "${SPARKLE_PUBLIC_KEY:-}" ] && [ -f "$R/../sparkle/public-key" ]; then
@@ -78,10 +85,13 @@ SRCS="$R/tools/pvz2-macos.m $(pvz2_runtime_sources | tr '\n' ' ')"
 # The settings window is SwiftUI: one Swift file, compiled to an object and linked
 # with the rest (the Swift runtime is the system's own).
 SWIFT_OBJ="$(mktemp -d)/settings.o"
-xcrun swiftc -c -parse-as-library -O -target arm64-apple-macos14.0 \
+xcrun swiftc -c -parse-as-library -O -target "arm64-apple-macos$MACOS_MIN" \
     "$R/tools/pvz2-macos-settings.swift" -o "$SWIFT_OBJ"
 SWIFT_LIB="$(dirname "$(xcrun -f swiftc)")/../lib/swift/macosx"
-clang -g -O1 -fobjc-arc -Wall -Wno-unused-function -Wno-deprecated-declarations \
+# -Werror=unguarded-availability-new: a call to anything newer than MACOS_MIN outside an
+# @available check is a crash on the oldest supported macOS, so it does not build.
+clang -target "arm64-apple-macos$MACOS_MIN" -g -O1 -fobjc-arc \
+    -Wall -Wno-unused-function -Wno-deprecated-declarations -Werror=unguarded-availability-new \
     -I"$T" -I"$N" -F"$SPARKLE_DIR" \
     "$SWIFT_OBJ" -L"$SWIFT_LIB" -L/usr/lib/swift -Wl,-rpath,/usr/lib/swift \
     -Wl,-U,_husk_native_loaded_apk \
@@ -161,7 +171,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleVersion</key><string>${APP_BUILD}</string>
 	<key>CFBundleShortVersionString</key><string>${APP_VERSION}</string>
 	<key>PVZ2GameVersion</key><string>${GAME_VERSION}</string>
-	<key>LSMinimumSystemVersion</key><string>12.0</string>
+	<key>LSMinimumSystemVersion</key><string>${MACOS_MIN}</string>
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSSupportsAutomaticGraphicsSwitching</key><true/>
 </dict>
@@ -223,6 +233,25 @@ for d in "$APP/Contents/Frameworks"/*.dylib; do
     codesign --force --timestamp=none --sign - "$d"
 done
 codesign --force --timestamp=none --sign - "$APP"
+
+# Every piece of code in the bundle has to load on MACOS_MIN. macOS reads each one's own
+# minimum (LC_BUILD_VERSION, or LC_VERSION_MIN_MACOSX in older ones) and refuses the app
+# when the main executable's is newer than the running system, and a library when its own
+# is; LSMinimumSystemVersion alone promises nothing.
+echo "==> checking that everything runs on macOS $MACOS_MIN"
+too_new=0
+while IFS= read -r -d '' f; do
+    file -b "$f" | grep -q Mach-O || continue
+    for v in $(otool -arch arm64 -l "$f" 2>/dev/null | awk '
+        /cmd LC_BUILD_VERSION/ { b = 1 } b && $1 == "minos" { print $2; b = 0 }
+        /cmd LC_VERSION_MIN_MACOSX/ { m = 1 } m && $1 == "version" { print $2; m = 0 }'); do
+        if [ "$(printf '%s\n%s\n' "$MACOS_MIN" "$v" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" != "$MACOS_MIN" ]; then
+            echo "    ${f#"$APP/"} needs macOS $v" >&2
+            too_new=1
+        fi
+    done
+done < <(find "$APP/Contents/MacOS" "$APP/Contents/Frameworks" -type f -print0)
+[ "$too_new" = 0 ] || { echo "the app would not open on macOS $MACOS_MIN (see above)" >&2; exit 1; }
 
 echo
 echo "built: $APP  ($(du -sh "$APP" | cut -f1))"

@@ -51,7 +51,8 @@ from aotlib import (Elf, PAGE, u32, u64, DT_INIT_ARRAY, DT_INIT_ARRAYSZ, is_adrp
                     encode_movz,
                     encode_orr,
                     gpr_mask, subst_gpr, pick_scratch, uses_gpr, writes_gpr,
-                    REBASE_TYPES, BIND_TYPES, RELOC_NAMES, ABS64, sdk_for_target)
+                    REBASE_TYPES, BIND_TYPES, RELOC_NAMES, ABS64, sdk_for_target,
+                    MACOS_TARGET)
 
 # Where the code section starts in the linked image: __TEXT at 0 with the code blob aligned
 # to 16 KiB. Not a prediction -- the linker is told where __DATA goes and the result is
@@ -84,7 +85,6 @@ X18_STUB_MAX = 192            # bytes reserved per x18 site, worst case
 TCBFN_LABEL = "_guest_tcb_fn"  # the shim function a tpidr stub calls for the thread block
 TCBFN_NAME = "husk_guest_tcb_addr"
 TCB_STUB_MAX = 192            # bytes reserved per tpidr site, worst case
-MACOS_TARGET = "arm64-apple-macos"
 
 # ---------------------------------------------------------------- the mod's hooks
 #

@@ -17,7 +17,7 @@ and the mod's own content built in.
   <a href="https://github.com/oenderg/Reflourished-Darwin/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/oenderg/Reflourished-Darwin/total?color=e0702c"></a>
   <img alt="Game version" src="https://img.shields.io/badge/PvZ2%20Reflourished-1.4.2-2ea44f">
   <img alt="iPhone and iPad" src="https://img.shields.io/badge/iOS%20%26%20iPadOS-15.5%2B-0a84ff?logo=apple&logoColor=white">
-  <img alt="Mac" src="https://img.shields.io/badge/macOS-12%2B%20·%20Apple%20silicon-0a84ff?logo=apple&logoColor=white">
+  <img alt="Mac" src="https://img.shields.io/badge/macOS-14%2B%20·%20Apple%20silicon-0a84ff?logo=apple&logoColor=white">
   <a href="https://github.com/oenderg/Reflourished-Darwin/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/oenderg/Reflourished-Darwin?style=social"></a>
 </p>
 
@@ -117,7 +117,7 @@ Sideloadly or LiveContainer.
 `https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/altstore/source.json`
 (Sources → +) and install the game from it; new releases then show up as updates.
 
-**Mac** (Apple silicon, macOS 12 or later) - open the DMG and drag the app onto
+**Mac** (Apple silicon, macOS 14 or later) - open the DMG and drag the app onto
 Applications. The app is not notarized, so the first time macOS refuses to open it:
 click **Done**, then in **System Settings → Privacy & Security** click **Open Anyway**.
 After that the app updates itself.
