@@ -61,7 +61,7 @@ def write(args):
     version = info["CFBundleShortVersionString"]
     build = info["CFBundleVersion"]
     game = info.get("PVZ2GameVersion", "?")
-    minimum = info.get("LSMinimumSystemVersion", "12.0")
+    minimum = info.get("LSMinimumSystemVersion", "14.0")
     if not re.fullmatch(r"[A-Za-z0-9+/]{86}==", args.ed_signature):
         sys.exit("--ed-signature is not an EdDSA signature (sign_update prints it)")
     url = args.url or f"{RELEASES}/download/{args.tag}/{os.path.basename(args.dmg)}"

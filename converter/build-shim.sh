@@ -18,7 +18,9 @@ SHIM_SRC="${SHIM_SRC:-$R/bionic-shim.c}"
 LIBS="${LIBS:-${1:-}}"
 CONV="${CONV:-$R/aot-convert.py}"
 MKSHIM="${MKSHIM:-$R/aot-mkshim.py}"
-TARGET="${TARGET:-arm64-apple-macos}"
+# The same target the conversion links for (aotlib.py, MACOS_TARGET): the shim is one of
+# the app's libraries, and the probe has to see the libSystem of the oldest macOS it runs on.
+TARGET="${TARGET:-$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from aotlib import MACOS_TARGET; print(MACOS_TARGET)' "$R")}"
 
 if [ -z "$LIBS" ] || [ ! -d "$LIBS" ]; then
     echo "usage: build-shim.sh <dir with the guest's .so files> [out-dir]" >&2
@@ -29,7 +31,7 @@ if [ "$#" -ge 2 ]; then d="$2"; fi
 mkdir -p "$d"
 
 echo "==> building the hand-written half on its own, to find out what it exports"
-xcrun clang++ -dynamiclib -arch arm64 -o "$d/libbionic-base.dylib" "$SHIM_SRC" \
+xcrun clang++ -target "$TARGET" -dynamiclib -o "$d/libbionic-base.dylib" "$SHIM_SRC" \
     -install_name @rpath/libbionic-base.dylib
 # the exports, with the Mach-O underscore stripped, are the names not to generate
 xcrun nm -g "$d/libbionic-base.dylib" | awk '$2 ~ /^[TDRB]$/ {print $3}' |
@@ -38,11 +40,11 @@ echo "    $(wc -l < "$d/handwritten.txt" | tr -d ' ') hand-written exports"
 
 echo "==> generating placeholders for everything else the libraries import"
 python3 "$MKSHIM" "$LIBS"/*.so -o "$d/shim-generated.c" \
-    --exclude-file "$d/handwritten.txt" --forward-gl --forward-opensles --link=-lz \
+    --exclude-file "$d/handwritten.txt" --target "$TARGET" --forward-gl --forward-opensles --link=-lz \
     --record "$d/shim-split.json" | tail -1
 
 echo "==> linking the shim"
-xcrun clang++ -dynamiclib -arch arm64 -o "$d/libbionic-shim.dylib" \
+xcrun clang++ -target "$TARGET" -dynamiclib -o "$d/libbionic-shim.dylib" \
     "$SHIM_SRC" "$d/shim-generated.c" -install_name @rpath/libbionic-shim.dylib
 codesign -s - "$d/libbionic-shim.dylib"
 echo "    $(xcrun nm -g "$d/libbionic-shim.dylib" | awk '$2 ~ /^[TDRB]$/' | wc -l | tr -d ' ') symbols exported"

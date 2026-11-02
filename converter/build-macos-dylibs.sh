@@ -31,7 +31,9 @@ R="$(cd "$(dirname "$0")" && pwd)"
 SRC="${1:-}"
 OUT="${2:-$R/../research/build/macos-dylibs}"
 HOOKS="${HOOKS:-}"
-TARGET="${TARGET:-arm64-apple-macos}"
+# The target names the oldest macOS the app supports (aotlib.py, MACOS_TARGET). Without a
+# version clang takes the build machine's own, and the dylibs refuse every older macOS.
+TARGET="${TARGET:-$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from aotlib import MACOS_TARGET; print(MACOS_TARGET)' "$R")}"
 SDKNAME="${SDKNAME:-macosx}"
 SDK="$(xcrun --sdk "$SDKNAME" --show-sdk-path)"
 CC=(xcrun --sdk "$SDKNAME" clang++)
@@ -61,7 +63,7 @@ done
 echo "==> building the shim for $TARGET"
 # The hand-written half first, on its own, so the generator knows which names to leave
 # to it: two definitions of one symbol is a link error, not a merge.
-bash "$R/build-shim.sh" "$LIB" "$WORK/shim" | sed 's/^/    /'
+TARGET="$TARGET" bash "$R/build-shim.sh" "$LIB" "$WORK/shim" | sed 's/^/    /'
 
 echo "==> converting the guest libraries"
 # The shim, and zlib: a name zlib provides must not get a placeholder in the shim, or
