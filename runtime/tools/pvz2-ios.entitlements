@@ -6,11 +6,12 @@
 	     executable memory on iOS 26+, so the game cannot start at all. -->
 	<key>get-task-allow</key>
 	<true/>
-	<!-- Honoured only on TrollStore/jailbroken devices; there the app can make
-	     its own executable memory and does not need the debugger. Harmless
-	     where it is ignored. -->
-	<key>dynamic-codesigning</key>
-	<true/>
+	<!-- No dynamic-codesigning (nor com.apple.private.cs.debugger or
+	     com.apple.private.skip-library-validation). TrollStore grants every
+	     entitlement an app asks for, and on iOS 15+ with an A12 or later these
+	     three get the app killed at launch, before it can write a log or a crash
+	     report (issue #11). The game runs from the converted libraries and needs
+	     no executable memory; the JIT fallback gets it through get-task-allow. -->
 	<!-- A 38 MiB engine plus a 1.2 GB OBB wants more than the default allowance.
 	     The translation layer does not depend on either being honoured: it probes
 	     what it actually got. -->

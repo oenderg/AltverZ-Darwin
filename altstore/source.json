@@ -36,10 +36,6 @@
             "description": "A development-signing flag that lets a debugger attach. The game does not need it to run."
           },
           {
-            "name": "dynamic-codesigning",
-            "description": "Not used: the game runs without generating code at run time. It is ignored on a stock device."
-          },
-          {
             "name": "com.apple.developer.kernel.increased-memory-limit",
             "description": "The game and its 1.1 GB of data like more memory than the default allowance. It works without it."
           },

@@ -279,6 +279,12 @@ KEYCHAIN_ARG=()
 [ "${IOS_SIM:-0}" != 1 ] && [ -n "${SIGN_KEYCHAIN:-}" ] && KEYCHAIN_ARG=(--keychain "$SIGN_KEYCHAIN")
 ENT_ARG=()
 [ -n "$ENTITLEMENTS" ] && ENT_ARG=(--entitlements "$ENTITLEMENTS")
+# TrollStore grants whatever the app asks for, and on iOS 15+ with an A12 or later an app
+# that asks for one of these is killed at launch, with no log and no crash report (#11).
+if [ -n "$ENTITLEMENTS" ] && grep -qE '<key>(dynamic-codesigning|com\.apple\.private\.cs\.debugger|com\.apple\.private\.skip-library-validation)</key>' "$ENTITLEMENTS"; then
+    echo "$ENTITLEMENTS asks for an entitlement that kills the app at launch under TrollStore" >&2
+    exit 1
+fi
 # BEGIN AOT-DYLIB-LOADER TEST (sign every nested dylib, not just ANGLE)
 # iOS library validation requires the main binary's Team ID on every piece of code the
 # process loads, so the converted guest dylib has to be signed with the same identity
