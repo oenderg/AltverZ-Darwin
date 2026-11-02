@@ -20,6 +20,15 @@
       "screenshots": [],
       "versions": [
         {
+          "version": "1.2.1",
+          "buildVersion": "10201",
+          "date": "2026-11-02",
+          "localizedDescription": "The game now starts with TrollStore and on older Macs. Installed with TrollStore, the app closed as soon as it opened. On the Mac, version 1.2.0 would not open on older versions of macOS; it now runs on macOS 14 and later.\n\n• If 1.2.0 would not open on your Mac, download this version by hand: the app can't update itself if it can't start.\n• iPhone: up to 120 Hz on ProMotion models.\n• Space now also collects sprouts.\n• Import Level now refuses a file that isn't a level, and the game sets aside a bad one that was already imported, which used to crash Play.",
+          "downloadURL": "https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.2.1/PvZ2-Reflourished-1.4.2-Darwin-1.2.1-iOS.ipa",
+          "size": 62057503,
+          "minOSVersion": "15.5"
+        },
+        {
           "version": "1.2.0",
           "buildVersion": "10200",
           "date": "2026-10-25",
