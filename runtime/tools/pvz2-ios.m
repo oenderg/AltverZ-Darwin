@@ -831,6 +831,10 @@ static UIInterfaceOrientationMask allowed_orientations(void)
 }
 - (BOOL)prefersStatusBarHidden { return YES; }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
+/* A swipe in from the top or bottom edge first shows the system's tab and only a
+ * second one opens Notification Center, Control Center or Home: the pause button
+ * and the seed bank are close to those edges, and the system pauses the game. */
+- (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return UIRectEdgeTop | UIRectEdgeBottom; }
 
 /* The audio session.
  *
