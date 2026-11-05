@@ -50,7 +50,7 @@ and the mod's own content built in.
     power-ups from left to right.
   * `Esc` pauses and resumes. The keys rest while the game is paused.
   * On the Mac, Settings (`Cmd-,`) lets you pick any keys; Keyboard → **Show keys in levels**
-    (off by default) writes each key at its control's corner in the game's font.
+    (on by default) writes each key at its control's corner in the game's font.
   * On iPad, keys appear after the first press on a hardware keyboard.
 * **Mac window**
   * Shows the selected plant or shovel at the pointer during a level; turn it off in Keyboard settings.

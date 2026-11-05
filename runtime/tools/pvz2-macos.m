@@ -1389,11 +1389,11 @@ static NSString *shown_key(NSString *key, NSString *fallback)
     return v.length ? v : @"None";
 }
 
-/* The in-level key badges are opt-in: nothing changes for a player who has
- * never asked for them. */
+/* The in-level key badges are on unless the player turns them off. */
 static bool show_level_keys(void)
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:kShowLevelKeys];
+    id value = [[NSUserDefaults standardUserDefaults] objectForKey:kShowLevelKeys];
+    return value ? [value boolValue] : true;
 }
 
 static bool show_cursor_plant(void)
