@@ -831,7 +831,9 @@ static UIInterfaceOrientationMask allowed_orientations(void)
     } completion:nil];
 }
 - (BOOL)prefersStatusBarHidden { return YES; }
-- (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
+/* The home indicator stays (dimmed): when it hides, the system ignores the
+ * bottom edge below and one swipe goes home (issue #23). */
+- (BOOL)prefersHomeIndicatorAutoHidden { return NO; }
 /* A swipe in from the top or bottom edge first shows the system's tab and only a
  * second one opens Notification Center, Control Center or Home: the pause button
  * and the seed bank are close to those edges, and the system pauses the game. */
