@@ -142,7 +142,9 @@ returns.
   the outlined yellow text uses the bundled level UI font, registered in-process with CoreText.
 - **The iPad.** `guest_surface_scale` falls back to the root `UIScreen` widget's height when the
   app object cannot be read (iOS has no `guest_read`). The first hardware key press in a launch
-  enables snapshot work and the overlay; a keyboard disconnect disables both until another press.
+  enables snapshot work and the overlay; GameController's keyboard disconnect disables both until
+  another press. A Universal Control keyboard sends no disconnect (tried on iPadOS 27: GameController
+  still reports a keyboard afterwards), so the labels stay until the app restarts.
 
 ## Generated IDs
 
