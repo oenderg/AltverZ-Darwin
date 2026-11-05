@@ -33,36 +33,66 @@ and the mod's own content built in.
 
 ## Features
 
-* **A real app**
-  * Full screen, with sound, saves and the mod's own content built in.
-  * Leaving the app pauses the game; coming back shows its pause menu.
-  * On iPhone and iPad, a swipe from the top or bottom edge needs a second swipe to open
-    Notification Center, Control Center or Home, so a stray swipe doesn't pause the game.
-  * Import/Export saves, quests and levels through the game's own menu.
-* **Unlocked frame rate**
-  * The game runs at your display's refresh rate: 120 Hz on ProMotion displays.
-  * Turn on **Target 60 FPS** in the game's own settings for that; with it off, the game runs at 60.
-* **Touch, mouse and trackpad** work as on Android.
-* **Keyboard** (Mac, and iPad with a keyboard)
-  * `1`-`4` and `Q`, `W`, `E`, `R` take the seed packets, `S` the shovel.
-  * `Space` collects every sun, coin, gem, plant food and sprout drop on the lawn.
-  * `Tab` toggles fast-forward, `F` picks up plant food, and `Z`, `X`, `C` select the level's
-    power-ups from left to right.
-  * `Esc` pauses and resumes. The keys rest while the game is paused.
-  * On the Mac, Settings (`Cmd-,`) lets you pick any keys; Keyboard → **Show keys in levels**
-    (on by default) writes each key at its control's corner in the game's font.
-  * On iPad, keys appear after the first press on a hardware keyboard.
-* **Mac window**
-  * Shows the selected plant or shovel at the pointer during a level; turn it off in Keyboard settings.
-  * Keeps the game's shape at any size, or, in Settings, adapts to any shape from 4:3 to 21:9.
-  * Drawn at the sharpness of the display it is on; Settings can draw it sharper on a
-    display that isn't Retina.
-  * `Cmd-M` and `Cmd-H` pause the game.
-* **Updates**
-  * The Mac app updates itself: it checks once a day and asks before it installs
-    (PvZ2 Reflourished > Check for Updates…).
-  * iPhone and iPad get updates through AltStore and SideStore with this repository's source.
-  * Your saves stay, and a full app needs no second 1.3 GB download.
+<details>
+<summary><b>A real app</b></summary>
+
+* Full screen, with sound, saves and the mod's own content built in.
+* Leaving the app pauses the game; coming back shows its pause menu.
+* On iPhone and iPad, a swipe from the top or bottom edge needs a second swipe to open
+  Notification Center, Control Center or Home, so a stray swipe doesn't pause the game.
+* Import/Export saves, quests and levels through the game's own menu.
+
+</details>
+
+<details>
+<summary><b>Unlocked frame rate</b> - turn on <b>Target 60 FPS</b> in the game's settings</summary>
+
+* The game runs at your display's refresh rate: 120 Hz on ProMotion displays.
+* Turn on **Target 60 FPS** in the game's own settings for that; with it off, the game runs at 60.
+
+</details>
+
+<details>
+<summary><b>Touch, mouse and trackpad</b></summary>
+
+* They work as on Android.
+
+</details>
+
+<details>
+<summary><b>Keyboard</b> (Mac, and iPad with a keyboard)</summary>
+
+* `1`-`4` and `Q`, `W`, `E`, `R` take the seed packets, `S` the shovel.
+* `Space` collects every sun, coin, gem, plant food and sprout drop on the lawn.
+* `Tab` toggles fast-forward, `F` picks up plant food, and `Z`, `X`, `C` select the level's
+  power-ups from left to right.
+* `Esc` pauses and resumes. The keys rest while the game is paused.
+* On the Mac, Settings (`Cmd-,`) lets you pick any keys; Keyboard → **Show keys in levels**
+  (on by default) writes each key at its control's corner in the game's font.
+* On iPad, keys appear after the first press on a hardware keyboard.
+
+</details>
+
+<details>
+<summary><b>Mac window</b></summary>
+
+* Shows the selected plant or shovel at the pointer during a level; turn it off in Keyboard settings.
+* Keeps the game's shape at any size, or, in Settings, adapts to any shape from 4:3 to 21:9.
+* Drawn at the sharpness of the display it is on; Settings can draw it sharper on a
+  display that isn't Retina.
+* `Cmd-M` and `Cmd-H` pause the game.
+
+</details>
+
+<details>
+<summary><b>Updates</b></summary>
+
+* The Mac app updates itself: it checks once a day and asks before it installs
+  (PvZ2 Reflourished > Check for Updates…).
+* iPhone and iPad get updates through AltStore and SideStore with this repository's source.
+* Your saves stay, and a full app needs no second 1.3 GB download.
+
+</details>
 
 <details>
 <summary><b>Screenshots</b></summary>
