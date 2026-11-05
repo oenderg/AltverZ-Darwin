@@ -234,7 +234,7 @@ presses its CONTINUE and reaches state 5. The in-level HUD and seed chooser are 
 ## In-level key badges
 
 The Mac host can draw the current key on each control a shortcut works: seed packets 1-8, the
-shovel, fast-forward, plant food and the level's power-ups. It is off by default (Settings,
+shovel, fast-forward, plant food and the level's power-ups. It is on by default (Settings,
 Keyboard, "Show keys in levels"), and with it off the driver's frame loop does one atomic load and
 returns.
 
