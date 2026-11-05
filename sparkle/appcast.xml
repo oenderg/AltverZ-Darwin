@@ -6,15 +6,15 @@
     <description>Updates of PvZ2 Reflourished for the Mac (Reflourished-Darwin)</description>
     <language>en</language>
     <item>
-      <title>Reflourished-Darwin 1.2.1 · PvZ2: Reflourished 1.4.2</title>
-      <pubDate>Mon, 02 Nov 2026 11:34:40 +0000</pubDate>
-      <link>https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.2.1</link>
-      <sparkle:version>10201</sparkle:version>
-      <sparkle:shortVersionString>1.2.1</sparkle:shortVersionString>
+      <title>Reflourished-Darwin 1.3.0 · PvZ2: Reflourished 1.4.2</title>
+      <pubDate>Thu, 05 Nov 2026 22:19:56 +0000</pubDate>
+      <link>https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.3.0</link>
+      <sparkle:version>10300</sparkle:version>
+      <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p><b>The game now starts with TrollStore and on older Macs.</b> Installed with TrollStore, the app closed as soon as it opened. On the Mac, version 1.2.0 would not open on older versions of macOS; it now runs on macOS 14 and later.</p><ul><li>If 1.2.0 would not open on your Mac, download this version by hand: the app can't update itself if it can't start.</li><li>iPhone: up to 120 Hz on ProMotion models.</li><li><code>Space</code> now also collects sprouts.</li><li>Import Level now refuses a file that isn't a level, and the game sets aside a bad one that was already imported, which used to crash Play.</li></ul><p><a href="https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.2.1">The release on GitHub</a></p>]]></description>
-      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.2.1/PvZ2-Reflourished-1.4.2-Darwin-1.2.1-Mac.dmg" length="71166672"
-                 type="application/octet-stream" sparkle:edSignature="Sirv3JK+4HI64J9R+N9SeeEPtfzID6p1gvPFTDLvLzzdunRxB3coGbAz0P9/piqMMWzjBMp5PGP5StlK7rp3AQ=="/>
+      <description><![CDATA[<p><b>See your keys, and where your plant will go.</b> In a level, each control can show the key that works it, and on the Mac the plant you picked follows the pointer, with a cross on the tile it will land on.</p><ul><li>Key labels: on the Mac, turn on Settings &gt; Keyboard &gt; <b>Show keys in levels</b>. On iPad, they appear once you press a key on a hardware keyboard.</li><li>Mac: the selected plant, the shovel or plant food follows the pointer. The cross hides where the plant can't go, such as water without a lily pad. Turn it off, or change the cross's brightness, in Settings &gt; Keyboard.</li><li>Import Quests works: on iPhone and iPad it no longer closes the game, and on the Mac it asks for a file to open instead of where to save one. Pick the quests zip you exported.</li></ul><p><a href="https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.3.0">The release on GitHub</a></p>]]></description>
+      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.3.0/PvZ2-Reflourished-1.4.2-Darwin-1.3.0-Mac.dmg" length="71460592"
+                 type="application/octet-stream" sparkle:edSignature="s7K/uwJigRQyOz+uJpF3XikXEGYsHLhm+syUOZP+erk6XdEOSDTzlDEcAofXSU7fQvk1lRiUANiifMgZTDXfDg=="/>
     </item>
   </channel>
 </rss>
