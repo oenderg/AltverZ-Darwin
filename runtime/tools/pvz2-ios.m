@@ -523,12 +523,13 @@ static unsigned ios_badge_generation;
 
 static NSString *ios_badge_label(int i)
 {
-    if (i < TL_PVZ2_BADGE_SLOTS) return @(pvz2_default_slot_keys[i]);
-    i -= TL_PVZ2_BADGE_SLOTS;
-    if (i == 0) return @(PVZ2_DEFAULT_SHOVEL_KEY);
-    if (i == 1) return @(PVZ2_DEFAULT_FAST_FORWARD_KEY);
-    if (i == 2) return @(PVZ2_DEFAULT_PLANT_FOOD_KEY);
-    return @(pvz2_default_powerup_keys[i - 3]);
+    const char *key;
+    if (i < TL_PVZ2_BADGE_SLOTS) key = pvz2_default_slot_keys[i];
+    else if (i == TL_PVZ2_BADGE_SLOTS) key = PVZ2_DEFAULT_SHOVEL_KEY;
+    else if (i == TL_PVZ2_BADGE_SLOTS + 1) key = PVZ2_DEFAULT_FAST_FORWARD_KEY;
+    else if (i == TL_PVZ2_BADGE_SLOTS + 2) key = PVZ2_DEFAULT_PLANT_FOOD_KEY;
+    else key = pvz2_default_powerup_keys[i - TL_PVZ2_BADGE_SLOTS - 3];
+    return strcmp(key, "Tab") == 0 ? @"⇥" : @(key);
 }
 
 @implementation PVZ2View
@@ -974,54 +975,46 @@ static int native_seed_pick_mode(void)
     return 1;
 }
 
+/* A key's name in pvz2-keys.h as a key command's input: "Tab" is the tab
+ * character, and a letter is the letter without Shift (the system's own
+ * matching is on the key, and the mapping itself ignores the case). */
+static NSString *ios_key_input(const char *name)
+{
+    if (strcmp(name, "Tab") == 0) return @"\t";
+    return [@(name) lowercaseString];
+}
+
+static UIKeyCommand *ios_key_command(const char *name, NSString *title)
+{
+    UIKeyCommand *cmd = [UIKeyCommand keyCommandWithInput:ios_key_input(name)
+                                            modifierFlags:0
+                                                   action:@selector(pvz2_shortcut:)];
+    cmd.discoverabilityTitle = title;
+    /* Tab otherwise moves the system's keyboard focus instead. */
+    cmd.wantsPriorityOverSystemBehavior = YES;
+    return cmd;
+}
+
 /* The hardware keyboard's shortcuts: the same mapping as the Mac's (the shared
  * table in pvz2-keys.h). The system's own keyboard-shortcuts menu lists them,
  * so the player can see what the keys do. */
 - (NSArray<UIKeyCommand *> *)keyCommands
 {
     NSMutableArray<UIKeyCommand *> *cmds = [NSMutableArray array];
-    for (int i = 0; i < PVZ2_SLOT_COUNT; i++) {
-        NSString *input = @(pvz2_default_slot_keys[i]);
-        UIKeyCommand *cmd = [UIKeyCommand keyCommandWithInput:input
-                                                 modifierFlags:0
-                                                        action:@selector(pvz2_shortcut:)];
-        cmd.discoverabilityTitle = [NSString stringWithFormat:@"Seed packet %d", i + 1];
-        [cmds addObject:cmd];
-    }
-    /* The shovel's key is the letter, not the shifted letter: the system's own
-     * matching is on the key, and the mapping itself ignores the case. */
-    char lower = (char)tolower((unsigned char)PVZ2_DEFAULT_SHOVEL_KEY[0]);
-    NSString *shovel = [NSString stringWithFormat:@"%c", lower];
-    UIKeyCommand *sc = [UIKeyCommand keyCommandWithInput:shovel
-                                            modifierFlags:0
-                                                   action:@selector(pvz2_shortcut:)];
-    sc.discoverabilityTitle = @"Shovel";
-    [cmds addObject:sc];
+    for (int i = 0; i < PVZ2_SLOT_COUNT; i++)
+        [cmds addObject:ios_key_command(pvz2_default_slot_keys[i],
+                                        [NSString stringWithFormat:@"Seed packet %d", i + 1])];
+    [cmds addObject:ios_key_command(PVZ2_DEFAULT_SHOVEL_KEY, @"Shovel")];
     UIKeyCommand *collect = [UIKeyCommand keyCommandWithInput:@" " modifierFlags:0 action:@selector(pvz2_shortcut:)];
     collect.discoverabilityTitle = @"Collect suns, coins, gems and plant food";
     [cmds addObject:collect];
     /* The other in-level keys: fast-forward, plant food, and the level's
      * power-up buttons from left to right. */
-    char fastLower = (char)tolower((unsigned char)PVZ2_DEFAULT_FAST_FORWARD_KEY[0]);
-    UIKeyCommand *fast = [UIKeyCommand keyCommandWithInput:[NSString stringWithFormat:@"%c", fastLower]
-                                             modifierFlags:0
-                                                    action:@selector(pvz2_shortcut:)];
-    fast.discoverabilityTitle = @"Fast-forward";
-    [cmds addObject:fast];
-    char foodLower = (char)tolower((unsigned char)PVZ2_DEFAULT_PLANT_FOOD_KEY[0]);
-    UIKeyCommand *food = [UIKeyCommand keyCommandWithInput:[NSString stringWithFormat:@"%c", foodLower]
-                                             modifierFlags:0
-                                                    action:@selector(pvz2_shortcut:)];
-    food.discoverabilityTitle = @"Plant food";
-    [cmds addObject:food];
-    for (int i = 0; i < PVZ2_POWERUP_COUNT; i++) {
-        char lower = (char)tolower((unsigned char)pvz2_default_powerup_keys[i][0]);
-        UIKeyCommand *power = [UIKeyCommand keyCommandWithInput:[NSString stringWithFormat:@"%c", lower]
-                                                  modifierFlags:0
-                                                         action:@selector(pvz2_shortcut:)];
-        power.discoverabilityTitle = [NSString stringWithFormat:@"Power-up %d", i + 1];
-        [cmds addObject:power];
-    }
+    [cmds addObject:ios_key_command(PVZ2_DEFAULT_FAST_FORWARD_KEY, @"Fast-forward")];
+    [cmds addObject:ios_key_command(PVZ2_DEFAULT_PLANT_FOOD_KEY, @"Plant food")];
+    for (int i = 0; i < PVZ2_POWERUP_COUNT; i++)
+        [cmds addObject:ios_key_command(pvz2_default_powerup_keys[i],
+                                        [NSString stringWithFormat:@"Power-up %d", i + 1])];
     /* Escape, as on the Mac: the pause button in a level, Back anywhere else. */
     UIKeyCommand *back = [UIKeyCommand keyCommandWithInput:UIKeyInputEscape modifierFlags:0 action:@selector(pvz2_shortcut:)];
     back.discoverabilityTitle = @"Pause / Back";
@@ -1045,18 +1038,18 @@ static int native_seed_pick_mode(void)
     }
     if ([cmd.input isEqualToString:@" "]) { tl_pvz2_request_collect_sun(); return; }
     if (!chars) return;
-    if (strcasecmp(chars, PVZ2_DEFAULT_FAST_FORWARD_KEY) == 0) {
+    if ([cmd.input isEqualToString:ios_key_input(PVZ2_DEFAULT_FAST_FORWARD_KEY)]) {
         tl_pvz2_request_fast_forward();
         tl_log_line("ios: the shortcut asks the game's own fast-forward button");
         return;
     }
-    if (strcasecmp(chars, PVZ2_DEFAULT_PLANT_FOOD_KEY) == 0) {
+    if ([cmd.input isEqualToString:ios_key_input(PVZ2_DEFAULT_PLANT_FOOD_KEY)]) {
         tl_pvz2_request_plant_food();
         tl_log_line("ios: the shortcut asks the game's own plant food counter");
         return;
     }
     for (int i = 0; i < PVZ2_POWERUP_COUNT; i++) {
-        if (chars && strcasecmp(chars, pvz2_default_powerup_keys[i]) == 0) {
+        if ([cmd.input isEqualToString:ios_key_input(pvz2_default_powerup_keys[i])]) {
             tl_pvz2_request_powerup(i);
             tl_log_line("ios: the shortcut for power-up %d", i + 1);
             return;

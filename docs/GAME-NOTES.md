@@ -32,7 +32,7 @@ through a guard that turns a fault into a log line instead of a crash.
 | board +0xe0 | board state; 5 = playing | the live-play check |
 | board +0x6c8, 0x7dec64 | the pause registry, and the game's own "any pause reason" check | refuse while paused |
 | widget manager (board +0x20) +0xe0 | the modal widget (null when nothing covers the board; +0xc8 is the keyboard focus, not the modal) | refuse behind popups |
-| 0xaa1be8, 0x12d2374 | the seed bank and one packet in it | key 1-8 picks a packet |
+| 0xaa1be8, 0x12d2374 | the seed bank and one packet in it | a seed key (1-4, Q W E R) picks a packet |
 | packet vtable +0x90 | the packet's own pointer-down handler (normal packet vtable 0x24b2940) | the pick itself |
 | 0x761074 | the game's release decision for a new cursor (PlantCursor vtable 0x2491a60) | a second press cancels, like a second tap |
 | board +0x408 | pending cursor; null when no item is held | read-only selection state |
@@ -105,7 +105,7 @@ lawn, so it scales with the board without changing size at the lawn edge.
 
 ## In-level key badges
 
-The Mac host can draw the current key on each control a shortcut works: seed packets 1-8, the
+The Mac host can draw the current key on each control a shortcut works: the seed packets, the
 shovel, fast-forward, plant food and the level's power-ups. It is on by default (Settings,
 Keyboard, "Show keys in levels"), and with it off the driver's frame loop does one atomic load and
 returns.

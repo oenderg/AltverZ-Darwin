@@ -313,6 +313,6 @@ without a software keyboard; it does not change Simulator's global keyboard sett
 There is no scripted input on a device; test by hand and read `Documents/pvz2.log` (Files app, or
 `xcrun devicectl device copy from --domain-type appDataContainer ...` for a copy you signed).
 Worth checking after a change that touches iOS: the first launch (OBB download, Welcome screen), a
-level with touch, the hardware keyboard (1-8, S, Space, Esc), going to the Home Screen and back
+level with touch, the hardware keyboard (1-4, Q W E R, S, Space, Tab, Esc), going to the Home Screen and back
 (the game shows its pause menu), and the frame rate in the game's own performance overlay
 (Settings in the game).

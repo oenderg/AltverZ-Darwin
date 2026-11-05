@@ -44,9 +44,9 @@ and the mod's own content built in.
   * Turn on **Target 60 FPS** in the game's own settings for that; with it off, the game runs at 60.
 * **Touch, mouse and trackpad** work as on Android.
 * **Keyboard** (Mac, and iPad with a keyboard)
-  * `1`-`8` take a seed packet, `S` the shovel.
+  * `1`-`4` and `Q`, `W`, `E`, `R` take the seed packets, `S` the shovel.
   * `Space` collects every sun, coin, gem, plant food and sprout drop on the lawn.
-  * `F` toggles fast-forward, `Q` picks up plant food, and `Z`, `X`, `C` select the level's
+  * `Tab` toggles fast-forward, `F` picks up plant food, and `Z`, `X`, `C` select the level's
     power-ups from left to right.
   * `Esc` pauses and resumes. The keys rest while the game is paused.
   * On the Mac, Settings (`Cmd-,`) lets you pick any keys; Keyboard → **Show keys in levels**
