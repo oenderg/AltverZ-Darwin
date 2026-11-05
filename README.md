@@ -34,6 +34,8 @@ and the mod's own content built in.
 * **A real app**
   * Full screen, with sound, saves and the mod's own content built in.
   * Leaving the app pauses the game; coming back shows its pause menu.
+  * On iPhone and iPad, a swipe from the top or bottom edge needs a second swipe to open
+    Notification Center, Control Center or Home, so a stray swipe doesn't pause the game.
 * **Unlocked frame rate**
   * The game runs at your display's refresh rate: 120 Hz on ProMotion displays.
   * Turn on **Target 60 FPS** in the game's own settings for that; with it off, the game runs at 60.
