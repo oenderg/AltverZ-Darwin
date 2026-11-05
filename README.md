@@ -94,8 +94,10 @@ and the mod's own content built in.
 
 </details>
 
+## Screenshots
+
 <details>
-<summary><b>Screenshots</b></summary>
+<summary>Show screenshots</summary>
 <br>
 
 <table>
