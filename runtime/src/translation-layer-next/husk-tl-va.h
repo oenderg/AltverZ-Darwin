@@ -82,11 +82,19 @@ static inline double tl_va_arg_f64(tl_va_list *ap)
  * guest unchanged. Declare the entry in C as `extern void sym(void);` and take
  * its address for the symbol table.
  */
+/* Assembler spellings: Mach-O symbols carry a leading underscore and use @PAGE, COFF neither. */
+#if defined(_WIN32)
+#define TL_ASM_NAME(s) #s
+#define TL_ASM_ADDR(reg, s) "  adrp " reg ", " #s "\n  add " reg ", " reg ", :lo12:" #s "\n"
+#else
+#define TL_ASM_NAME(s) "_" #s
+#define TL_ASM_ADDR(reg, s) "  adrp " reg ", _" #s "@PAGE\n  add " reg ", " reg ", _" #s "@PAGEOFF\n"
+#endif
+
 #define TL_VA_STUB(sym, impl) \
-    __asm__(".text\n.p2align 2\n.globl _" #sym "\n_" #sym ":\n" \
-            "  adrp x16, _" #impl "@PAGE\n" \
-            "  add  x16, x16, _" #impl "@PAGEOFF\n" \
-            "  b    _tl_va_common\n")
+    __asm__(".text\n.p2align 2\n.globl " TL_ASM_NAME(sym) "\n" TL_ASM_NAME(sym) ":\n" \
+            TL_ASM_ADDR("x16", impl) \
+            "  b    " TL_ASM_NAME(tl_va_common) "\n")
 
 void tl_va_common(void);
 
@@ -97,8 +105,15 @@ void tl_va_common(void);
  */
 int tl_format(char *out, size_t cap, const char *fmt, tl_va_list *ap);
 
+/* A guest wchar_t: 32 bits on Android. Darwin's is the same; Windows' is 16 bits. */
+#if defined(_WIN32)
+typedef uint32_t tl_gwchar;
+#else
+typedef wchar_t tl_gwchar;
+#endif
+
 /* The same for a guest wide format string (swprintf). */
-int tl_format_wide(wchar_t *out, size_t cap, const wchar_t *fmt, tl_va_list *ap);
+int tl_format_wide(tl_gwchar *out, size_t cap, const tl_gwchar *fmt, tl_va_list *ap);
 
 /*
  * scanf, with guest pointer arguments: up to 16 conversions. `src` is a string.

@@ -395,22 +395,35 @@ NAT(CharsetUtils_asciiBytesToChars)
 
 /* ================================================================== TimeZone, Package, Version, threads */
 
+#if !defined(_WIN32)
 #include <CoreFoundation/CoreFoundation.h>
-/* The device's time zone, as Android's persist.sys.timezone gives it (an Olson name). */
+#endif
+/* The device's time zone, as Android's persist.sys.timezone gives it (an Olson name). Windows
+ * names its zones its own way, so there the zone is its offset (GMT+hh:mm), which Java accepts. */
 NAT(TimeZone_getSystemTimeZoneID)
 {
     UNUSED;
     char buf[128] = "GMT";
+#if defined(_WIN32)
+    { long tz = 0; _get_timezone(&tz); long off = -tz / 60;
+      snprintf(buf, sizeof(buf), "GMT%c%02ld:%02ld", off < 0 ? '-' : '+', labs(off) / 60, labs(off) % 60); }
+#else
     CFTimeZoneRef tz = CFTimeZoneCopySystem();
     if (tz) { CFStringRef n = CFTimeZoneGetName(tz); if (n) CFStringGetCString(n, buf, sizeof(buf), kCFStringEncodingUTF8); CFRelease(tz); }
+#endif
     *ret = L(dvm_new_string_utf8(buf));
     return true;
 }
 NAT(TimeZone_getSystemGMTOffsetID)
 {
     UNUSED;
+#if defined(_WIN32)
+    long tzs = 0; _get_timezone(&tzs);
+    long off = -tzs / 60;
+#else
     time_t t = time(NULL); struct tm lt; localtime_r(&t, &lt);
     long off = lt.tm_gmtoff / 60;
+#endif
     char buf[32]; snprintf(buf, sizeof(buf), "GMT%c%02ld:%02ld", off < 0 ? '-' : '+', labs(off) / 60, labs(off) % 60);
     *ret = L(dvm_new_string_utf8(buf));
     return true;

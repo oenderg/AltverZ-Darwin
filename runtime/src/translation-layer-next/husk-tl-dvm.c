@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "husk-tl-bionic.h"
+#include "husk-tl-va.h"   /* TL_ASM_NAME */
 #include "husk-tl-internal.h"
 #include "husk-tl-ld.h"
 
@@ -1117,7 +1118,7 @@ static void *find_jni(dvm_method *m)
  * Android ABI), however many there are -- proxygen's HTTPClient.init takes over eighty. Returns x0, and d0 through dret. */
 int64_t tl_dvm_jcall(void *fn, const int64_t *gp, const double *fp, const int64_t *stk, uint64_t nstk, double *dret);
 __asm__(
-    ".text\n.p2align 2\n.globl _tl_dvm_jcall\n_tl_dvm_jcall:\n"
+    ".text\n.p2align 2\n.globl " TL_ASM_NAME(tl_dvm_jcall) "\n" TL_ASM_NAME(tl_dvm_jcall) ":\n"
     "  stp x29, x30, [sp, #-32]!\n"
     "  mov x29, sp\n"
     "  stp x19, x20, [sp, #16]\n"

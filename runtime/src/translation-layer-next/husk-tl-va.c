@@ -25,7 +25,7 @@
 volatile struct { uint64_t count, x21, impl, mask; } tl_va_clobber;
 
 __asm__(
-    ".text\n.p2align 2\n.globl _tl_va_common\n_tl_va_common:\n"
+    ".text\n.p2align 2\n.globl " TL_ASM_NAME(tl_va_common) "\n" TL_ASM_NAME(tl_va_common) ":\n"
     "  stp x29, x30, [sp, #-16]!\n"
     "  mov x29, sp\n"
     "  sub sp, sp, #288\n"
@@ -60,8 +60,7 @@ __asm__(
     "  ldp x9, x10, [sp, #272]\n"
     "  eor x9, x9, x27\n  eor x10, x10, x28\n  orr x11, x11, x9\n  orr x11, x11, x10\n"
     "  cbz x11, 1f\n"
-    "  adrp x12, _tl_va_clobber@PAGE\n"
-    "  add x12, x12, _tl_va_clobber@PAGEOFF\n"
+    TL_ASM_ADDR("x12", tl_va_clobber)
     "  ldr x13, [x12]\n  add x13, x13, #1\n  str x13, [x12]\n"
     "  str x21, [x12, #8]\n"
     "  ldr x14, [sp, #200]\n"
@@ -197,7 +196,7 @@ static void format_into(sbuf *out, const char *fmt, tl_va_list *ap)
         case 's': {
             const char *s = (const char *)(uintptr_t)tl_va_arg_u64(ap);
             if (len == LEN_L) {
-                const wchar_t *w = (const wchar_t *)s;
+                const tl_gwchar *w = (const tl_gwchar *)s;
                 sbuf t = {0};
                 if (!w) sb_put(&t, "(null)", 6);
                 else for (size_t i = 0; w[i] && (prec < 0 || t.len < (size_t)prec); i++) {
@@ -271,10 +270,11 @@ int tl_format(char *out, size_t cap, const char *fmt, tl_va_list *ap)
     return r;
 }
 
-int tl_format_wide(wchar_t *out, size_t cap, const wchar_t *fmt, tl_va_list *ap)
+int tl_format_wide(tl_gwchar *out, size_t cap, const tl_gwchar *fmt, tl_va_list *ap)
 {
     /* Narrow the format (ASCII conversions), format, widen the result. */
-    size_t fl = fmt ? wcslen(fmt) : 0;
+    size_t fl = 0;
+    if (fmt) while (fmt[fl]) fl++;
     char *nf = malloc(fl * 4 + 1);
     size_t k = 0;
     for (size_t i = 0; i < fl; i++) k += utf8_encode((uint32_t)fmt[i], nf + k);
@@ -293,7 +293,7 @@ int tl_format_wide(wchar_t *out, size_t cap, const wchar_t *fmt, tl_va_list *ap)
         else if ((c >> 4) == 14 && i + 2 < b.len) { cp = ((c & 0x0F) << 12) | ((b.p[i+1] & 0x3F) << 6) | (b.p[i+2] & 0x3F); adv = 3; }
         else if ((c >> 3) == 30 && i + 3 < b.len) { cp = ((c & 7) << 18) | ((b.p[i+1] & 0x3F) << 12) | ((b.p[i+2] & 0x3F) << 6) | (b.p[i+3] & 0x3F); adv = 4; }
         else { cp = c; adv = 1; }
-        if (out && cap && wn + 1 < cap) out[wn] = (wchar_t)cp;
+        if (out && cap && wn + 1 < cap) out[wn] = (tl_gwchar)cp;
         wn++; i += adv;
     }
     if (out && cap) out[wn < cap - 1 ? wn : cap - 1] = 0;
@@ -309,6 +309,22 @@ int tl_scan_string(const char *src, const char *fmt, tl_va_list *ap)
     void *a[N];
     for (int i = 0; i < N; i++) a[i] = (void *)(uintptr_t)tl_va_arg_u64(ap);
     { static int tr = -1; if (tr < 0) tr = getenv("TL_SCAN_TRACE") ? 1 : 0; if (tr) tl_log_line("scan: sscanf(\"%.80s\", \"%s\")", src, fmt); }
+#if defined(_WIN32)
+    /* Windows' long is 32 bits: a guest %ld/%lu/%lx/%ln stores 64, so it becomes %ll... here. */
+    char wfmt[1024];
+    {
+        size_t j = 0;
+        for (const char *f = fmt; *f && j + 3 < sizeof(wfmt); f++) {
+            wfmt[j++] = *f;
+            if (*f != '%') continue;
+            if (f[1] == '%') { wfmt[j++] = *++f; continue; }
+            while (f[1] && strchr("*0123456789", f[1]) && j + 3 < sizeof(wfmt)) wfmt[j++] = *++f;
+            if (f[1] == 'l' && f[2] != 'l' && f[2] && strchr("diouxXn", f[2])) { wfmt[j++] = 'l'; wfmt[j++] = 'l'; f++; }
+        }
+        wfmt[j] = 0;
+        fmt = wfmt;
+    }
+#endif
     return sscanf(src, fmt, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15],
                   a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23], a[24], a[25], a[26], a[27], a[28], a[29], a[30], a[31],
                   a[32], a[33], a[34], a[35], a[36], a[37], a[38], a[39], a[40], a[41], a[42], a[43], a[44], a[45], a[46], a[47],

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #define _DARWIN_C_SOURCE
 #include "husk-tl-egl.h"
+#include "husk-tl-va.h"   /* TL_ASM_NAME */
 
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -852,7 +853,7 @@ __attribute__((naked, used)) static void glt_common(void)
         "stp x8, x17, [sp, #64]\n"
         "stp d0, d1, [sp, #80]\n" "stp d2, d3, [sp, #96]\n" "stp d4, d5, [sp, #112]\n" "stp d6, d7, [sp, #128]\n"
         "mov x0, x16\n"
-        "bl _tl_glt_note\n"
+        "bl " TL_ASM_NAME(tl_glt_note) "\n"
         "ldp x0, x1, [sp, #0]\n" "ldp x2, x3, [sp, #16]\n" "ldp x4, x5, [sp, #32]\n" "ldp x6, x7, [sp, #48]\n"
         "ldp x8, x17, [sp, #64]\n"
         "ldp d0, d1, [sp, #80]\n" "ldp d2, d3, [sp, #96]\n" "ldp d4, d5, [sp, #112]\n" "ldp d6, d7, [sp, #128]\n"

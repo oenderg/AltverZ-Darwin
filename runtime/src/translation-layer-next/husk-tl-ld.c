@@ -46,6 +46,13 @@ enum {
 
 #define PAGE TL_XMEM_PAGE
 
+/* Assembler spelling of a C symbol: Mach-O prefixes an underscore, COFF does not. */
+#if defined(_WIN32)
+#define TL_LD_ASM_NAME(s) #s
+#else
+#define TL_LD_ASM_NAME(s) "_" #s
+#endif
+
 /* ----------------------------------------------------------------- libs */
 
 #define MAX_LIBS 512                  /* .NET for Android apps load one library per assembly (osu!: 231) */
@@ -594,7 +601,7 @@ size_t tl_ld_maps(char *buf, size_t n, const char *libdir)
         tl_lib *L = G.libs[i];
         if (L->state < 2) continue;
         uintptr_t lo = (uintptr_t)L->rx, hi = lo + L->npages * PAGE;
-        k += (size_t)snprintf(buf + k, n - k, "%lx-%lx r-xp 00000000 fd:00 %d %s/%s\n", (unsigned long)lo, (unsigned long)hi, 4000 + i,
+        k += (size_t)snprintf(buf + k, n - k, "%llx-%llx r-xp 00000000 fd:00 %d %s/%s\n", (unsigned long long)lo, (unsigned long long)hi, 4000 + i,
                               libdir, L->soname[0] ? L->soname : base_name(L->name));
     }
     pthread_mutex_unlock(&G.lock);
@@ -645,7 +652,7 @@ __attribute__((naked, used)) static void tl_unresolved_entry(void)
         "mov x0, x17\n"
         "mov x1, x30\n"
         "stp x29, x30, [sp, #-16]!\n"
-        "bl _tl_unresolved_called_c\n"
+        "bl " TL_LD_ASM_NAME(tl_unresolved_called_c) "\n"
         "ldp x29, x30, [sp], #16\n"
         "mov x0, #0\n"
         "ret\n");
@@ -691,7 +698,11 @@ static void *make_stub(const char *name)
  * raw `svc` relies on that, the condition flags and all of q8-q15 included (C keeps
  * only their low halves) -- and calls tl_linux_syscall with the arguments and number.
  */
+#if defined(_WIN32)
+long long tl_linux_syscall(long long a0, long long a1, long long a2, long long a3, long long a4, long long a5, long long nr);   /* Windows' long is 32 bits */
+#else
 long tl_linux_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long nr);
+#endif
 
 __attribute__((naked, used)) void tl_svc_common(void)
 {
@@ -727,7 +738,7 @@ __attribute__((naked, used)) void tl_svc_common(void)
         "stp q28, q29, [sp, #448]\n"
         "stp q30, q31, [sp, #480]\n"
         "mov x6, x8\n"
-        "bl _tl_linux_syscall\n"
+        "bl " TL_LD_ASM_NAME(tl_linux_syscall) "\n"
         "ldr x9, [sp, #120]\n"
         "msr nzcv, x9\n"
         "ldp q8, q9, [sp, #512]\n"
@@ -920,6 +931,43 @@ static uint8_t *svc_stub(tl_lib *L, const uint8_t *site_rx)
 
 static int64_t g_vx18_off = -1;     /* byte offset of the virtual-x18 slot from the TSD base */
 
+#if defined(_WIN32)
+/*
+ * Windows keeps a thread's TEB in x18 and its own code reads it from there, so the
+ * guest may not hold values in x18 either: the same rewrite applies. The stubs find
+ * the virtual x18 in one of the TEB's TLS slots, at a fixed offset from x18 itself,
+ * which the guest never touches once every instruction naming it is rewritten.
+ */
+#include <windows.h>
+static bool vx18_init(void)
+{
+    if (g_vx18_off >= 0) return true;
+    DWORD idx = TlsAlloc();
+    if (idx == TLS_OUT_OF_INDEXES) return false;
+    const uintptr_t sentinel = (uintptr_t)0x5a5a1234deadbeefull;
+    TlsSetValue(idx, (void *)sentinel);
+    const volatile uintptr_t *teb = (const volatile uintptr_t *)NtCurrentTeb();
+    int64_t off = -1;
+    for (int i = 0; i < 4095; i++) if (teb[i] == sentinel) { off = (int64_t)i * 8; break; }
+    TlsSetValue(idx, NULL);
+    if (off < 0 || off > 32760) { TlsFree(idx); return false; }
+    g_vx18_off = off;
+    return true;
+}
+uint64_t tl_vx18_get(void)
+{
+    if (g_vx18_off < 0) return 0;
+    return *(const volatile uint64_t *)((uintptr_t)NtCurrentTeb() + (uintptr_t)g_vx18_off);
+}
+void tl_vx18_set(uint64_t v)
+{
+    if (g_vx18_off < 0) return;
+    *(volatile uint64_t *)((uintptr_t)NtCurrentTeb() + (uintptr_t)g_vx18_off) = v;
+}
+/* "mov rt, x18" (the TEB) in place of Darwin's "mrs rt, tpidrro_el0", and no masking. */
+static inline uint32_t e_mrs_tsd(unsigned rt)        { return 0xAA1203E0u | rt; }
+static inline uint32_t e_and_tsd(unsigned r)         { (void)r; return 0xD503201Fu; }
+#else
 static bool vx18_init(void)
 {
     if (g_vx18_off >= 0) return true;
@@ -967,10 +1015,12 @@ void tl_vx18_set(uint64_t v)
 #endif
 }
 
-static inline uint32_t e_stur(unsigned rt, int imm)  { return 0xF8000000u | (((uint32_t)imm & 0x1FFu) << 12) | (31u << 5) | rt; }
-static inline uint32_t e_ldur(unsigned rt, int imm)  { return 0xF8400000u | (((uint32_t)imm & 0x1FFu) << 12) | (31u << 5) | rt; }
 static inline uint32_t e_mrs_tsd(unsigned rt)        { return 0xD53BD060u | rt; }
 static inline uint32_t e_and_tsd(unsigned r)         { return 0x927DF000u | (r << 5) | r; }          /* and r, r, #~7 */
+#endif
+
+static inline uint32_t e_stur(unsigned rt, int imm)  { return 0xF8000000u | (((uint32_t)imm & 0x1FFu) << 12) | (31u << 5) | rt; }
+static inline uint32_t e_ldur(unsigned rt, int imm)  { return 0xF8400000u | (((uint32_t)imm & 0x1FFu) << 12) | (31u << 5) | rt; }
 static inline uint32_t e_ldr_slot(unsigned rt, unsigned rn) { return 0xF9400000u | ((uint32_t)(g_vx18_off / 8) << 10) | (rn << 5) | rt; }
 static inline uint32_t e_str_slot(unsigned rt, unsigned rn) { return 0xF9000000u | ((uint32_t)(g_vx18_off / 8) << 10) | (rn << 5) | rt; }
 
@@ -1219,7 +1269,13 @@ static void patch_image(tl_lib *L, size_t *n_tpidr, size_t *n_adrp, size_t *n_ad
                 /* The cache type register: the smallest cache lines the program may assume. Code that flushes the
                  * instruction cache (V8) reads it to step by line; 64 bytes is right for Apple's and safe for any. */
                 uint32_t branch;
+#if defined(_WIN32)
+                /* Windows lets user code run neither `dc cvau` nor `ic ivau`: the value says both caches are coherent
+                 * (IDC, DIC), so a guest's cache flush skips them, and the host flushes with FlushInstructionCache. */
+                if (adr_stub(L, pc, insn & 0x1Fu, 0xB444c004ull, &branch)) { w[i] = branch; L->n_ctr++; }
+#else
                 if (adr_stub(L, pc, insn & 0x1Fu, 0x8444c004ull, &branch)) { w[i] = branch; L->n_ctr++; }
+#endif
                 else L->n_adr_failed++;
             } else if ((insn & 0xFFFFFFE0u) == 0xD53BD040u) {            /* mrs Xt, tpidr_el0 */
                 w[i] = encode_adrp(insn & 0x1Fu, pc, G.tcb_rw);
@@ -1335,7 +1391,7 @@ __attribute__((naked, used)) static void tl_tlsdesc_entry(void)
         "stp q16, q17, [sp, #256]\n" "stp q18, q19, [sp, #288]\n" "stp q20, q21, [sp, #320]\n" "stp q22, q23, [sp, #352]\n"
         "stp q24, q25, [sp, #384]\n" "stp q26, q27, [sp, #416]\n" "stp q28, q29, [sp, #448]\n" "stp q30, q31, [sp, #480]\n"
         "ldr x0, [x0, #8]\n"
-        "bl _tl_tls_offset\n"
+        "bl " TL_LD_ASM_NAME(tl_tls_offset) "\n"
         "ldp x2, x3,   [sp, #0]\n"   "ldp x4, x5,   [sp, #16]\n"  "ldp x6, x7,   [sp, #32]\n"  "ldp x8, x9,   [sp, #48]\n"
         "ldp x10, x11, [sp, #64]\n"  "ldp x12, x13, [sp, #80]\n"  "ldp x14, x15, [sp, #96]\n"  "ldp x16, x17, [sp, #112]\n"
         "ldp q0, q1,   [sp, #128]\n" "ldp q2, q3,   [sp, #160]\n" "ldp q4, q5,   [sp, #192]\n" "ldp q6, q7,   [sp, #224]\n"
