@@ -4072,6 +4072,8 @@ static void guest_fault_handler(int sig, siginfo_t *info, void *context)
 
 static void guest_guard_enter(void)
 {
+    /* cleared here, not on leaving, so the log line after a caught fault can still name the signal */
+    g_guest_fault = 0;
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_sigaction = guest_fault_handler;
@@ -4085,7 +4087,6 @@ static void guest_guard_leave(void)
 {
     sigaction(SIGSEGV, &g_guest_prev_segv, NULL);
     sigaction(SIGBUS, &g_guest_prev_bus, NULL);
-    g_guest_fault = 0;
 }
 
 /* A surface size that can be shown on: at least 100x100 (anything smaller is
