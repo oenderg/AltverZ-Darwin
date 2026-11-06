@@ -40,19 +40,22 @@ typedef struct {
     const char *sig;
     tl_x64_raw raw;      /* K_RAW */
     void *user;
+    bool trace;          /* TL_X64_TRACE names it */
 } entry;
+static int g_trace_left = 400;   /* the first calls of traced functions, for TL_X64_TRACE */
 
 static entry g_ent[TL_X64_STUBS];
+static atomic_ullong g_svc_calls;                /* every guest call into the host, for TL_X64_SAMPLE */
+static unsigned g_svc_count[TL_X64_STUBS];      /* per stub (racy increments: an estimate, for the sampler) */
+static uint8_t *g_stubs;                         /* the page: TL_X64_STUBS x 8 bytes, then the guest's setjmp and longjmp */
+#define STUB_ADDR(i) ((uint64_t)(uintptr_t)(g_stubs + (size_t)(i) * 8))
 static uint32_t g_next = 1;                      /* stub 0 is never handed out */
-static uint8_t *g_stubs;                         /* the page: TL_X64_STUBS x 8 bytes */
 static uint64_t g_stop;                          /* the last stub's address: a run ends when pc gets there */
 static SRWLOCK g_lock = SRWLOCK_INIT;
 static struct snx_recompiler *g_rec;
 static struct snx_recompiled *g_mod;
 static RtAPI g_rt;
 static uint64_t g_tp;                            /* the guest's thread pointer (the loader's fake thread block) */
-
-#define STUB_ADDR(i) ((uint64_t)(uintptr_t)(g_stubs + (size_t)(i) * 8))
 
 /* ---------------------------------------------------- the Windows x64 call */
 
@@ -162,6 +165,8 @@ static void call_va(CPU *c, const entry *e)
 
 static void on_svc(CPU *c, uint32_t imm)
 {
+    atomic_fetch_add_explicit(&g_svc_calls, 1, memory_order_relaxed);
+    if (imm < TL_X64_STUBS) g_svc_count[imm]++;
     const entry *e = imm < TL_X64_STUBS ? &g_ent[imm] : NULL;
     if (!e || e->k == K_FREE) {
         tl_log_line("x64: the guest called stub %u, which is not in use (from %#llx)", imm, (unsigned long long)c->x[30]);
@@ -174,6 +179,11 @@ static void on_svc(CPU *c, uint32_t imm)
     int n = gather(c, e->sig + 1, slots, 24);
     uint64_t rax = tl_x64_invoke(e->fn, slots, (uint64_t)n, xmm);
     put_result(c, e->sig[0], rax, xmm);
+    if (e->trace && g_trace_left > 0) {
+        g_trace_left--;
+        tl_log_line("x64 trace: %s(%llx, %llx, %llx, %llx) -> %llx [%s] from %#llx", e->name, (unsigned long long)slots[0], (unsigned long long)slots[1],
+                    (unsigned long long)slots[2], (unsigned long long)slots[3], (unsigned long long)rax, e->sig, (unsigned long long)c->x[30]);
+    }
 }
 
 static void on_undef(CPU *c, uint64_t pc, uint32_t word)
@@ -242,7 +252,16 @@ static uint64_t add_entry(entry e)
         const entry *o = &g_ent[i];
         if (o->k == e.k && o->fn == e.fn && o->raw == e.raw && o->user == e.user && (o->sig == e.sig || (o->sig && e.sig && !strcmp(o->sig, e.sig)))) { at = STUB_ADDR(i); break; }
     }
-    if (!at && g_next < TL_X64_STUBS - 1) { g_ent[g_next] = e; at = STUB_ADDR(g_next); g_next++; }
+    if (!at && g_next < TL_X64_STUBS - 1) {
+        /* TL_X64_TRACE=name,name: log their first calls with arguments and result */
+        const char *tr = getenv("TL_X64_TRACE");
+        if (tr && e.name) {
+            size_t l = strlen(e.name);
+            for (const char *p = tr; (p = strstr(p, e.name)); p += l)
+                if ((p == tr || p[-1] == ',') && (p[l] == ',' || !p[l])) { e.trace = true; break; }
+        }
+        g_ent[g_next] = e; at = STUB_ADDR(g_next); g_next++;
+    }
     ReleaseSRWLockExclusive(&g_lock);
     if (!at) tl_log_line("x64: the stub page is full (%s)", e.name ? e.name : "?");
     return at;
@@ -323,6 +342,55 @@ static __thread tl_thread *t_th;
 
 #define GUEST_STACK (8u << 20)
 
+/* TL_X64_SAMPLE=<seconds>: a thread that logs where each guest thread is, every so often (pc as the translated code
+ * last stored it: a function's entry or a call's return, not each instruction) */
+static tl_thread *g_threads[256];
+static atomic_int g_nthreads;
+static DWORD WINAPI sampler(void *arg)
+{
+    DWORD ms = (DWORD)(uintptr_t)arg;
+    unsigned long long last = 0;
+    for (;;) {
+        Sleep(ms);
+        unsigned long long now = atomic_load(&g_svc_calls);
+        tl_log_line("x64 sample: %llu host calls since the last sample", now - last);
+        last = now;
+        {
+            static unsigned prev[TL_X64_STUBS];
+            unsigned top[15] = { 0 }; uint32_t at[15] = { 0 };
+            for (uint32_t i = 1; i < TL_X64_STUBS; i++) {
+                unsigned d = g_svc_count[i] - prev[i]; prev[i] = g_svc_count[i];
+                for (int k = 0; k < 15; k++) if (d > top[k]) { for (int m = 14; m > k; m--) { top[m] = top[m - 1]; at[m] = at[m - 1]; } top[k] = d; at[k] = i; break; }
+            }
+            for (int k = 0; k < 15 && top[k]; k++) tl_log_line("x64 sample:   %u x %s", top[k], g_ent[at[k]].name ? g_ent[at[k]].name : "?");
+        }
+        int n = atomic_load(&g_nthreads);
+        for (int i = 0; i < n; i++) {
+            tl_thread *t = g_threads[i];
+            if (!t) continue;
+            uint64_t pc = t->cpu.pc, lr = t->cpu.x[30];
+            const char *lib = NULL, *lib2 = NULL; const void *sa = NULL;
+            const char *sym = tl_ld_symbol_at((const void *)(uintptr_t)pc, &lib, &sa);
+            if (g_stubs && pc >= STUB_ADDR(0) && pc < STUB_ADDR(TL_X64_STUBS)) { lib = "stub"; sym = g_ent[(pc - STUB_ADDR(0)) / 8].name; }
+            const char *sym2 = tl_ld_symbol_at((const void *)(uintptr_t)lr, &lib2, &sa);
+            tl_log_line("x64 sample: cpu %d depth %d pc %#llx (%s %s) lr %#llx (%s %s)", i, t->depth, (unsigned long long)pc,
+                        lib ? lib : "?", sym ? sym : "?", (unsigned long long)lr, lib2 ? lib2 : "?", sym2 ? sym2 : "?");
+        }
+    }
+    return 0;
+}
+static void register_thread(tl_thread *t)
+{
+    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+    int i = atomic_fetch_add(&g_nthreads, 1);
+    if (i < 256) g_threads[i] = t; else atomic_store(&g_nthreads, 256);
+    BOOL pending = FALSE;
+    if (getenv("TL_X64_SAMPLE") && InitOnceBeginInitialize(&once, 0, &pending, NULL) && pending) {
+        CloseHandle(CreateThread(NULL, 0, sampler, (void *)(uintptr_t)(atof(getenv("TL_X64_SAMPLE")) * 1000), 0, NULL));
+        InitOnceComplete(&once, 0, NULL);
+    }
+}
+
 CPU *tl_x64_cpu(void)
 {
     if (t_th) return &t_th->cpu;
@@ -337,6 +405,7 @@ CPU *tl_x64_cpu(void)
     t->cpu.thread = t;
     if (g_mod && snx_recompiled_bind(g_mod, &t->cpu) != 0) tl_log_line("x64: cannot bind this thread's CPU");
     t_th = t;
+    register_thread(t);
     return &t->cpu;
 }
 
