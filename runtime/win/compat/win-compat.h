@@ -76,7 +76,11 @@ long long tl_win_pwrite(int fd, const void *buf, size_t n, long long off);
 long long tl_win_pread(int fd, void *buf, size_t n, long long off);
 #define pwrite tl_win_pwrite
 
-/* Signals: Windows raises none, so a handler is kept and never runs, and sigsetjmp is setjmp. */
+/* Signals: Windows raises none. A SIGSEGV, SIGBUS or SIGILL handler is still honoured for the thread that
+ * installed it: husk-tl-crash-win.c turns that thread's access violation (or misaligned access, or illegal
+ * instruction) into a call of the handler, which is how the driver's fault guard around calls into the
+ * game works. sigsetjmp saves registers only: Windows' own longjmp unwinds through frame tables, and the
+ * game's code between the two has none. */
 #include <signal.h>
 #include <setjmp.h>
 typedef struct { int si_signo, si_code; void *si_addr; } siginfo_t;
@@ -98,15 +102,17 @@ struct sigaction { union { void (*sa_handler)(int); void (*sa_sigaction)(int, si
 #ifndef SIGKILL
 #define SIGKILL 9
 #endif
-static inline int tl_win_sigaction(int s, const struct sigaction *a, struct sigaction *o) { (void)s; (void)a; if (o) { o->sa_handler = 0; o->sa_mask = 0; o->sa_flags = 0; } return 0; }
+int tl_win_sigaction(int s, const struct sigaction *a, struct sigaction *o);
 #define sigaction(s, a, o) tl_win_sigaction((s), (a), (o))
 #define sigemptyset(m) (*(m) = 0, 0)
 #define sigfillset(m) (*(m) = ~0ull, 0)
 #define sigaddset(m, s) (*(m) |= 1ull << ((s) - 1), 0)
 typedef unsigned long long sigset_t;
-typedef jmp_buf sigjmp_buf;
-#define sigsetjmp(b, s) setjmp(b)
-#define siglongjmp(b, v) longjmp((b), (v))
+typedef unsigned long long sigjmp_buf[24];
+int tl_win_setjmp(void *buf) __attribute__((returns_twice));
+__attribute__((noreturn)) void tl_win_longjmp(void *buf, int v);
+#define sigsetjmp(b, s) tl_win_setjmp(b)
+#define siglongjmp(b, v) tl_win_longjmp((b), (v))
 #define lstat stat
 #define S_ISLNK(m) 0
 #define localtime_r(t, out) (localtime_s((out), (t)) ? NULL : (out))

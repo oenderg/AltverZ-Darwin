@@ -440,7 +440,7 @@ __asm__(
     "  ldp d8, d9, [x0, #104]\n  ldp d10, d11, [x0, #120]\n  ldp d12, d13, [x0, #136]\n  ldp d14, d15, [x0, #152]\n"
     "  mov sp, x16\n"
     "  cmp w1, #0\n  csinc w0, w1, wzr, ne\n  br x30\n");
-extern void tl_win_setjmp(void), tl_win_longjmp(void);
+/* tl_win_setjmp and tl_win_longjmp are declared in win-compat.h (the host's sigsetjmp uses them too). */
 
 /* --------------------------------------------------------------------- math */
 

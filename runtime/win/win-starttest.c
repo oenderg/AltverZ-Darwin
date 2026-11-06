@@ -5,6 +5,7 @@
  * Usage: rfl-starttest.exe <apk> [data dir]
  */
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
@@ -35,8 +36,37 @@ static int onload(tl_lib *L)
     return v;
 }
 
+/* The fault guard the driver puts around calls into the game: a null read on this thread must come back
+ * through the handler and siglongjmp, twice in a row (the handler resets itself after each fault). */
+static sigjmp_buf g_jmp;
+static volatile int g_sig;
+static void on_fault(int sig, siginfo_t *info, void *ctx) { (void)info; (void)ctx; g_sig = sig; siglongjmp(g_jmp, 1); }
+static int guard_check(void)
+{
+    int caught = 0;
+    for (int round = 0; round < 2; round++) {
+        struct sigaction sa, old;
+        memset(&sa, 0, sizeof sa);
+        sa.sa_sigaction = on_fault; sa.sa_flags = SA_SIGINFO | SA_NODEFER | SA_RESETHAND;
+        sigaction(SIGSEGV, &sa, &old);
+        g_sig = 0;
+        if (sigsetjmp(g_jmp, 1) == 0) {
+            volatile int *p = (volatile int *)(uintptr_t)(0x58 + round);
+            (void)*p;
+        } else caught++;
+        sigaction(SIGSEGV, &old, NULL);
+    }
+    return caught;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc > 1 && !strcmp(argv[1], "--guard")) {
+        tl_win_install_crash_handler();
+        int n = guard_check();
+        printf("guard: %d of 2 faults caught\n", n);
+        return n == 2 ? 0 : 1;
+    }
     if (argc < 2) { fprintf(stderr, "usage: %s <apk> [data dir]\n", argv[0]); return 2; }
     setvbuf(stdout, NULL, _IONBF, 0);
     tl_win_install_crash_handler();
