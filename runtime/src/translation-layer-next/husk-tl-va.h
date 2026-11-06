@@ -91,10 +91,18 @@ static inline double tl_va_arg_f64(tl_va_list *ap)
 #define TL_ASM_ADDR(reg, s) "  adrp " reg ", _" #s "@PAGE\n  add " reg ", " reg ", _" #s "@PAGEOFF\n"
 #endif
 
+#if defined(__x86_64__)
+/* x86-64: the guest never runs this; the stub page's SVC handler (husk-tl-x64.c) recognises the mark, builds the
+ * frame from the guest's registers and calls impl. ud2 first, so a host call by mistake stops at once. */
+#define TL_VA_STUB(sym, impl) \
+    __asm__(".text\n.p2align 4\n.globl " #sym "\n" #sym ":\n" \
+            "  ud2\n  .ascii \"TLVAX6\"\n  .quad " #impl "\n")
+#else
 #define TL_VA_STUB(sym, impl) \
     __asm__(".text\n.p2align 2\n.globl " TL_ASM_NAME(sym) "\n" TL_ASM_NAME(sym) ":\n" \
             TL_ASM_ADDR("x16", impl) \
             "  b    " TL_ASM_NAME(tl_va_common) "\n")
+#endif
 
 void tl_va_common(void);
 

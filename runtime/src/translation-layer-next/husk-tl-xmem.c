@@ -216,7 +216,12 @@ static bool open_platform(size_t host_bytes, char *err, size_t errlen)
 {
     if (getenv("TL_XMEM_MIB")) host_bytes = (size_t)atoi(getenv("TL_XMEM_MIB")) << 20;
     size_t size = (host_bytes + TL_XMEM_PAGE - 1) & ~(size_t)(TL_XMEM_PAGE - 1);
-    uint8_t *base = VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    uint8_t *base = NULL;
+#if defined(__x86_64__)
+    /* x86-64 translates the libraries, and the translation is kept by their addresses: the same place every run */
+    base = VirtualAlloc((void *)(uintptr_t)0x5A0000000000ull, size, MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+#endif
+    if (!base) base = VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!base) {
         snprintf(err, errlen, "VirtualAlloc reserving %zu MiB failed (%lu)", size >> 20, GetLastError());
         return false;

@@ -1189,10 +1189,29 @@ static uint8_t jni_ExceptionCheck(void *env)
     return t_pending != NULL;
 }
 
+#if defined(__x86_64__)
+#include "../../win/x64/husk-tl-x64.h"
+/* x86-64: the guest reads the tables, so each slot holds a stub for the host function (husk-tl-x64.c), and the
+ * guest's JNIEnv and JavaVM point at those copies. The host keeps calling its own functions directly. */
+static const void *g_env_guest[233], *g_vm_guest[8];
+static void guest_tables(void)
+{
+    char name[16];
+    for (int i = 0; i < 233; i++) if (g_env_fns[i]) { snprintf(name, sizeof(name), "jni#%d", i); g_env_guest[i] = tl_x64_import(strdup(name), (void *)g_env_fns[i]); }
+    for (int i = 0; i < 8; i++) if (g_vm_fns[i]) { snprintf(name, sizeof(name), "jvm#%d", i); g_vm_guest[i] = tl_x64_import(strdup(name), (void *)g_vm_fns[i]); }
+    g_env.functions = g_env_guest;
+    g_vm.functions = g_vm_guest;
+}
+static pthread_once_t g_guest_once = PTHREAD_ONCE_INIT;
+#endif
+
 void tl_jni_init(void)
 {
     pthread_once(&g_init_once, build_tables);
     g_env_fns[228] = (const void *)jni_ExceptionCheck;
+#if defined(__x86_64__)
+    pthread_once(&g_guest_once, guest_tables);
+#endif
 }
 
 /* ------------------------------------------------------------- for the interpreter */

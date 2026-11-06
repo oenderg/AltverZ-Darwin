@@ -108,7 +108,7 @@ int tl_win_sigaction(int s, const struct sigaction *a, struct sigaction *o);
 #define sigfillset(m) (*(m) = ~0ull, 0)
 #define sigaddset(m, s) (*(m) |= 1ull << ((s) - 1), 0)
 typedef unsigned long long sigset_t;
-typedef unsigned long long sigjmp_buf[24];
+typedef unsigned long long sigjmp_buf[32];
 int tl_win_setjmp(void *buf) __attribute__((returns_twice));
 __attribute__((noreturn)) void tl_win_longjmp(void *buf, int v);
 #define sigsetjmp(b, s) tl_win_setjmp(b)

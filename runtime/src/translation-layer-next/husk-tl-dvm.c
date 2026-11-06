@@ -1117,6 +1117,17 @@ static void *find_jni(dvm_method *m)
 /* A call into a JNI function with any number of arguments: x0-x7 and d0-d7 from the arrays, the rest as 8-byte stack slots (the
  * Android ABI), however many there are -- proxygen's HTTPClient.init takes over eighty. Returns x0, and d0 through dret. */
 int64_t tl_dvm_jcall(void *fn, const int64_t *gp, const double *fp, const int64_t *stk, uint64_t nstk, double *dret);
+#if defined(__x86_64__)
+/* x86-64: the native method is guest code, run translated (husk-tl-x64.c) */
+uint64_t tl_guest_call_regs(uint64_t pc, const uint64_t gp[8], const uint64_t fp[8], const uint64_t *stk, size_t nstk, uint64_t *fpret);
+int64_t tl_dvm_jcall(void *fn, const int64_t *gp, const double *fp, const int64_t *stk, uint64_t nstk, double *dret)
+{
+    uint64_t fr = 0;
+    int64_t r = (int64_t)tl_guest_call_regs((uint64_t)(uintptr_t)fn, (const uint64_t *)gp, (const uint64_t *)fp, (const uint64_t *)stk, (size_t)nstk, &fr);
+    memcpy(dret, &fr, 8);
+    return r;
+}
+#else
 __asm__(
     ".text\n.p2align 2\n.globl " TL_ASM_NAME(tl_dvm_jcall) "\n" TL_ASM_NAME(tl_dvm_jcall) ":\n"
     "  stp x29, x30, [sp, #-32]!\n"
@@ -1152,6 +1163,7 @@ __asm__(
     "  ldp x19, x20, [sp, #16]\n"
     "  ldp x29, x30, [sp], #32\n"
     "  ret\n");
+#endif
 
 static bool call_native(dvm_method *m, jobj *self, const jvalue *params, jvalue *ret)
 {

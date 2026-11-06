@@ -58,6 +58,20 @@ int tl_win_sigaction(int s, const struct sigaction *a, struct sigaction *o)
     return 0;
 }
 
+#if defined(__x86_64__)
+#define CTX_PC(c) ((c)->Rip)
+#define CTX_FP(c) ((c)->Rbp)
+#define CTX_SP(c) ((c)->Rsp)
+#define CTX_LR(c) ((DWORD64)0)
+/* the guest's own place when the fault is in translated code (husk-tl-x64.c), weak: the ARM64 programs have none */
+void tl_x64_crash_note(void) __attribute__((weak));
+#else
+#define CTX_PC(c) ((c)->Pc)
+#define CTX_FP(c) ((c)->Fp)
+#define CTX_SP(c) ((c)->Sp)
+#define CTX_LR(c) ((c)->Lr)
+#endif
+
 static __thread siginfo_t t_info;
 static void handler_returned(void)
 {
@@ -81,16 +95,27 @@ static bool to_handler(EXCEPTION_POINTERS *e)
     if (!mine) return false;
     t_info.si_signo = sig; t_info.si_code = 0;
     t_info.si_addr = code == EXCEPTION_ACCESS_VIOLATION && e->ExceptionRecord->NumberParameters >= 2
-                   ? (void *)(uintptr_t)e->ExceptionRecord->ExceptionInformation[1] : (void *)(uintptr_t)e->ContextRecord->Pc;
+                   ? (void *)(uintptr_t)e->ExceptionRecord->ExceptionInformation[1] : (void *)(uintptr_t)CTX_PC(e->ContextRecord);
     CONTEXT *c = e->ContextRecord;
+#if defined(__x86_64__)
+    c->Rcx = (DWORD64)sig;
+    c->Rdx = (DWORD64)(uintptr_t)&t_info;
+    c->R8 = 0;
+    c->Rsp = ((c->Rsp - 512) & ~(DWORD64)15) - 8;       /* as if called: the return address below an aligned stack */
+    *(DWORD64 *)(uintptr_t)c->Rsp = (DWORD64)(uintptr_t)handler_returned;
+    c->Rip = (DWORD64)(uintptr_t)(void *)sa.sa_handler;
+#else
     c->X0 = (DWORD64)sig;
     c->X1 = (DWORD64)(uintptr_t)&t_info;
     c->X2 = 0;
     c->Sp = (c->Sp - 512) & ~(DWORD64)15;
     c->Lr = (DWORD64)(uintptr_t)handler_returned;
     c->Pc = (DWORD64)(uintptr_t)(void *)sa.sa_handler;   /* sa_sigaction shares the slot */
+#endif
     return true;
 }
+
+
 
 static LONG CALLBACK on_exception(EXCEPTION_POINTERS *e)
 {
@@ -105,7 +130,7 @@ static LONG CALLBACK on_exception(EXCEPTION_POINTERS *e)
     if (InterlockedExchange(&once, 1)) return EXCEPTION_CONTINUE_SEARCH;
     CONTEXT *c = e->ContextRecord;
     char pc[256], lr[256];
-    where(c->Pc, pc, sizeof(pc)); where(c->Lr, lr, sizeof(lr));
+    where(CTX_PC(c), pc, sizeof(pc)); where(CTX_LR(c), lr, sizeof(lr));
     tl_log_line("CRASH: exception %#lx at %s (thread %lu)", code, pc, GetCurrentThreadId());
     if (code == EXCEPTION_ACCESS_VIOLATION && e->ExceptionRecord->NumberParameters >= 2)
         tl_log_line("CRASH: %s address %#llx", e->ExceptionRecord->ExceptionInformation[0] == 8 ? "executing" : e->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
@@ -119,12 +144,20 @@ static LONG CALLBACK on_exception(EXCEPTION_POINTERS *e)
                         mi.State == MEM_FREE ? "free" : mi.State == MEM_RESERVE ? "reserved, not committed" : "committed",
                         mi.BaseAddress, (unsigned long long)mi.RegionSize, mi.AllocationBase, mi.Protect);
     }
+#if defined(__x86_64__)
+    tl_log_line("CRASH: rax %016llx rbx %016llx rcx %016llx rdx %016llx", c->Rax, c->Rbx, c->Rcx, c->Rdx);
+    tl_log_line("CRASH: rsi %016llx rdi %016llx r8  %016llx r9  %016llx", c->Rsi, c->Rdi, c->R8, c->R9);
+    tl_log_line("CRASH: r10 %016llx r11 %016llx r12 %016llx r13 %016llx", c->R10, c->R11, c->R12, c->R13);
+    tl_log_line("CRASH: r14 %016llx r15 %016llx", c->R14, c->R15);
+    if (tl_x64_crash_note) tl_x64_crash_note();
+#else
     tl_log_line("CRASH: lr %s", lr);
     for (int i = 0; i < 29; i += 4)
         tl_log_line("CRASH: x%-2d %016llx %016llx %016llx %016llx", i, (unsigned long long)c->X[i], (unsigned long long)c->X[i + 1],
                     (unsigned long long)(i + 2 < 29 ? c->X[i + 2] : 0), (unsigned long long)(i + 3 < 29 ? c->X[i + 3] : 0));
-    tl_log_line("CRASH: fp %016llx sp %016llx", (unsigned long long)c->Fp, (unsigned long long)c->Sp);
-    uint64_t fp = c->Fp;
+#endif
+    tl_log_line("CRASH: fp %016llx sp %016llx", (unsigned long long)CTX_FP(c), (unsigned long long)CTX_SP(c));
+    uint64_t fp = CTX_FP(c);
     for (int i = 0; i < 24 && fp && !(fp & 7); i++) {
         MEMORY_BASIC_INFORMATION mi;
         if (!VirtualQuery((void *)(uintptr_t)fp, &mi, sizeof(mi)) || mi.State != MEM_COMMIT) break;

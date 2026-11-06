@@ -15,6 +15,11 @@
 #include "husk-tl-internal.h"
 #include "husk-tl-a64.h"
 #include "husk-tl-xmem.h"
+#if defined(__x86_64__)
+/* x86-64: the guest's code runs translated, so a host function it imports is reached through a stub
+ * (husk-tl-x64.c), and a guest function the loader calls goes through tl_guest_call. */
+#include "../../win/x64/husk-tl-x64.h"
+#endif
 
 /* The project's log sink, and the bionic shim's surface. */
 void  tl_log_line(const char *fmt, ...);
@@ -500,7 +505,11 @@ static bool is_cxx_runtime_symbol(const char *name)
 static void *lookup_for(tl_lib *L, const char *name, bool *weak_hit)
 {
     (void)weak_hit;
+#if defined(__x86_64__)
+    for (int i = 0; i < g_ninterpose; i++) if (!strcmp(g_interpose[i].name, name)) return tl_x64_import(name, g_interpose[i].fn);
+#else
     for (int i = 0; i < g_ninterpose; i++) if (!strcmp(g_interpose[i].name, name)) return g_interpose[i].fn;
+#endif
     build_scope(L);
     const elf_sym *s = lib_find(L, name);
     if (s && (s->st_info & 0xf) != STT_GNU_IFUNC_) return sym_value(L, s);
@@ -515,7 +524,11 @@ static void *lookup_for(tl_lib *L, const char *name, bool *weak_hit)
         s = lib_find(L->deps[i], name);
         if (s && (s->st_info & 0xf) != STT_GNU_IFUNC_) return sym_value(L->deps[i], s);
     }
+#if defined(__x86_64__)
+    return tl_x64_import(name, tl_bionic_find(name));
+#else
     return tl_bionic_find(name);
+#endif
 }
 
 void *tl_ld_sym(tl_lib *lib, const char *name)
@@ -664,8 +677,14 @@ void tl_unresolved_called_c(const char *name, void *lr) { tl_unresolved_called(n
 static uint8_t *g_stub_rx, *g_stub_rw;
 static size_t g_stub_left;
 
+#if defined(__x86_64__)
+static void unresolved_raw(struct CPU *c, void *user) { (void)c; tl_unresolved_called((const char *)user, NULL); }
+#endif
 static void *make_stub(const char *name)
 {
+#if defined(__x86_64__)
+    return (void *)(uintptr_t)tl_x64_export_raw(name, unresolved_raw, (void *)name);
+#endif
     if (g_stub_left < 32) {
         if (!tl_xmem_alloc(PAGE, &g_stub_rx, &g_stub_rw)) return NULL;
         g_stub_left = PAGE;
@@ -1404,6 +1423,17 @@ __attribute__((naked, used)) static void tl_tlsdesc_entry(void)
 #else
 static void tl_tlsdesc_entry(void) {}
 #endif
+#if defined(__x86_64__)
+/* The descriptor's resolver as the guest calls it: x0 = the descriptor, the answer in x0, every other register kept. */
+#include "common/cpu/aarch64/cpu.h"
+static void tlsdesc_raw(struct CPU *c, void *user) { (void)user; c->x[0] = tl_tls_offset(((const uint64_t *)(uintptr_t)c->x[0])[1]); }
+uint64_t tl_x64_tlsdesc_stub(void)
+{
+    static uint64_t a;
+    if (!a) a = tl_x64_export_raw("tlsdesc", tlsdesc_raw, NULL);
+    return a;
+}
+#endif
 
 /* -------------------------------------------------------------- relocation */
 
@@ -1498,7 +1528,11 @@ static bool reloc_one(tl_lib *L, uint64_t r_offset, uint32_t type, uint32_t symi
         if (!L->tls_id) { tl_log_line("ld: %s: a TLS relocation but no TLS segment", L->name); return false; }
         if (type == R_TLSDESC) {
             if (off + 16 > L->npages * PAGE) return false;
+#if defined(__x86_64__)
+            place[0] = tl_x64_tlsdesc_stub();
+#else
             place[0] = (uint64_t)(uintptr_t)&tl_tlsdesc_entry;
+#endif
             place[1] = ((uint64_t)L->tls_id << 32) | (uint32_t)(symoff + (uint64_t)addend);
         } else if (type == R_TLS_DTPMOD) {
             *place = (uint64_t)L->tls_id;
@@ -1646,6 +1680,9 @@ static bool ensure_tcb(void)
     t[0] = (uint64_t)(uintptr_t)G.tcb_rw;      /* self */
     t[1] = 1000; t[2] = 1000;
     t[5] = 0xdeadbeefcafebabeull;             /* [tpidr_el0 + 0x28]: the stack cookie */
+#if defined(__x86_64__)
+    tl_x64_set_tpidr((uint64_t)(uintptr_t)G.tcb_rw & ~(uint64_t)0xFFF);   /* what tl_tls_offset counts from */
+#endif
     return true;
 }
 
@@ -2233,7 +2270,12 @@ static bool init_locked(tl_lib *L)
             tl_log_line("ld: %s: skipped BORINGSSL_integrity_test", L->name);
         }
     }
-    if (L->init) ((init_fn)(L->rx + (L->init - L->base_vaddr)))(argc, argv, envp);
+#if defined(__x86_64__)
+#define CALL_INIT(f) tl_guest_call((uint64_t)(uintptr_t)(f), "vill", (uint64_t)argc, (uint64_t)(uintptr_t)argv, (uint64_t)(uintptr_t)envp)
+#else
+#define CALL_INIT(f) ((init_fn)(f))(argc, argv, envp)
+#endif
+    if (L->init) CALL_INIT(L->rx + (L->init - L->base_vaddr));
     if (L->init_array) {
         const uint64_t *fns = at(L, L->init_array);
         size_t n = L->init_arraysz / 8;
@@ -2245,9 +2287,11 @@ static bool init_locked(tl_lib *L)
             if (!f || f == ~0ull) continue;
             if (trace) tl_log_line("ld: %s: constructor %zu at +%#llx", L->name, i, (unsigned long long)(f - (uint64_t)(uintptr_t)L->rx + L->base_vaddr));
             /* TL_INIT_BREAK=<library>: a debugger stops here with the constructor's address in x0 and the image base in x1 */
+#if defined(__aarch64__)
             { const char *b = getenv("TL_INIT_BREAK");
               if (b && !strcmp(b, L->name)) __asm__ volatile("mov x0, %0\n mov x1, %1\n brk #0xf00d" :: "r"(f), "r"((uint64_t)(uintptr_t)L->rx) : "x0", "x1"); }
-            ((init_fn)(uintptr_t)f)(argc, argv, envp);
+#endif
+            CALL_INIT((uintptr_t)f);
             if (trace) tl_log_line("ld: %s: constructor %zu returned", L->name, i);
         }
     }
@@ -2255,6 +2299,39 @@ static bool init_locked(tl_lib *L)
     if (G.verbosity >= 1) tl_log_line("ld: %-36s initialised (%s%zu constructors)", L->name, L->init ? "DT_INIT + " : "", (size_t)(L->init_arraysz / 8));
     return true;
 }
+
+#if defined(__x86_64__)
+/* Where functions start, for the translator: every function the unwind tables describe, every function symbol, every
+ * constructor. Host addresses, sorted, without repeats; the caller frees the array. */
+static int cmp_u64(const void *a, const void *b) { uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b; return x < y ? -1 : x > y; }
+size_t tl_ld_function_starts(uint64_t **out)
+{
+    size_t n = 0, cap = 1024;
+    uint64_t *v = malloc(cap * 8);
+    #define PUSH(a) do { if (n == cap) v = realloc(v, (cap *= 2) * 8); v[n++] = (a); } while (0)
+    for (int li = 0; li < G.nlibs; li++) {
+        tl_lib *L = G.libs[li];
+        if (!L || !L->rx) continue;
+        uint64_t base = (uint64_t)(uintptr_t)L->rx - L->base_vaddr;
+        for (size_t i = 0; i < L->nfde; i++) PUSH(base + L->fde_start[i]);
+        for (uint32_t i = 0; i < L->nsyms; i++) {
+            const elf_sym *s = sym_at(L, i);
+            if (s && (s->st_info & 0xf) == 2 /* STT_FUNC */ && s->st_shndx && s->st_value) PUSH(base + s->st_value);
+        }
+        if (L->init) PUSH(base + L->init);
+        if (L->init_array) {
+            const uint64_t *fns = at(L, L->init_array);
+            for (size_t i = 0; i < L->init_arraysz / 8; i++) if (fns[i] && fns[i] != ~0ull) PUSH(fns[i]);
+        }
+    }
+    #undef PUSH
+    qsort(v, n, 8, cmp_u64);
+    size_t k = 0;
+    for (size_t i = 0; i < n; i++) if ((v[i] & 3) == 0 && (!k || v[k - 1] != v[i])) v[k++] = v[i];
+    *out = v;
+    return k;
+}
+#endif
 
 bool tl_ld_init(tl_lib *lib)
 {

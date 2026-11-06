@@ -24,6 +24,7 @@
 /* How many times an implementation returned with a callee-saved register changed, and the last such case. */
 volatile struct { uint64_t count, x21, impl, mask; } tl_va_clobber;
 
+#if defined(__aarch64__)   /* x86-64: the stub page builds the frame (husk-tl-x64.c) */
 __asm__(
     ".text\n.p2align 2\n.globl " TL_ASM_NAME(tl_va_common) "\n" TL_ASM_NAME(tl_va_common) ":\n"
     "  stp x29, x30, [sp, #-16]!\n"
@@ -75,6 +76,7 @@ __asm__(
     "  mov sp, x29\n"
     "  ldp x29, x30, [sp], #16\n"
     "  ret\n");
+#endif
 
 /* ------------------------------------------------------------------ printf */
 
