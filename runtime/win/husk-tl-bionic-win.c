@@ -604,7 +604,9 @@ const tl_bionic_entry tl_tab_win_core[] = {
 
 /* Every table, searched in order. */
 extern const tl_bionic_entry tl_tab_win_io[], tl_tab_win_thread[], tl_tab_win_str[], tl_tab_win_math[];
-static const tl_bionic_entry *const k_tables[] = { tl_tab_win_core, tl_tab_win_io, tl_tab_win_thread, tl_tab_win_str, tl_tab_win_math };
+/* OpenSL ES (husk-tl-opensles.c), in the game but not in the start-up test: weak, and skipped when absent */
+extern const tl_bionic_entry tl_tab_opensles[] __attribute__((weak));
+static const tl_bionic_entry *k_tables[] = { tl_tab_win_core, tl_tab_win_io, tl_tab_win_thread, tl_tab_win_str, tl_tab_win_math, NULL };
 
 typedef struct { const char *name; void *addr; } slot;
 static slot *g_slots;
@@ -615,12 +617,14 @@ static uint64_t fnv(const char *s) { uint64_t h = 1469598103934665603ull; while 
 static BOOL CALLBACK build(PINIT_ONCE o, PVOID p, PVOID *c)
 {
     (void)o; (void)p; (void)c;
+    k_tables[sizeof(k_tables) / sizeof(k_tables[0]) - 1] = tl_tab_opensles;
     size_t total = 0;
-    for (size_t t = 0; t < sizeof(k_tables) / sizeof(k_tables[0]); t++) for (const tl_bionic_entry *e = k_tables[t]; e->name; e++) total++;
+    for (size_t t = 0; t < sizeof(k_tables) / sizeof(k_tables[0]); t++) if (k_tables[t]) for (const tl_bionic_entry *e = k_tables[t]; e->name; e++) total++;
     g_nslots = 1;
     while (g_nslots < total * 2) g_nslots <<= 1;
     g_slots = calloc(g_nslots, sizeof(slot));
     for (size_t t = 0; t < sizeof(k_tables) / sizeof(k_tables[0]); t++) {
+        if (!k_tables[t]) continue;
         for (const tl_bionic_entry *e = k_tables[t]; e->name; e++) {
             size_t i = fnv(e->name) & (g_nslots - 1);
             while (g_slots[i].name) {

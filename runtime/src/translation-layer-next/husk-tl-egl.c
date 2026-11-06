@@ -136,9 +136,16 @@ static EGLDisplay w_eglGetDisplay(void *native)
     (void)native;
     pthread_mutex_lock(&E.lock);
     if (!E.display && E.ready) {
+#if defined(_WIN32)
+        /* Windows: ANGLE over Direct3D 11 (EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE) */
+        const EGLint attribs[] = { EGL_PLATFORM_ANGLE_TYPE_ANGLE, 0x3208, EGL_NONE };
+        E.display = a_eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, NULL, attribs);
+        tl_log_line("egl: display %p (ANGLE over Direct3D 11)", E.display);
+#else
         const EGLint attribs[] = { EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE, EGL_NONE };
         E.display = a_eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, NULL, attribs);
         tl_log_line("egl: display %p (ANGLE over Metal)", E.display);
+#endif
     }
     EGLDisplay d = E.display;
     pthread_mutex_unlock(&E.lock);

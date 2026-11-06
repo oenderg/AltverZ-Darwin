@@ -44,7 +44,7 @@
 #include <unistd.h>
 #include <uuid/uuid.h>
 #include <mach/mach.h>
-#if !TARGET_OS_IPHONE
+#if !TARGET_OS_IPHONE && !defined(_WIN32)
 /* The mach_vm calls are not available on iOS (mach_vm.h says so). The app
  * object is only looked for on the Mac, where the surface's size can change;
  * on the iPad the surface is the game's own size for ever. */

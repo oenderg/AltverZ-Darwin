@@ -14,6 +14,7 @@ N="$H/../src/translation-layer-next"; T="$H/../src/translation-layer"
 target="${1:-starttest}"
 case "$target" in
     starttest) SRCS="$WIN_CORE $H/win-starttest.c"; OUT="$BIN/rfl-starttest.exe" ;;
+    game) SRCS="$WIN_CORE $WIN_GAME"; OUT="$BIN/PvZ2 Reflourished.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
 OBJS=""
@@ -24,5 +25,5 @@ for f in $SRCS; do
     fi
     OBJS="$OBJS $o"
 done
-"$CC" -static -o "$OUT" $OBJS -L"$TC/win-arm64/lib" -lz -lz-guest -lpsapi -lws2_32 -lbcrypt -lsynchronization -lpthread -Wl,--error-limit=0
+"$CC" -static -o "$OUT" $OBJS $LDX -L"$TC/win-arm64/lib" -lz -lz-guest -lpsapi -lws2_32 -lbcrypt -lsynchronization -lpthread -Wl,--error-limit=0
 echo "built $OUT"

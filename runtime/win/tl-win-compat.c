@@ -271,3 +271,94 @@ long long tl_win_pread(int fd, void *buf, size_t n, long long off)
     _lseeki64(fd, was, SEEK_SET);
     return r;
 }
+
+/* ------------------------------------------------- the driver's Darwin calls */
+
+#include <sys/mount.h>
+#include <uuid/uuid.h>
+#include <mach/mach.h>
+#include <sys/sysctl.h>
+#include <dirent.h>
+
+int statfs(const char *path, struct statfs *out)
+{
+    ULARGE_INTEGER a = {0}, t = {0}, f = {0};
+    if (!GetDiskFreeSpaceExA(path, &a, &t, &f)) return -1;
+    memset(out, 0, sizeof(*out));
+    out->f_bsize = 4096; out->f_blocks = t.QuadPart / 4096; out->f_bfree = f.QuadPart / 4096; out->f_bavail = a.QuadPart / 4096;
+    out->f_files = 1000000; out->f_ffree = 900000;
+    return 0;
+}
+void uuid_generate_random(uuid_t out)
+{
+    tl_win_arc4random_buf(out, 16);
+    out[6] = (unsigned char)((out[6] & 0x0F) | 0x40);
+    out[8] = (unsigned char)((out[8] & 0x3F) | 0x80);
+}
+void uuid_unparse_lower(const uuid_t u, char *o)
+{
+    snprintf(o, 37, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+             u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7], u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
+}
+kern_return_t tl_win_task_info(task_vm_info_data_t *info)
+{
+    PROCESS_MEMORY_COUNTERS pmc = { sizeof(pmc) };
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) return 1;
+    info->phys_footprint = pmc.WorkingSetSize;
+    return KERN_SUCCESS;
+}
+/* A read that answers "not readable" rather than faulting: ReadProcessMemory on this process. */
+kern_return_t vm_read_overwrite(int task, vm_address_t addr, vm_size_t n, vm_address_t out, vm_size_t *got)
+{
+    (void)task;
+    SIZE_T r = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), (LPCVOID)addr, (LPVOID)out, n, &r)) { *got = 0; return 1; }
+    *got = r;
+    return KERN_SUCCESS;
+}
+int sysctlbyname(const char *name, void *out, size_t *len, void *newp, size_t newlen)
+{
+    (void)newp; (void)newlen;
+    if (!strcmp(name, "hw.memsize") && *len >= 8) {
+        MEMORYSTATUSEX m = { sizeof(m) }; GlobalMemoryStatusEx(&m);
+        uint64_t v = m.ullTotalPhys; memcpy(out, &v, 8); *len = 8; return 0;
+    }
+    if ((!strcmp(name, "hw.ncpu") || !strcmp(name, "hw.logicalcpu")) && *len >= 4) {
+        SYSTEM_INFO si; GetSystemInfo(&si); int v = (int)si.dwNumberOfProcessors; memcpy(out, &v, 4); *len = 4; return 0;
+    }
+    return -1;
+}
+int link(const char *from, const char *to) { return CreateHardLinkA(to, from, NULL) ? 0 : -1; }
+int alphasort(const struct dirent **a, const struct dirent **b) { return strcmp((*a)->d_name, (*b)->d_name); }
+int scandir(const char *dir, struct dirent ***list, int (*filter)(const struct dirent *), int (*cmp)(const struct dirent **, const struct dirent **))
+{
+    DIR *d = opendir(dir);
+    if (!d) return -1;
+    struct dirent **v = NULL; int n = 0, cap = 0;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (filter && !filter(e)) continue;
+        if (n == cap) { cap = cap ? cap * 2 : 32; v = realloc(v, (size_t)cap * sizeof(*v)); }
+        v[n] = malloc(sizeof(struct dirent)); memcpy(v[n], e, sizeof(struct dirent)); n++;
+    }
+    closedir(d);
+    if (cmp && n > 1) qsort(v, (size_t)n, sizeof(*v), (int (*)(const void *, const void *))cmp);
+    *list = v;
+    return n;
+}
+
+/* getline: a line with its newline, in a buffer the caller frees (with free(), so tl_malloc'd). */
+long long tl_win_getline(char **line, size_t *cap, FILE *f)
+{
+    size_t n = 0;
+    int c;
+    if (!*line || !*cap) { *cap = 128; *line = tl_malloc(*cap); if (!*line) return -1; }
+    while ((c = fgetc(f)) != EOF) {
+        if (n + 2 > *cap) { size_t nc = *cap * 2; char *p = tl_realloc(*line, nc); if (!p) return -1; *line = p; *cap = nc; }
+        (*line)[n++] = (char)c;
+        if (c == '\n') break;
+    }
+    if (!n) return -1;
+    (*line)[n] = 0;
+    return (long long)n;
+}

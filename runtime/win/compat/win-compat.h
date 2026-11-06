@@ -75,6 +75,50 @@ unsigned long tl_win_thread_id(void);
 long long tl_win_pwrite(int fd, const void *buf, size_t n, long long off);
 long long tl_win_pread(int fd, void *buf, size_t n, long long off);
 #define pwrite tl_win_pwrite
+
+/* Signals: Windows raises none, so a handler is kept and never runs, and sigsetjmp is setjmp. */
+#include <signal.h>
+#include <setjmp.h>
+typedef struct { int si_signo, si_code; void *si_addr; } siginfo_t;
+struct sigaction { union { void (*sa_handler)(int); void (*sa_sigaction)(int, siginfo_t *, void *); }; unsigned long long sa_mask; int sa_flags; };
+#define SA_SIGINFO 4
+#define SA_NODEFER 0x40000000
+#define SA_RESETHAND 0x80000000
+#define SA_ONSTACK 0x08000000
+#define SA_RESTART 0x10000000
+#ifndef SIGBUS
+#define SIGBUS 7
+#endif
+#ifndef SIGPIPE
+#define SIGPIPE 13
+#endif
+#ifndef SIGUSR1
+#define SIGUSR1 10
+#endif
+#ifndef SIGKILL
+#define SIGKILL 9
+#endif
+static inline int tl_win_sigaction(int s, const struct sigaction *a, struct sigaction *o) { (void)s; (void)a; if (o) { o->sa_handler = 0; o->sa_mask = 0; o->sa_flags = 0; } return 0; }
+#define sigaction(s, a, o) tl_win_sigaction((s), (a), (o))
+#define sigemptyset(m) (*(m) = 0, 0)
+#define sigfillset(m) (*(m) = ~0ull, 0)
+#define sigaddset(m, s) (*(m) |= 1ull << ((s) - 1), 0)
+typedef unsigned long long sigset_t;
+typedef jmp_buf sigjmp_buf;
+#define sigsetjmp(b, s) setjmp(b)
+#define siglongjmp(b, v) longjmp((b), (v))
+#define lstat stat
+#define S_ISLNK(m) 0
+#define localtime_r(t, out) (localtime_s((out), (t)) ? NULL : (out))
+#define gmtime_r(t, out) (gmtime_s((out), (t)) ? NULL : (out))
+int link(const char *from, const char *to);
+#define fsync(fd) _commit(fd)
+#include <stdio.h>
+long long tl_win_getline(char **line, size_t *cap, FILE *f);
+#define getline tl_win_getline
+struct dirent;
+int scandir(const char *dir, struct dirent ***list, int (*filter)(const struct dirent *), int (*cmp)(const struct dirent **, const struct dirent **));
+int alphasort(const struct dirent **a, const struct dirent **b);
 #define pread tl_win_pread
 
 #ifndef TL_WIN_COMPAT_IMPL
