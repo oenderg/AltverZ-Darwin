@@ -50,87 +50,101 @@ static DWORD ms_until(const g_timespec *abs)
 
 /* ------------------------------------------------------------------ mutex */
 
-typedef struct { uint32_t type; uint32_t pad; SRWLOCK lock; uint32_t owner; uint32_t depth; uint8_t rest[16]; } g_mutex;
-_Static_assert(sizeof(g_mutex) == 40, "bionic arm64 pthread_mutex_t");
+/*
+ * bionic's pthread objects are arrays of int32: the guest may place one at any 4-byte
+ * boundary, and Windows' locks need 8 (their atomics fault on less). So the Windows lock
+ * sits at the first 8-byte boundary after the part of the object bionic's initialisers
+ * write, which always leaves room in the object:
+ *   mutex (40 bytes): [0] type bits, then at align8(+4): SRWLOCK, owner, depth (16 bytes, ends by +28)
+ *   cond (48):        at align8(+0): CONDITION_VARIABLE
+ *   rwlock (56):      at align8(+0): SRWLOCK, then the writing thread
+ */
+static inline uint8_t *align8(void *p) { return (uint8_t *)(((uintptr_t)p + 7) & ~(uintptr_t)7); }
 
-static int mtype(const g_mutex *m) { return (int)((m->type >> 14) & 3); }
+typedef struct { SRWLOCK lock; uint32_t owner, depth; } m_state;
+static inline uint32_t *m_type(void *m) { return (uint32_t *)m; }
+static inline m_state *m_st(void *m) { return (m_state *)align8((uint8_t *)m + 4); }
+static int mtype(void *m) { return (int)((*m_type(m) >> 14) & 3); }
 
 static int b_mutexattr_init(int64_t *a) { *a = 0; return 0; }
 static int b_mutexattr_destroy(int64_t *a) { (void)a; return 0; }
 static int b_mutexattr_settype(int64_t *a, int type) { if (type < 0 || type > 2) return E_INVAL; *a = (*a & ~0xfll) | type; return 0; }
 static int b_mutexattr_setpshared(int64_t *a, int p) { (void)a; (void)p; return 0; }
 
-static int b_mutex_init(g_mutex *m, const int64_t *attr)
+static int b_mutex_init(void *m, const int64_t *attr)
 {
-    memset(m, 0, sizeof(*m));
-    m->type = (uint32_t)((attr ? (*attr & 3) : 0) << 14);
+    memset(m, 0, 40);
+    *m_type(m) = (uint32_t)((attr ? (*attr & 3) : 0) << 14);
     return 0;
 }
-static int b_mutex_destroy(g_mutex *m) { (void)m; return 0; }
-static int b_mutex_lock(g_mutex *m)
+static int b_mutex_destroy(void *m) { (void)m; return 0; }
+static int b_mutex_lock(void *m)
 {
+    m_state *st = m_st(m);
     DWORD me = GetCurrentThreadId();
     int t = mtype(m);
-    if (t != 0 && m->owner == me) {
-        if (t == 1) { m->depth++; return 0; }
+    if (t != 0 && st->owner == me) {
+        if (t == 1) { st->depth++; return 0; }
         return E_DEADLK;
     }
-    AcquireSRWLockExclusive(&m->lock);
-    m->owner = me; m->depth = 1;
+    AcquireSRWLockExclusive(&st->lock);
+    st->owner = me; st->depth = 1;
     return 0;
 }
-static int b_mutex_trylock(g_mutex *m)
+static int b_mutex_trylock(void *m)
 {
+    m_state *st = m_st(m);
     DWORD me = GetCurrentThreadId();
-    if (mtype(m) == 1 && m->owner == me) { m->depth++; return 0; }
-    if (!TryAcquireSRWLockExclusive(&m->lock)) return E_BUSY;
-    m->owner = me; m->depth = 1;
+    if (mtype(m) == 1 && st->owner == me) { st->depth++; return 0; }
+    if (!TryAcquireSRWLockExclusive(&st->lock)) return E_BUSY;
+    st->owner = me; st->depth = 1;
     return 0;
 }
-static int b_mutex_unlock(g_mutex *m)
+static int b_mutex_unlock(void *m)
 {
+    m_state *st = m_st(m);
     int t = mtype(m);
-    if (t != 0 && m->owner != GetCurrentThreadId()) return E_PERM;
-    if (t == 1 && m->depth > 1) { m->depth--; return 0; }
-    m->owner = 0; m->depth = 0;
-    ReleaseSRWLockExclusive(&m->lock);
+    if (t != 0 && st->owner != GetCurrentThreadId()) return E_PERM;
+    if (t == 1 && st->depth > 1) { st->depth--; return 0; }
+    st->owner = 0; st->depth = 0;
+    ReleaseSRWLockExclusive(&st->lock);
     return 0;
 }
 
 /* -------------------------------------------------------------- condition */
 
-typedef struct { CONDITION_VARIABLE cv; uint8_t rest[40]; } g_cond;
-_Static_assert(sizeof(g_cond) == 48, "bionic arm64 pthread_cond_t");
-
+static inline CONDITION_VARIABLE *c_cv(void *c) { return (CONDITION_VARIABLE *)align8(c); }
 static int b_condattr_init(int64_t *a) { *a = 0; return 0; }
 static int b_condattr_destroy(int64_t *a) { (void)a; return 0; }
-static int b_cond_init(g_cond *c, const int64_t *a) { (void)a; memset(c, 0, sizeof(*c)); return 0; }
-static int b_cond_destroy(g_cond *c) { (void)c; return 0; }
-static int b_cond_signal(g_cond *c) { WakeConditionVariable(&c->cv); return 0; }
-static int b_cond_broadcast(g_cond *c) { WakeAllConditionVariable(&c->cv); return 0; }
-static int cond_wait(g_cond *c, g_mutex *m, DWORD ms)
+static int b_cond_init(void *c, const int64_t *a) { (void)a; memset(c, 0, 48); return 0; }
+static int b_cond_destroy(void *c) { (void)c; return 0; }
+static int b_cond_signal(void *c) { WakeConditionVariable(c_cv(c)); return 0; }
+static int b_cond_broadcast(void *c) { WakeAllConditionVariable(c_cv(c)); return 0; }
+static int cond_wait(void *c, void *m, DWORD ms)
 {
-    uint32_t depth = m->depth;
-    m->owner = 0; m->depth = 0;
-    BOOL ok = SleepConditionVariableSRW(&c->cv, &m->lock, ms, 0);
-    m->owner = GetCurrentThreadId(); m->depth = depth;
+    m_state *st = m_st(m);
+    uint32_t depth = st->depth;
+    st->owner = 0; st->depth = 0;
+    BOOL ok = SleepConditionVariableSRW(c_cv(c), &st->lock, ms, 0);
+    st->owner = GetCurrentThreadId(); st->depth = depth;
     return ok ? 0 : (GetLastError() == ERROR_TIMEOUT ? E_TIMEDOUT : E_INVAL);
 }
-static int b_cond_wait(g_cond *c, g_mutex *m) { return cond_wait(c, m, INFINITE); }
-static int b_cond_timedwait(g_cond *c, g_mutex *m, const g_timespec *abs) { return cond_wait(c, m, ms_until(abs)); }
+static int b_cond_wait(void *c, void *m) { return cond_wait(c, m, INFINITE); }
+static int b_cond_timedwait(void *c, void *m, const g_timespec *abs) { return cond_wait(c, m, ms_until(abs)); }
 
 /* ----------------------------------------------------------------- rwlock */
 
-typedef struct { SRWLOCK lock; uint32_t writer; uint8_t rest[44]; } g_rwlock;
-_Static_assert(sizeof(g_rwlock) == 56, "bionic arm64 pthread_rwlock_t");
-static int b_rwlock_init(g_rwlock *l, const void *a) { (void)a; memset(l, 0, sizeof(*l)); return 0; }
-static int b_rwlock_destroy(g_rwlock *l) { (void)l; return 0; }
-static int b_rwlock_rdlock(g_rwlock *l) { AcquireSRWLockShared(&l->lock); return 0; }
-static int b_rwlock_wrlock(g_rwlock *l) { AcquireSRWLockExclusive(&l->lock); l->writer = GetCurrentThreadId(); return 0; }
-static int b_rwlock_unlock(g_rwlock *l)
+typedef struct { SRWLOCK lock; uint32_t writer; } rw_state;
+static inline rw_state *rw_st(void *l) { return (rw_state *)align8(l); }
+static int b_rwlock_init(void *l, const void *a) { (void)a; memset(l, 0, 56); return 0; }
+static int b_rwlock_destroy(void *l) { (void)l; return 0; }
+static int b_rwlock_rdlock(void *l) { AcquireSRWLockShared(&rw_st(l)->lock); return 0; }
+static int b_rwlock_wrlock(void *l) { rw_state *st = rw_st(l); AcquireSRWLockExclusive(&st->lock); st->writer = GetCurrentThreadId(); return 0; }
+static int b_rwlock_unlock(void *l)
 {
-    if (l->writer == GetCurrentThreadId()) { l->writer = 0; ReleaseSRWLockExclusive(&l->lock); }
-    else ReleaseSRWLockShared(&l->lock);
+    rw_state *st = rw_st(l);
+    if (st->writer == GetCurrentThreadId()) { st->writer = 0; ReleaseSRWLockExclusive(&st->lock); }
+    else ReleaseSRWLockShared(&st->lock);
     return 0;
 }
 

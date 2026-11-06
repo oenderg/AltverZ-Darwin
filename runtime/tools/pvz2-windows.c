@@ -38,6 +38,8 @@ static char g_exe_dir[MAX_PATH], g_data[MAX_PATH], g_apk[MAX_PATH], g_egl[MAX_PA
 static tl_ga_config g_cfg;
 static atomic_int g_ready;
 
+static void keyboard_shown(int show) { tl_log_line("windows: the game %s the keyboard", show ? "shows" : "hides"); }
+
 static void slashes(char *p) { for (; *p; p++) if (*p == '\\') *p = '/'; }
 static const char *env_or(const char *name, const char *fallback) { const char *v = getenv(name); return v && *v ? v : fallback; }
 
@@ -70,9 +72,35 @@ static void touch(int phase, LPARAM lp)
     tl_pvz2_touch(phase, 1, x, y);
 }
 
+/* Keys while the game's text field has the keyboard: typed text, Backspace and Return, as
+ * Android's input method sends them (the same numbers the Mac host sends). */
+static bool key_down(WPARAM vk)
+{
+    if (!atomic_load(&g_ready)) return false;
+    switch (vk) {
+    case VK_ESCAPE: tl_pvz2_request_escape(); return true;                 /* Android's Back */
+    case VK_RETURN: tl_pvz2_key(66, 1); tl_pvz2_key(66, 0); return true;    /* the IME's done */
+    case VK_BACK: if (tl_pvz2_keyboard_showing()) { tl_pvz2_text_action(3, ""); return true; } return false;
+    default: return false;
+    }
+}
+static void typed(WPARAM ch)
+{
+    static wchar_t high;
+    if (!atomic_load(&g_ready) || ch < 0x20 || ch == 0x7f) return;
+    wchar_t w[3] = { 0 };
+    if (ch >= 0xD800 && ch < 0xDC00) { high = (wchar_t)ch; return; }
+    if (ch >= 0xDC00 && ch < 0xE000 && high) { w[0] = high; w[1] = (wchar_t)ch; high = 0; } else w[0] = (wchar_t)ch;
+    char u[16] = "";
+    WideCharToMultiByte(CP_UTF8, 0, w, -1, u, sizeof(u), NULL, NULL);
+    if (tl_pvz2_keyboard_showing()) tl_pvz2_text_action(0, u);
+}
+
 static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
+    case WM_KEYDOWN: if (key_down(wp)) return 0; break;
+    case WM_CHAR: typed(wp); return 0;
     case WM_LBUTTONDOWN: SetCapture(h); touch(0, lp); return 0;
     case WM_MOUSEMOVE: if (g_down) touch(1, lp); return 0;
     case WM_LBUTTONUP: ReleaseCapture(); touch(3, lp); return 0;
@@ -84,8 +112,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         DestroyWindow(h);
         return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
-    default: return DefWindowProcW(h, msg, wp, lp);
+    default: break;
     }
+    return DefWindowProcW(h, msg, wp, lp);
 }
 
 static HWND make_window(HINSTANCE inst)
@@ -165,6 +194,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     const char *frames = getenv("TL_PVZ2_FRAMES");
     if (frames && *frames) { tl_win_mkdirs(frames); g_cfg.frame_dir = frames; g_cfg.frame_every = getenv("TL_PVZ2_FRAME_EVERY") ? atoi(getenv("TL_PVZ2_FRAME_EVERY")) : 60; }
 
+    tl_pvz2_set_keyboard_hook(keyboard_shown);
     CloseHandle(CreateThread(NULL, 8 << 20, launch_game, NULL, 0, NULL));
 
     MSG m;
