@@ -63,6 +63,18 @@
 #include "husk-tl-ld.h"
 #include "husk-tl-xmem.h"
 
+#if defined(__x86_64__)
+/* x86-64: game code is translated (husk-tl-x64.c). A guest function the driver calls directly goes through a host
+ * function made for it (GUEST_FN, by its signature letters), and tl_jni_native answers with one made from the JNI
+ * signature. (tl_jni_native)(...) in parentheses still gives the guest address. */
+#include "../../win/x64/husk-tl-x64.h"
+void *tl_jni_native_host(const char *cls, const char *name, const char *sig);
+#define tl_jni_native(c, n, s) tl_jni_native_host((c), (n), (s))
+#define GUEST_FN(p, sig) ((p) ? tl_x64_host_fn((uint64_t)(uintptr_t)(p), (sig)) : NULL)
+#else
+#define GUEST_FN(p, sig) ((void *)(p))
+#endif
+
 void tl_jni_hle_install(void);
 void tl_hle_configure(const char *pkg, const char *apk, const char *data, int w, int h);
 void tl_hle_set_activity(jobj *a);
@@ -1495,8 +1507,8 @@ static void J_map_contains(tl_jcall *c) { nb_map *m = map_of(c); c->ret = vz(m &
 static void nb_resolve(void)
 {
     if (nb_native || !GAME_LIB) return;
-    nb_native = (nb_callback_fn)tl_ld_sym(GAME_LIB, "Java_com_ea_nimble_bridge_BaseNativeCallback_nativeCallback");
-    if (!nb_native) nb_native = (nb_callback_fn)tl_jni_native("com/ea/nimble/bridge/BaseNativeCallback", "nativeCallback", NULL);
+    nb_native = (nb_callback_fn)GUEST_FN(tl_ld_sym(GAME_LIB, "Java_com_ea_nimble_bridge_BaseNativeCallback_nativeCallback"), "vllil");
+    if (!nb_native) nb_native = (nb_callback_fn)GUEST_FN((tl_jni_native)("com/ea/nimble/bridge/BaseNativeCallback", "nativeCallback", NULL), "vllil");
     tl_log_line("pvz2: BaseNativeCallback.nativeCallback %s", nb_native ? "found" : "missing");
 }
 
@@ -1592,7 +1604,7 @@ static void nb_independent_setup(void)
      * notification is sent. Do not reproduce the unreachable stock EA code. */
     /* The first network status, queued once setup has run (the port does the same). */
     nb_queue("nimble.notification.networkStatusChange", NULL);
-    nb_life_fn resume = (nb_life_fn)tl_ld_sym(GAME_LIB, "Java_com_ea_nimble_bridge_NimbleCppApplicationLifeCycle_onApplicationResume");
+    nb_life_fn resume = (nb_life_fn)GUEST_FN(tl_ld_sym(GAME_LIB, "Java_com_ea_nimble_bridge_NimbleCppApplicationLifeCycle_onApplicationResume"), "vlll");
     if (resume) { tl_log_line("pvz2: Nimble onApplicationResume"); resume(tl_jni_env(), NULL, NULL); }
 }
 
@@ -2421,7 +2433,7 @@ static tl_lib *load(const char *name)
 static int onload(tl_lib *L)
 {
     typedef int (*fn_t)(void *, void *);
-    fn_t fn = (fn_t)tl_ld_sym(L, "JNI_OnLoad");
+    fn_t fn = (fn_t)GUEST_FN(tl_ld_sym(L, "JNI_OnLoad"), "ill");
     if (!fn) return -1;
     int v = fn(tl_jni_vm(), NULL);
     tl_log_line("pvz2: %s JNI_OnLoad -> %d", tl_ld_lib_name(L), v);
@@ -2449,6 +2461,18 @@ static void *raise_on_a_host_thread(void *arg)
 }
 
 static void *gl_main(void *arg);
+
+#if defined(__x86_64__)
+static tl_lib *load(const char *name);
+static void x64_preload(const char *name, uint64_t size, void *user)
+{
+    (void)size; (void)user;
+    const char *base = strrchr(name, '/');
+    base = base ? base + 1 : name;
+    if (!strcmp(base, "libRFLib.so") && getenv("TL_AOT_NO_MOD")) return;
+    if (!tl_ld_find_lib(base)) load(base);
+}
+#endif
 
 bool tl_pvz2_start(const tl_ga_config *cfg)
 {
@@ -2577,6 +2601,19 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
     tl_lib *game = load("libPVZ2.so");
     if (!cxx || !nimble || !game) return false;
     GAME_LIB = game;
+#if defined(__x86_64__)
+    /* x86-64: all the code goes into one translation (calls between the libraries stay inside it), made before any of
+     * it runs and kept in the data folder, so only the first start waits for it. That includes the libraries the game
+     * opens later itself (libcrashlytics.so at the surface's creation): loaded now, its dlopen finds them here. */
+    if (!getenv("TL_AOT_NO_MOD")) load("libRFLib.so");
+    tl_ld_apk_libs(x64_preload, NULL);
+    {
+        char cache[1100], err[300];
+        snprintf(cache, sizeof(cache), "%s/translated", P.data);
+        tl_log_line("pvz2: translating the game's code for this computer (the first start takes minutes) into %s", cache);
+        if (!tl_x64_translate(cache, err, sizeof(err))) { tl_log_line("pvz2: the translation failed: %s", err); return false; }
+    }
+#endif
     if (getenv("TL_PVZ2_MONITOR")) {
         pthread_t mt; pthread_create(&mt, NULL, monitor_thread, game);
     }
@@ -2625,7 +2662,7 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
      * in will-finish is never created and the first surface call dereferences
      * a null singleton. */
     typedef void (*map_fn)(void *, void *, void *);
-    map_fn nlaunch = (map_fn)tl_ld_sym(game, "Java_com_ea_nimble_bridge_NimbleCppApplicationLifeCycle_onApplicationLaunch");
+    map_fn nlaunch = (map_fn)GUEST_FN(tl_ld_sym(game, "Java_com_ea_nimble_bridge_NimbleCppApplicationLifeCycle_onApplicationLaunch"), "vlll");
     if (nlaunch) { tl_log_line("pvz2: Nimble onApplicationLaunch"); nlaunch(tl_jni_env(), NULL, NULL); }
 
     /* Native_GameAppInitialize(view, http, cloud, connect, achievements,
@@ -2798,7 +2835,7 @@ static void guest_low_memory_warning(void)
         tl_log_line("pvz2: the guest's own memory warning is not reachable");
         return;
     }
-    void (*call)(void *) = (void (*)(void *))fn;
+    void (*call)(void *) = (void (*)(void *))GUEST_FN(fn, "vl");
     call((void *)app);
     tl_log_line("pvz2: the guest was told about the memory pressure");
 }
@@ -2911,6 +2948,40 @@ void tl_pvz2_request_seed_pick(int slot)
     atomic_store(&g_seed_pick_pending, 1);
 }
 
+#if defined(__x86_64__)
+/* x86-64: the same calls, run translated with the same registers (x8 for the out pointer) */
+static uint64_t x64_blr(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, void *x8)
+{
+    uint64_t gp[8] = { a0, a1, a2, a3, 0, 0, 0, 0 }, fp[8] = { 0 };
+    return tl_guest_call_regs8((uint64_t)(uintptr_t)fn, gp, fp, NULL, 0, (uint64_t)(uintptr_t)x8, NULL);
+}
+static uint64_t guarded(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, void *x8, bool *ok, const char *what)
+{
+    *ok = false;
+    if (!fn) return 0;
+    guest_guard_enter();
+    if (sigsetjmp(g_guest_jmp, 1) == 0) {
+        uint64_t r = x64_blr(fn, a0, a1, a2, a3, x8);
+        guest_guard_leave();
+        *ok = true;
+        return r;
+    }
+    guest_guard_leave();
+    tl_log_line("pvz2: %s faulted (signal %d); there is no answer", what, (int)g_guest_fault);
+    return 0;
+}
+static uint64_t guest_call_x8(void *fn, uint64_t a0, uint64_t a1, void *out, bool *ok) { return guarded(fn, a0, a1, 0, 0, out, ok, "the guest's own call"); }
+static uint64_t guest_call2(void *fn, uint64_t a0, uint64_t a1, bool *ok) { return guarded(fn, a0, a1, 0, 0, NULL, ok, "the guest's own call"); }
+static uint64_t guest_call4(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, bool *ok) { return guarded(fn, a0, a1, a2, a3, NULL, ok, "cursor placement check: guest call"); }
+static uint64_t guest_call2_raw(void *fn, uint64_t a0, uint64_t a1, bool *ok)
+{
+    *ok = false;
+    if (!fn) return 0;
+    uint64_t r = x64_blr(fn, a0, a1, 0, 0, NULL);
+    *ok = true;
+    return r;
+}
+#else
 /* A guest call with two arguments, and the out pointer in x8 (the C++
  * convention for a constructor's return value). The fault is caught: the
  * guest's SIGSEGV handler is not installed, and a fault here would end the
@@ -3007,6 +3078,8 @@ static uint64_t guest_call2_raw(void *fn, uint64_t a0, uint64_t a1, bool *ok)
     *ok = true;
     return x0;
 }
+
+#endif
 
 /* The game's own pointer-event struct: 0x34 bytes, and the int at +0x30 is
  * the type (0 is a pointer down -- the same object the shovel's call takes). */
@@ -3637,7 +3710,7 @@ static void guest_seed_pick(int slot)
         return;
     }
     guest_read_bytes(board + 0x184, &sun, sizeof sun);
-    int (*call)(void *, void *) = (int (*)(void *, void *))(uintptr_t)fn;
+    int (*call)(void *, void *) = (int (*)(void *, void *))GUEST_FN(fn, "ill");
     int handled = call(packet, &event);
     tl_log_line("pvz2: the seed pick: slot %d, the guest's own press, handled=%d (sun %d)", slot, handled, sun);
     if (!handled) {
@@ -3762,7 +3835,7 @@ static void guest_native_shovel(void)
         }
         uint8_t event[0x34];
         memset(event, 0, sizeof event);
-        int (*call)(void *, void *) = (int (*)(void *, void *))fn;
+        int (*call)(void *, void *) = (int (*)(void *, void *))GUEST_FN(fn, "ill");
         int handled = call(widget, event);
         tl_log_line("pvz2: the shovel: the guest's own function, handled=%d", handled);
         if (handled) guest_release_new_cursor("the shovel", board, begin_before, end_before,
@@ -4062,9 +4135,15 @@ static void *guest_code(uint64_t guest_vaddr)
  * around the call, not the host. */
 static struct sigaction g_guest_prev_segv, g_guest_prev_bus;
 
+#if defined(__x86_64__)
+static uint8_t g_x64_mark[TL_X64_MARK_BYTES];
+#endif
 static void guest_fault_handler(int sig, siginfo_t *info, void *context)
 {
     (void)context;
+#if defined(__x86_64__)
+    tl_x64_recover(g_x64_mark);   /* the guest CPU as it was when the guard went up */
+#endif
     g_guest_fault = sig;
     g_guest_fault_addr = info ? (uintptr_t)info->si_addr : 0;
     siglongjmp(g_guest_jmp, 1);
@@ -4074,6 +4153,9 @@ static void guest_guard_enter(void)
 {
     /* cleared here, not on leaving, so the log line after a caught fault can still name the signal */
     g_guest_fault = 0;
+#if defined(__x86_64__)
+    tl_x64_mark(g_x64_mark);
+#endif
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_sigaction = guest_fault_handler;
@@ -4117,6 +4199,23 @@ static void *guest_find_widget(const char *name)
 }
 
 /* The element's anchored rect: the out pointer is in x8, the widget in x0. */
+#if defined(__x86_64__)
+static bool guest_anchored_rect(void *widget, int *out)
+{
+    void *fn = guest_code(GUEST_ANCHORED_RECT);
+    if (!fn || !widget) return false;
+    bool ok;
+    guarded(fn, (uint64_t)(uintptr_t)widget, 0, 0, 0, out, &ok, "the guest's own rect query");
+    return ok;
+}
+static bool guest_anchored_rect_raw(void *widget, int *out)
+{
+    void *fn = guest_code(GUEST_ANCHORED_RECT);
+    if (!fn || !widget) return false;
+    x64_blr(fn, (uint64_t)(uintptr_t)widget, 0, 0, 0, out);
+    return true;
+}
+#else
 static bool guest_anchored_rect(void *widget, int *out)
 {
     void *fn = guest_code(GUEST_ANCHORED_RECT);
@@ -4159,6 +4258,7 @@ static bool guest_anchored_rect_raw(void *widget, int *out)
                        "x13","x14","x15","x17","memory","cc");
     return true;
 }
+#endif
 
 /* The scale from the app's own space to the surface's.
  *
@@ -5250,7 +5350,7 @@ static void *gl_main(void *arg)
     v_fn pump = (v_fn)tl_jni_native(VIEW, "PumpMessageQueue", "()V");
     if (!draw) { tl_log_line("pvz2: Native_onDrawFrame is not registered"); return NULL; }
     if (!pump) tl_log_line("pvz2: PumpMessageQueue is not registered");
-    g_pump = pump;
+    g_pump = (pump_fn)GUEST_FN(pump, "vll");
 
     if (created) { tl_log_line("pvz2: Native_onSurfaceCreated"); created(tl_jni_env(), P.view); }
     if (changed) {

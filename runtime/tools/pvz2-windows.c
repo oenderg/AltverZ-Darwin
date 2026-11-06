@@ -25,6 +25,9 @@
 #include "husk-tl-ld.h"
 #include "husk-tl-pvz2.h"
 #include "husk-tl-xmem.h"
+#if defined(__x86_64__)
+#include "husk-tl-x64.h"
+#endif
 
 void tl_log_line(const char *fmt, ...);
 void tl_win_log_open(const char *path);
@@ -178,6 +181,14 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         MessageBoxA(NULL, err, "PvZ2 Reflourished", MB_ICONERROR);
         return 1;
     }
+#if defined(__x86_64__)
+    /* x86-64: the stub page the translated code reaches the host through (husk-tl-x64.c) */
+    if (!tl_x64_open(err, sizeof(err))) {
+        tl_log_line("windows: %s", err);
+        MessageBoxA(NULL, err, "PvZ2 Reflourished", MB_ICONERROR);
+        return 1;
+    }
+#endif
     tl_ld_set_verbosity(getenv("TL_VERBOSE") ? atoi(getenv("TL_VERBOSE")) : 1);
     tl_jni_set_trace(getenv("TL_JNI_TRACE") ? atoi(getenv("TL_JNI_TRACE")) : 1);
 

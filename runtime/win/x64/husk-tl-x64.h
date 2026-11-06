@@ -60,6 +60,11 @@ uint64_t tl_guest_call_regs8(uint64_t pc, const uint64_t gp[8], const uint64_t f
 /* A host function that runs guest function `pc` (signature `sig`, which must stay valid): for callbacks. */
 void *tl_x64_host_fn(uint64_t pc, const char *sig);
 
+/* For a fault guard around guest calls: the CPU and nesting depth before, and put back after a caught fault. */
+#define TL_X64_MARK_BYTES 1024
+void tl_x64_mark(void *buf);
+void tl_x64_recover(const void *buf);
+
 /* This thread's guest CPU (made on first use, with its own guest stack). */
 struct CPU *tl_x64_cpu(void);
 

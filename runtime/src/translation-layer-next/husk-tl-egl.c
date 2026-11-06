@@ -1069,7 +1069,11 @@ static void *egl_resolve(const char *name)
     }
     if (!real) return NULL;
     static int trace = -1;
+#if defined(__x86_64__)
+    trace = 0;   /* the trace's trampolines are ARM64 code */
+#else
     if (trace < 0) trace = getenv("TL_GL_TRACE") ? 1 : 0;
+#endif
     for (size_t i = 0; i < sizeof(k_adapt) / sizeof(k_adapt[0]); i++) {
         if (!strcmp(k_adapt[i].name, name)) { *k_adapt[i].real = real; return trace ? glt_wrap(name, k_adapt[i].wrap) : k_adapt[i].wrap; }
     }
@@ -1078,7 +1082,12 @@ static void *egl_resolve(const char *name)
 }
 
 /* eglGetProcAddress for the guest */
+#if defined(__x86_64__)
+#include "../../win/x64/husk-tl-x64.h"
+static void *w_eglGetProcAddress(const char *name) { void *r = tl_egl_resolve(name); return r ? tl_x64_import(strdup(name), r) : NULL; }
+#else
 static void *w_eglGetProcAddress(const char *name) { return tl_egl_resolve(name); }
+#endif
 const tl_bionic_entry tl_tab_egl[] = {
     TL_WRAP("eglGetProcAddress", w_eglGetProcAddress), TL_WRAP("glGetString", w_glGetString),
     { "eglGetDisplay", w_eglGetDisplay }, { "eglInitialize", w_eglInitialize }, { "eglTerminate", w_eglTerminate },

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build the x86-64 Windows programs, in MSYS2's CLANG64 shell (clang, LLVM 23):
-#   build-x64.sh <runtime folder> <ScarletNX checkout, its library built in build/lib> <zlib folder> <out folder> [starttest]
+#   build-x64.sh <runtime folder> <ScarletNX checkout, its library built in build/lib> <zlib folder> <out folder> [starttest|game]
 # <zlib folder> holds zlib-1.3.1 and zlib-guest (setup-toolchain.sh makes both) and include/ with their headers.
 set -e
 R="$(cd "$1" && pwd)"; SNX="$(cd "$2" && pwd)"; Z="$(cd "$3" && pwd)"; OUT="$4"; target="${5:-starttest}"
@@ -23,6 +23,7 @@ fi
 . "$H/sources.sh"
 case "$target" in
     starttest) SRCS="$WIN_CORE $X/husk-tl-x64.c $X/x64-starttest.c"; EXE="$OUT/rfl-x64-starttest.exe" ;;
+    game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/PvZ2 Reflourished x64.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
 OBJS=""
@@ -38,5 +39,5 @@ L="$SNX/build/lib"
 clang++ -o "$EXE" $OBJS -Wl,--start-group "$L/recompiler-library/libscarletnx-recompiler.a" "$L/llvm-backend/libsnx_llvm.a" \
     "$L/src/common/libscarletnx-common.a" "$L/llvm-backend/arm-backend/libsnx_arm_llvm.a" "$L/llvm-backend/arm-backend/libsnx_arm_rt.a" \
     "$L/llvm-backend/arm-backend/libsnx_arm_decode.a" "$L/libsnx_yyjson.a" "$L/libsnx_libdeflate.a" -Wl,--end-group \
-    -L"$OUT" -lz -lz-guest -lLLVM-23 -lpsapi -lws2_32 -lbcrypt -lsynchronization -lpthread -Wl,--error-limit=0
+    $LDX -L"$OUT" -lz -lz-guest -lLLVM-23 -lpsapi -lws2_32 -lbcrypt -lsynchronization -lpthread -Wl,--error-limit=0
 echo "built $EXE"

@@ -270,13 +270,22 @@ static void *va_impl(const void *fn)
 /* ------------------------------------------------------------- signatures */
 
 typedef struct { const char *name, *sig; } sigent;
-static const sigent k_sigs[] = {
+static sigent k_sigs[] = {
 #include "sigs-tables.inc"
+#include "sigs-gl.inc"
 };
 static int sig_cmp(const void *a, const void *b) { return strcmp(((const sigent *)a)->name, ((const sigent *)b)->name); }
+static INIT_ONCE g_sig_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK sort_sigs(PINIT_ONCE o, PVOID p, PVOID *c)
+{
+    (void)o; (void)p; (void)c;
+    qsort(k_sigs, sizeof(k_sigs) / sizeof(k_sigs[0]), sizeof(k_sigs[0]), sig_cmp);
+    return TRUE;
+}
 
 const char *tl_x64_sig_of(const char *name)
 {
+    InitOnceExecuteOnce(&g_sig_once, sort_sigs, NULL, NULL);
     sigent key = { name, NULL };
     const sigent *s = bsearch(&key, k_sigs, sizeof(k_sigs) / sizeof(k_sigs[0]), sizeof(k_sigs[0]), sig_cmp);
     return s ? s->sig : NULL;
@@ -518,4 +527,22 @@ void tl_x64_crash_note(void)
     for (int i = 0; i < 30; i += 6)
         tl_log_line("CRASH: guest x%-2d %llx %llx %llx %llx %llx %llx", i, (unsigned long long)c->x[i], (unsigned long long)c->x[i + 1],
                     (unsigned long long)c->x[i + 2], (unsigned long long)c->x[i + 3], (unsigned long long)c->x[i + 4], (unsigned long long)c->x[i + 5]);
+}
+
+/* The fault guard's snapshot (husk-tl-pvz2.c): a fault inside translated code longjmps past tl_guest_call_regs8, so the
+ * guard puts the CPU and the nesting depth back as they were when it went up. */
+typedef struct { CPU cpu; int depth; int has; } x64_mark;
+_Static_assert(sizeof(x64_mark) <= TL_X64_MARK_BYTES, "TL_X64_MARK_BYTES");
+void tl_x64_mark(void *buf)
+{
+    x64_mark *m = buf;
+    m->has = t_th != NULL;
+    if (t_th) { m->cpu = t_th->cpu; m->depth = t_th->depth; }
+}
+void tl_x64_recover(const void *buf)
+{
+    const x64_mark *m = buf;
+    if (!m->has || !t_th) return;
+    t_th->cpu = m->cpu;
+    t_th->depth = m->depth;
 }

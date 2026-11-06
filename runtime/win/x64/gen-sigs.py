@@ -225,13 +225,14 @@ def main():
             if arr.startswith('#'):
                 # #array=prefix: an initialised array of functions, positional, named prefix#i
                 target, prefix = arr[1:].split('=')
-                objs = [o for o in ast(clang, flags, src, target) if o.get('name') == target and o.get('kind') == 'VarDecl']
+                objs = [o for o in ast(clang, flags, src, target) if o.get('name') == target and o.get('kind') == 'VarDecl' and o.get('inner')]
                 if not objs: sys.exit('%s: no array %s' % (src, target))
                 pending += positional(objs[-1], prefix)
                 continue
-            objs = [o for o in ast(clang, flags, src, arr) if o.get('name') == arr]
+            # the definition, not an extern declaration a header made earlier
+            objs = [o for o in ast(clang, flags, src, arr) if o.get('name') == arr and o.get('inner')]
             if not objs: sys.exit('%s: no array %s' % (src, arr))
-            pending += entries_of(objs[0])
+            pending += entries_of(objs[-1])
         unknown = set()
         for name, ref in pending:
             if ref.get('kind') == 'FunctionDecl':
@@ -251,6 +252,8 @@ def main():
             if fn.startswith('tl_va_') and ret == 'void' and not ps:
                 sigs[name] = 'V'; va_names.add(name); continue
             letters = [classify(t, typedefs) for t in [ret] + ps]
+            # a returned function pointer is an address like any other: the host hands the guest stubs (eglGetProcAddress)
+            if letters[0].startswith('F'): letters[0] = 'l'
             bad = [(t, c) for t, c in zip([ret] + ps, letters) if c == '!' or c.startswith('?') or (c.startswith('F') and t is ret)]
             if variadic: bad.append(('...', '!'))
             if bad:
