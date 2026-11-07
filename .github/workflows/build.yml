@@ -35,7 +35,11 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-26
+    # The Xcode 27 image, so the release is built with the same SDK as a local build
+    # (Xcode 27). An app built with an older SDK is treated differently by iPadOS 27:
+    # the 26.5 SDK builds were held to full-screen sizes on the iPad while the local
+    # builds resized freely, and testing could not see it. The image is a GitHub preview.
+    runs-on: xcode-27
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
