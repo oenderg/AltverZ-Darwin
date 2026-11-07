@@ -394,23 +394,26 @@ private struct KeyboardPane: View {
             } header: {
                 Text("Playing")
             } footer: {
-                Text("Fast-forward presses the game's own button. Plant food is picked up from the counter. “Show keys in levels” writes the key that works each control on its corner, in the game's own font (seed packets, shovel, fast-forward, plant food and the level's power-ups); it is on by default.")
+                Text("Fast-forward presses the game's own button. Plant food is picked up from the counter. “Show keys in levels” writes the key that works each control on its corner, in the game's own font (seed packets, shovel, fast-forward, plant food\(pvz2ProfileHasPowerups ? " and the level's power-ups" : "")); it is on by default.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section {
-                // Rows are identified by their settings key: plain indexes would repeat the
-                // seed packets' 0, 1, 2 in the same list, and the list then draws a row
-                // outside its section.
-                ForEach(Array(Key.powerups.enumerated()), id: \.element) { i, key in
-                    KeyRow(label: "Power-up \(i + 1)", key: key, fallback: Key.defaultPowerups[i])
+            // A game without power-ups (AltVerZ) has no buttons for these keys: no rows for them.
+            if pvz2ProfileHasPowerups {
+                Section {
+                    // Rows are identified by their settings key: plain indexes would repeat the
+                    // seed packets' 0, 1, 2 in the same list, and the list then draws a row
+                    // outside its section.
+                    ForEach(Array(Key.powerups.enumerated()), id: \.element) { i, key in
+                        KeyRow(label: "Power-up \(i + 1)", key: key, fallback: Key.defaultPowerups[i])
+                    }
+                } header: {
+                    Text("Power-ups")
+                } footer: {
+                    Text("The level's power-up buttons, left to right: a key selects one, then click the lawn.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-            } header: {
-                Text("Power-ups")
-            } footer: {
-                Text("The level's power-up buttons, left to right: a key selects one, then click the lawn.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
             Section {
                 KeyRow(label: "Shovel", key: Key.shovel, fallback: Key.defaultShovel)

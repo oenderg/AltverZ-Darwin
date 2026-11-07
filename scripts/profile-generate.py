@@ -50,6 +50,8 @@ def main(argv):
         f.write("let pvz2ProfileAppName = %s\n" % json.dumps(profile["app_name"]))
         f.write("let pvz2ProfileArtifact = %s\n" % json.dumps(profile["artifact_name"]))
         f.write("let pvz2ProfileId = %s\n" % json.dumps(profile["id"]))
+        # Whether the game has power-up buttons at all: AltVerZ removed them, so its settings hide the keys.
+        f.write("let pvz2ProfileHasPowerups = %s\n" % ("true" if profile.get("powerups", True) else "false"))
     return 0
 
 

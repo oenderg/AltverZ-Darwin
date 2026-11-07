@@ -18,6 +18,7 @@ the Java contract, the driver's game addresses. What differs is the mod profile.
 | `cdn_hosts`, `cdn_archive`, `cdn_path` | which live-content host the HTTP bridge may reach and which response is the cacheable archive |
 | `icon_path` | the icon taken from the APK |
 | `sparkle`, `sparkle_feed_url` | whether the Mac build gets an updater, and the feed it reads (AltverZ and Reflourished each have their own) |
+| `powerups` | whether the game has power-up buttons (default true); false (AltVerZ) hides the power-up keys in the Mac settings |
 | `dmg_art` | whether the Mac disk image uses the window art in `scripts/dmg/` (Reflourished's carries its name, so AltVerZ uses a plain image until it has its own) |
 
 `scripts/profile.sh` reads it for the shell, and `scripts/profile-generate.py`

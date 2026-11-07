@@ -20,5 +20,6 @@
   "cdn_path": "//main.tar.8.3",
   "sparkle": true,
   "sparkle_feed_url": "https://raw.githubusercontent.com/oenderg/AltverZ-Darwin/main/sparkle/appcast.xml",
+  "powerups": false,
   "dmg_art": false
 }
