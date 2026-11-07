@@ -25,17 +25,28 @@ I found it with PvZ2 Reflourished, an Android game, on an x86-64 Windows host th
 through the library. The game's mod library patches the game's code at start-up, and the host reports the change with
 `snx_recompiled_invalidate`.
 
-Testing: Windows 11 x86-64 in a VM, Clang and LLVM 23.1.5, on `f0873dfb`.
-- `scarletnx-recompiler` builds, and `tests/recompiler_library.c` built against it passes (`recompiler library: ok`).
+Testing: Windows 11 x86-64 in a VM, Clang and LLVM 23.1.5, on `f0873dfb` and on the fix commit `f26bfd50`.
+- `scarletnx-recompiler` builds, and `tests/recompiler_library.c` built against it passes all of its checks
+  (`recompiler library: ok`) on both commits.
+- A scoped configure with every runtime and the GUI off and tests on registered 30 tests. 29 passed and `patches`
+  did not start. The same 30 ran the same way on `f0873dfb`, so the change adds no failure.
+- The scoped test list leaves the recompiler library test out because `tests/CMakeLists.txt` returns before it when
+  NX and GNUABI are off. The test was built and run by hand against the scoped build's archive.
+- `patches` reported `BAD_COMMAND` and `permission denied` before any code ran because Windows installer detection
+  treats a file whose name contains `patch` as an installer. A copy named `snxtest.exe` passes all four of its
+  checks.
 - The game, one run without the change and two with it. Without it, after the start-up patch at 8.5 s the guest stays
   at one pc in `JNI_OnLoad` with no host calls until the run ends at 65 s. With it, the game loads its data at 9.9 s,
   starts to draw at 21.6 s and shows its title screen. A local build that also logged the counts showed that 854 of
   2800 invalidations cleared leader slots that the old loop did not reach. For one function the old loop cleared 9
   slots and the new loop reached 13.
 
-Not tested: the full `ctest` and `tests/run_filesystem_tree.py`, because their configure fetches lz4 and I did not
-download it on that machine. Other hosts and architectures. There is no unit test yet. The case needs two functions
-that share a leader address, and I can add one if you point me at a way to build such a module in
+Not tested: the full `ctest` with the runtimes on, because that build is 3 to 6 GB and 2 to 4 hours on this VM.
+`tests/run_filesystem_tree.py` was tried and did not finish. With `--sanitize` the ASan runtime fails at start-up on
+this MSYS2 and Windows 11 combination (`CHECK failed: asan_malloc_win.cpp:235`). Without it the service harness does
+not compile because `snx_settings.h` is generated only by a runtime build. The compiled `filesystem_tree` test from
+the scoped suite passed. Other hosts and architectures. There is no unit test yet. The case needs two functions that
+share a leader address, and I can add one if you point me at a way to build such a module in
 `tests/recompiler_library.c`.
 
 - [x] No keys, dumps, game files or saves in the commits or the description.
