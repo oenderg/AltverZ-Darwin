@@ -34,8 +34,15 @@ void tl_win_log_open(const char *path);
 void tl_win_mkdirs(const char *path);
 void tl_win_install_crash_handler(void);
 
-/* The size the game draws at. It lays out for 1748x804 and picks its HD art from 804 up. */
-static int g_sw = 1748, g_sh = 804;
+/* The size the game draws at. It lays out for 1748x804 and picks its HD art from 804 up. The window gets as
+ * much of that as the screen has room for, never less than the minimum; the game's surface is the window's
+ * real client size, so drawing and touch are 1:1. */
+#define DESIGN_W 1748
+#define DESIGN_H 804
+#define MIN_CLIENT_W 800
+#define MIN_CLIENT_H 450
+#define WINDOW_STYLE (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME)
+static int g_sw = DESIGN_W, g_sh = DESIGN_H;
 static HWND g_hwnd;
 static char g_exe_dir[MAX_PATH], g_data[MAX_PATH], g_apk[MAX_PATH], g_egl[MAX_PATH], g_gles[MAX_PATH];
 static tl_ga_config g_cfg;
@@ -104,6 +111,27 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_KEYDOWN: if (key_down(wp)) return 0; break;
     case WM_CHAR: typed(wp); return 0;
+    case WM_SIZE:
+        if (h == g_hwnd && wp != SIZE_MINIMIZED) {
+            int cw = LOWORD(lp), ch = HIWORD(lp);
+            if (cw > 0 && ch > 0 && (cw != g_sw || ch != g_sh)) {
+                g_sw = cw; g_sh = ch;
+                tl_log_line("windows: the window is now %dx%d, the game draws at %dx%d", cw, ch, cw, ch);
+                /* Adapt: the guest is told the new size on the GL thread, as Android tells it on a
+                 * surface change, and lays its UI out again. Before the driver starts this only stores
+                 * the size; the driver is started with the same one. */
+                tl_pvz2_set_surface_size(cw, ch);
+            }
+        }
+        return 0;
+    case WM_GETMINMAXINFO: {
+        MINMAXINFO *mm = (MINMAXINFO *)lp;
+        RECT r = { 0, 0, MIN_CLIENT_W, MIN_CLIENT_H };
+        AdjustWindowRectExForDpi(&r, WINDOW_STYLE, FALSE, 0, GetDpiForSystem());
+        mm->ptMinTrackSize.x = r.right - r.left;
+        mm->ptMinTrackSize.y = r.bottom - r.top;
+        return 0;
+    }
     case WM_LBUTTONDOWN: SetCapture(h); touch(0, lp); return 0;
     case WM_MOUSEMOVE: if (g_down) touch(1, lp); return 0;
     case WM_LBUTTONUP: ReleaseCapture(); touch(3, lp); return 0;
@@ -120,6 +148,34 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(h, msg, wp, lp);
 }
 
+/* The client size to open with: the design size where the screen's work area has room, the work area where
+ * it does not, and at least the minimum (unless the screen itself is smaller). The window is centred in the
+ * work area, so its frame (and the taskbar) never cover part of the picture. */
+static void fit_initial_client(int *w, int *h, int *x, int *y)
+{
+    RECT r = { 0, 0, *w, *h };
+    AdjustWindowRectExForDpi(&r, WINDOW_STYLE, FALSE, 0, GetDpiForSystem());
+    int frame_w = (int)(r.right - r.left) - *w, frame_h = (int)(r.bottom - r.top) - *h;
+    RECT area;
+    if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &area, 0)) {
+        area.left = area.top = 0;
+        area.right = GetSystemMetrics(SM_CXSCREEN);
+        area.bottom = GetSystemMetrics(SM_CYSCREEN);
+    }
+    int room_w = (int)(area.right - area.left) - frame_w;
+    int room_h = (int)(area.bottom - area.top) - frame_h;
+    if (*w > room_w) *w = room_w;
+    if (*h > room_h) *h = room_h;
+    if (*w < MIN_CLIENT_W) *w = room_w < MIN_CLIENT_W ? room_w : MIN_CLIENT_W;
+    if (*h < MIN_CLIENT_H) *h = room_h < MIN_CLIENT_H ? room_h : MIN_CLIENT_H;
+    if (*w < 100) *w = 100;
+    if (*h < 100) *h = 100;
+    *x = area.left + ((int)(area.right - area.left) - (*w + frame_w)) / 2;
+    *y = area.top + ((int)(area.bottom - area.top) - (*h + frame_h)) / 2;
+    if (*x < area.left) *x = area.left;
+    if (*y < area.top) *y = area.top;
+}
+
 static HWND make_window(HINSTANCE inst)
 {
     WNDCLASSEXW wc = { sizeof(wc) };
@@ -129,10 +185,11 @@ static HWND make_window(HINSTANCE inst)
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.lpszClassName = L"PvZ2Reflourished";
     RegisterClassExW(&wc);
-    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    RECT r = { 0, 0, g_sw, g_sh };
-    AdjustWindowRectExForDpi(&r, style, FALSE, 0, GetDpiForSystem());
-    return CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", style, CW_USEDEFAULT, CW_USEDEFAULT,
+    int w = g_sw, h = g_sh, x = CW_USEDEFAULT, y = CW_USEDEFAULT;
+    fit_initial_client(&w, &h, &x, &y);
+    RECT r = { 0, 0, w, h };
+    AdjustWindowRectExForDpi(&r, WINDOW_STYLE, FALSE, 0, GetDpiForSystem());
+    return CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", WINDOW_STYLE, x, y,
                            r.right - r.left, r.bottom - r.top, NULL, NULL, inst, NULL);
 }
 
@@ -197,7 +254,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     ShowWindow(g_hwnd, show);
     UpdateWindow(g_hwnd);
     RECT rc; GetClientRect(g_hwnd, &rc);
-    tl_log_line("windows: window %dx%d, the game draws at %dx%d", (int)(rc.right - rc.left), (int)(rc.bottom - rc.top), g_sw, g_sh);
+    g_sw = (int)(rc.right - rc.left);
+    g_sh = (int)(rc.bottom - rc.top);
+    tl_log_line("windows: window %dx%d client, the game draws at %dx%d", g_sw, g_sh, g_sw, g_sh);
 
     g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = "com.ea.game.pvz2_rfl",
                             .width = g_sw, .height = g_sh, .metal_layer = g_hwnd, .angle_egl = g_egl,
