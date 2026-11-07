@@ -32,7 +32,7 @@ through a guard that turns a fault into a log line instead of a crash.
 | board +0xe0 | board state; 5 = playing | the live-play check |
 | board +0x6c8, 0x7dec64 | the pause registry, and the game's own "any pause reason" check | refuse while paused |
 | widget manager (board +0x20) +0xe0 | the modal widget (null when nothing covers the board; +0xc8 is the keyboard focus, not the modal) | refuse behind popups |
-| 0xaa1be8, 0x12d2374 | the seed bank and one packet in it | key 1-8 picks a packet |
+| 0xaa1be8, 0x12d2374 | the seed bank and one packet in it | a seed key (1-4, Q W E R) picks a packet |
 | packet vtable +0x90 | the packet's own pointer-down handler (normal packet vtable 0x24b2940) | the pick itself |
 | 0x761074 | the game's release decision for a new cursor (PlantCursor vtable 0x2491a60) | a second press cancels, like a second tap |
 | board +0x408 | pending cursor; null when no item is held | read-only selection state |
@@ -280,7 +280,7 @@ presses its CONTINUE and reaches state 5. The in-level HUD and seed chooser are 
 
 ## In-level key badges
 
-The Mac host can draw the current key on each control a shortcut works: seed packets 1-8, the
+The Mac host can draw the current key on each control a shortcut works: the seed packets, the
 shovel, fast-forward, plant food and the level's power-ups. It is on by default (Settings,
 Keyboard, "Show keys in levels"), and with it off the driver's frame loop does one atomic load and
 returns.
@@ -329,8 +329,8 @@ returns.
   food and power-up button read `0x00000005` (visible and input-enabled) and the holder reads
   `0x0000000d` (bit 3, visible on its own); egypt4 reads the same, so its badges stay.
 - **AltVerZ's own keys.** The labels come from the same settings the shortcuts read, so an
-  AltVerZ build shows its own `1`-`8`, `S`, `F`, `Q` and `Z`, `X`, `C`, never the comparison
-  profile's keys. It has no power-up buttons in any level (Vasebreaker included), so no power-up badge appears; the keys log `ignored: this level has no power-up buttons`.
+  AltVerZ build shows the keys its settings hold (by default `1`-`4`, `Q` `W` `E` `R`, `S`, `Tab`, `F`, the same
+  defaults as Reflourished), never another profile's. It has no power-up buttons in any level (Vasebreaker included), so no power-up badge appears; the keys log `ignored: this level has no power-up buttons`.
 - **AltVerZ's hidden HUD.** Its egypt2, egypt6 and egypt8 leave the shovel and the plant food
   counter in the tree but hidden (the `+0xa8` slot says not shown), so they publish no badge and
   their keys log `ignored: the shovel is hidden` and `ignored: the plant food counter is hidden`;

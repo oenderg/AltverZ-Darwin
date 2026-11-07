@@ -105,5 +105,5 @@ call and kill the test run, so use a copied save and `TL_PVZ2_FRAMES` on the fir
 
 A full build (`./build.sh --profile <id> --apk new.apk`, no `--quick`), then on the Mac ([TESTING.md](TESTING.md)):
 the first launch (Welcome screen), the title, the map, a level played for a minute with each keyboard
-action (1-8, S, Space, Esc), going to the background and back, a resize and full screen after
+action (1-4, Q W E R, S, Space, Tab, Esc), going to the background and back, a resize and full screen after
 start-up. Then the same on an iPhone or iPad by hand. Note what you could not test in the pull request.

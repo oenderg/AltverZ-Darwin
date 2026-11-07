@@ -233,9 +233,10 @@ names each action and why it was refused:
 
 - `press:` (Space) logs `pvz2: the collect shortcut: ... requested N sun(s) ... N coin(s),
   N gem(s), N plant food, N sprout(s), scanned=N`; no crash with zero drops is a pass.
-- `press:f` logs `pvz2: the fast-forward shortcut: pressed the game's own button (state 0 -> 1)`;
-  press it again for `1 -> 0`. The button's picture changes with it.
-- `press:q` logs `pvz2: the plant food shortcut: picked up from the game's own counter at (x,y)`
+- Tab (fast-forward; `press:` cannot type it, so send key code 48 to the test app's pid) logs
+  `pvz2: the fast-forward shortcut: pressed the game's own button (state 0 -> 1)`; press it again for
+  `1 -> 0`. The button's picture changes with it.
+- `press:f` logs `pvz2: the plant food shortcut: picked up from the game's own counter at (x,y)`
   and then `the touch was let go`; with plant food in stock the cursor carries one.
 - `press:z`, `press:x`, `press:c` log `pvz2: the power-up shortcut: selected power-up N of M`
   and then `the touch was let go`; click the lawn to use it. Only a level that offers power-ups
@@ -452,7 +453,7 @@ without a software keyboard; it does not change Simulator's global keyboard sett
 There is no scripted input on a device; test by hand and read `Documents/pvz2.log` (Files app, or
 `xcrun devicectl device copy from --domain-type appDataContainer ...` for a copy you signed).
 Worth checking after a change that touches iOS: the first launch (OBB download, Welcome screen), a
-level with touch, the hardware keyboard (1-8, S, Space, Esc), going to the Home Screen and back
+level with touch, the hardware keyboard (1-4, Q W E R, S, Space, Tab, Esc), going to the Home Screen and back
 (the game shows its pause menu), and the frame rate in the game's own performance overlay
 (Settings in the game).
 

@@ -20,14 +20,14 @@ private enum Key {
     static let fixedAspect = "fixedAspect"
     static let slots = (1...8).map { "seedSlot\($0)" }
     static let shovel = "shovelKey"
-    static let defaultSlots = (1...8).map { "\($0)" }
+    static let defaultSlots = ["1", "2", "3", "4", "Q", "W", "E", "R"]
     static let defaultShovel = "S"
     static let collect = "collectSunKey"
     static let defaultCollect = "Space"
     static let fastForward = "fastForwardKey"
-    static let defaultFastForward = "F"
+    static let defaultFastForward = "Tab"
     static let plantFood = "plantFoodKey"
-    static let defaultPlantFood = "Q"
+    static let defaultPlantFood = "F"
     static let powerups = (1...3).map { "powerup\($0)Key" }
     static let defaultPowerups = ["Z", "X", "C"]
     /// Every shortcut and its default, for the one-key-one-shortcut rule.

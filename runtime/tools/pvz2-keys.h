@@ -3,7 +3,8 @@
  *
  * The mapping is one thing in two places, so it is written once here:
  *
- *   - which key means which packet (1..8) and which means the shovel (S);
+ *   - which key means which packet (1-4, then Q W E R) and which means the
+ *     shovel (S);
  *   - where the seed bank is, in the game's own 1748x804.
  *
  * The positions are *measured*, in the guest's own frame (the app's own frame
@@ -35,14 +36,14 @@
 
 /* The keys the packets answer to, out of the box. */
 static const char *const pvz2_default_slot_keys[PVZ2_SLOT_COUNT] = {
-    "1", "2", "3", "4", "5", "6", "7", "8"
+    "1", "2", "3", "4", "Q", "W", "E", "R"
 };
 #define PVZ2_DEFAULT_SHOVEL_KEY "S"
 
 /* The other in-level shortcuts' keys, out of the box: fast-forward, picking
  * up plant food, and the level's power-up buttons from left to right. */
-#define PVZ2_DEFAULT_FAST_FORWARD_KEY "F"
-#define PVZ2_DEFAULT_PLANT_FOOD_KEY   "Q"
+#define PVZ2_DEFAULT_FAST_FORWARD_KEY "Tab"
+#define PVZ2_DEFAULT_PLANT_FOOD_KEY   "F"
 #define PVZ2_POWERUP_COUNT            3
 static const char *const pvz2_default_powerup_keys[PVZ2_POWERUP_COUNT] = {
     "Z", "X", "C"
