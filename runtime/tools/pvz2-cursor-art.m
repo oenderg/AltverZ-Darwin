@@ -1,9 +1,11 @@
 #import "pvz2-cursor-art.h"
 #import <CoreGraphics/CoreGraphics.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zlib.h>
 
 size_t ZSTD_decompress(void *, size_t, const void *, size_t);
 size_t ZSTD_findFrameCompressedSize(const void *, size_t);
@@ -35,7 +37,105 @@ static NSData *group_part(FILE *f, uint64_t file_size, const uint8_t *entry, int
         size_t n = ZSTD_decompress(out.mutableBytes, size, data.bytes, frame);
         return !ZSTD_isError(n) && n == size ? out : nil;
     }
+    /* AltVerZ's OBB compresses the same parts with zlib; a stored part has
+     * no header and is recognised by its length alone. */
+    if (data.length >= 2 && data.length != size && ((const uint8_t *)data.bytes)[0] == 0x78) {
+        NSMutableData *out = [NSMutableData dataWithLength:size];
+        uLongf out_len = size;
+        if (uncompress(out.mutableBytes, &out_len, data.bytes, (uLong)data.length) == Z_OK &&
+            out_len == size)
+            return out;
+        return nil;
+    }
     return data.length == size ? data : nil;
+}
+
+/* ETC1 block decoding follows Harm Hanemaaijer's detex (decompress-etc.c):
+ *
+ * Copyright (c) 2015 Harm Hanemaaijer <fgenfb@yahoo.com>
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *
+ * PvZ2's Android OBB stores these textures as ETC1 colour blocks followed by
+ * a full-size alpha plane, which the Mac must decode in software. */
+static const int etc1_modifiers[8][4] = {
+    { 2, 8, -2, -8 }, { 5, 17, -5, -17 }, { 9, 29, -9, -29 }, { 13, 42, -13, -42 },
+    { 18, 60, -18, -60 }, { 24, 80, -24, -80 }, { 33, 106, -33, -106 }, { 47, 183, -47, -183 }
+};
+
+static int clamp_byte(int v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
+static void etc1_block(const uint8_t *b, uint8_t rgb[16][3])
+{
+    bool differential = (b[3] & 2) != 0, flip = (b[3] & 1) != 0;
+    int base1[3], base2[3];
+    if (differential) {
+        for (int c = 0; c < 3; c++) {
+            int bc = b[c] & 0xf8;
+            base1[c] = bc | (bc >> 5);
+            int d = b[c] & 7;
+            int v = bc + ((d & 4) ? (((d & 3) - 4) << 3) : (d << 3));
+            /* The spec calls an out-of-range second colour invalid; clamping
+             * keeps one damaged block from hiding the whole picture. */
+            v = clamp_byte(v);
+            base2[c] = v | (v >> 5);
+        }
+    } else {
+        for (int c = 0; c < 3; c++) {
+            int bc = b[c] & 0xf0, bc2 = b[c] & 0x0f;
+            base1[c] = bc | (bc >> 4);
+            base2[c] = bc2 | (bc2 << 4);
+        }
+    }
+    const int *table1 = etc1_modifiers[(b[3] >> 5) & 7];
+    const int *table2 = etc1_modifiers[(b[3] >> 2) & 7];
+    uint32_t index = (uint32_t)b[4] << 24 | (uint32_t)b[5] << 16 | (uint32_t)b[6] << 8 | b[7];
+    for (int i = 0; i < 16; i++) {
+        int x = i & 3, y = i >> 2;
+        bool second = flip ? x >= 2 : y >= 2;
+        const int *base = second ? base2 : base1;
+        const int *table = second ? table2 : table1;
+        int m = (int)(((index >> i) & 1) | (((index >> (16 + i)) & 1) << 1));
+        for (int c = 0; c < 3; c++)
+            rgb[y * 4 + x][c] = (uint8_t)clamp_byte(base[c] + table[m]);
+    }
+}
+
+/* ETC1 colour (width*height/2 bytes) then one alpha byte per pixel. */
+static bool decode_etc1_alpha(const uint8_t *data, size_t length, int width, int height,
+                              uint8_t *out)
+{
+    if (width <= 0 || height <= 0 || (width & 3) || (height & 3) ||
+        (size_t)width * height > 100000000) return false;
+    size_t blocks = (size_t)(width / 4) * (size_t)(height / 4);
+    if (length < blocks * 8 + (size_t)width * height) return false;
+    const uint8_t *alpha = data + blocks * 8;
+    for (int by = 0; by < height; by += 4) {
+        for (int bx = 0; bx < width; bx += 4) {
+            uint8_t rgb[16][3];
+            etc1_block(data + ((size_t)(by / 4) * (size_t)(width / 4) + bx / 4) * 8, rgb);
+            for (int y = 0; y < 4; y++) {
+                for (int x = 0; x < 4; x++) {
+                    size_t i = (size_t)(by + y) * (size_t)width + bx + x;
+                    out[i * 4 + 0] = rgb[y * 4 + x][0];
+                    out[i * 4 + 1] = rgb[y * 4 + x][1];
+                    out[i * 4 + 2] = rgb[y * 4 + x][2];
+                    out[i * 4 + 3] = alpha[i];
+                }
+            }
+        }
+    }
+    return true;
 }
 
 /* The game's RTON is a compact typed object stream with two string tables. */
@@ -137,14 +237,12 @@ static NSData *group_part(FILE *f, uint64_t file_size, const uint8_t *entry, int
 }
 @end
 
-static CGImageRef crop_image(NSData *atlas, int width, int height, NSDictionary *r)
+static CGImageRef crop_image(const uint8_t *source, int width, int height, NSDictionary *r)
 {
     int x = [r[@"ax"] intValue], y = [r[@"ay"] intValue];
     int w = [r[@"aw"] intValue], h = [r[@"ah"] intValue];
-    if (x < 0 || y < 0 || w <= 0 || h <= 0 || x > width - w || y > height - h ||
-        atlas.length < (size_t)width * height * 4) return NULL;
+    if (x < 0 || y < 0 || w <= 0 || h <= 0 || x > width - w || y > height - h) return NULL;
     NSMutableData *out = [NSMutableData dataWithLength:(size_t)w * h * 4];
-    const uint8_t *source = atlas.bytes;
     uint8_t *dest = out.mutableBytes;
     for (int row = 0; row < h; row++) {
         const uint8_t *p = source + ((size_t)(y + row) * width + x) * 4;
@@ -208,16 +306,27 @@ NSDictionary<NSString *, id> *pvz2_cursor_art(NSString *path)
             if (index >= texcount) continue;
             const uint8_t *t = (const uint8_t *)textures.bytes + (size_t)index * texstride;
             uint32_t width = u32(t), height = u32(t + 4), pitch = u32(t + 8), fmt = u32(t + 12);
-            if (!width || !height || width > 8192 || height > 8192 || pitch != width * 4 || fmt != 0) continue;
+            /* 0 is RGBA8888; 0x93 is ETC1 colour with an alpha plane, which
+             * AltVerZ's OBB uses for every atlas this preview reads. */
+            if (!width || !height || width > 8192 || height > 8192 || pitch != width * 4 ||
+                (fmt != 0 && fmt != 0x93)) continue;
             NSData *atlas = group_part(f, size, entry, 0x28);
             if (!atlas) continue;
+            NSMutableData *decoded = nil;
+            const uint8_t *pixels = atlas.bytes;
+            if (fmt == 0x93) {
+                decoded = [NSMutableData dataWithLength:(size_t)width * height * 4];
+                if (!decoded || !decode_etc1_alpha(atlas.bytes, atlas.length, (int)width, (int)height,
+                                                   decoded.mutableBytes)) continue;
+                pixels = decoded.bytes;
+            }
             for (NSDictionary *r in group[@"resources"]) {
                 NSString *key = r[@"id"];
                 BOOL wanted = [name isEqualToString:@"UI_SeedPackets_1536"] ? [key hasPrefix:@"IMAGE_UI_PACKETS_"] :
                     [key isEqualToString:@"IMAGE_UI_HUD_INGAME_SHOVEL_ICON"] ||
                     [key isEqualToString:@"IMAGE_UI_HUD_INGAME_PLANTFOOD_BUTTON"];
                 if (!wanted || !r[@"aw"] || !r[@"ah"]) continue;
-                CGImageRef image = crop_image(atlas, width, height, r);
+                CGImageRef image = crop_image(pixels, (int)width, (int)height, r);
                 if (image) { images[key] = (__bridge id)image; CGImageRelease(image); }
             }
         }
