@@ -177,6 +177,15 @@ static void on_svc(CPU *c, uint32_t imm)
     if (e->k == K_VA) { call_va(c, e); return; }
     uint64_t slots[24], xmm[2];
     int n = gather(c, e->sig + 1, slots, 24);
+    if (e->trace && g_trace_left > 0 && !strncmp(e->name, "inflate", 7) && slots[0]) {
+        /* z_stream as the guest lays it out: next_in, avail_in, total_in, next_out, avail_out */
+        const uint8_t *zs = (const uint8_t *)(uintptr_t)slots[0];
+        uint64_t in, out; uint32_t ain, aout; memcpy(&in, zs, 8); memcpy(&ain, zs + 8, 4); memcpy(&out, zs + 24, 8); memcpy(&aout, zs + 32, 4);
+        const uint8_t *b = (const uint8_t *)(uintptr_t)in;
+        tl_log_line("x64 trace: %s stream: next_in %llx avail_in %u [%02x %02x %02x %02x %02x %02x %02x %02x] next_out %llx avail_out %u", e->name,
+                    (unsigned long long)in, ain, b && ain ? b[0] : 0, b && ain > 1 ? b[1] : 0, b && ain > 2 ? b[2] : 0, b && ain > 3 ? b[3] : 0,
+                    b && ain > 4 ? b[4] : 0, b && ain > 5 ? b[5] : 0, b && ain > 6 ? b[6] : 0, b && ain > 7 ? b[7] : 0, (unsigned long long)out, aout);
+    }
     uint64_t rax = tl_x64_invoke(e->fn, slots, (uint64_t)n, xmm);
     put_result(c, e->sig[0], rax, xmm);
     if (e->trace && g_trace_left > 0) {
@@ -193,6 +202,19 @@ static void on_undef(CPU *c, uint64_t pc, uint32_t word)
     tl_log_line("x64: undefined instruction %08x at %#llx (%s %s), lr %#llx", word, (unsigned long long)pc,
                 lib ? lib : "?", sym ? sym : "?", (unsigned long long)c->x[30]);
     c->pc = g_stop;
+}
+
+/* IC IVAU: the guest wrote code in the 64-byte line at `addr` (libRFLib installing a hook): what was translated from it
+ * goes, and the next call compiles the line as it is now */
+static atomic_ulong g_code_changes;
+static void on_code_changed(CPU *c, uint64_t addr)
+{
+    (void)c;
+    if (!g_mod) return;
+    size_t n = snx_recompiled_invalidate(g_mod, addr & ~(uint64_t)63, 64, NULL, NULL);
+    unsigned long k = atomic_fetch_add(&g_code_changes, 1);
+    if (k < 8 || getenv("TL_X64_CODE_TRACE"))
+        tl_log_line("x64: code changed at %#llx, %zu translated function(s) retired", (unsigned long long)addr, n);
 }
 
 static void on_brk(CPU *c, uint64_t pc, uint32_t imm)
@@ -241,6 +263,7 @@ bool tl_x64_open(char *err, size_t errlen)
     g_rt.svc = on_svc;
     g_rt.undef = on_undef;
     g_rt.brk = on_brk;
+    g_rt.code_changed = on_code_changed;
     return true;
 }
 
@@ -547,7 +570,9 @@ static int add_lib(uintptr_t bias, const char *name, const void *phdr, unsigned 
     for (unsigned i = 0; i < phnum && R->n < 31; i++, ph += 56) {
         uint32_t type, flags; uint64_t vaddr, memsz;
         memcpy(&type, ph, 4); memcpy(&flags, ph + 4, 4); memcpy(&vaddr, ph + 16, 8); memcpy(&memsz, ph + 40, 8);
-        if (type != 1 /* PT_LOAD */ || !(flags & 1) /* PF_X */) continue;
+        /* the executable segments; libRFLib's writable ones too, where A64HookFunction builds its trampolines (code the
+         * game reaches after the hooks are in) */
+        if (type != 1 /* PT_LOAD */ || (!(flags & 1) /* PF_X */ && strcmp(name, "libRFLib.so"))) continue;
         uint64_t a = (bias + vaddr) & ~(uint64_t)3, sz = (memsz + 3) & ~(uint64_t)3;
         R->r[R->n++] = (struct snx_code_range){ .address = a, .code = (const void *)(uintptr_t)a, .size = (size_t)sz };
         tl_log_line("x64: code of %s: %#llx, %zu KiB", name, (unsigned long long)a, (size_t)(sz >> 10));
@@ -558,8 +583,50 @@ static int add_lib(uintptr_t bias, const char *name, const void *phdr, unsigned 
 /* Every function the unwind tables and the dynamic symbols know of is a hint (husk-tl-ld.c). */
 size_t tl_ld_function_starts(uint64_t **out);
 
+/*
+ * ScarletNX loads a module through a copy in %TEMP% (".snx-<pid>-..."), removed when the module is freed. A game that
+ * ends (or is ended) without freeing it leaves the copy, 200 MB each time: those of processes no longer running go.
+ */
+static void remove_tree(const char *dir)
+{
+    char pat[MAX_PATH + 4]; snprintf(pat, sizeof(pat), "%s\\*", dir);
+    WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+            char p[MAX_PATH]; snprintf(p, sizeof(p), "%s\\%s", dir, fd.cFileName);
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) remove_tree(p); else DeleteFileA(p);
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    RemoveDirectoryA(dir);
+}
+static void remove_stale_copies(void)
+{
+    char tmp[MAX_PATH]; DWORD n = GetTempPathA(sizeof(tmp), tmp);
+    if (!n || n >= sizeof(tmp) - 16) return;
+    char pat[MAX_PATH + 16]; snprintf(pat, sizeof(pat), "%s.snx-*", tmp);
+    WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    int removed = 0;
+    do {
+        unsigned long pid = strtoul(fd.cFileName + 5, NULL, 10);
+        if (!pid || pid == GetCurrentProcessId()) continue;
+        HANDLE ph = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
+        bool alive = ph && WaitForSingleObject(ph, 0) == WAIT_TIMEOUT;
+        if (ph) CloseHandle(ph);
+        if (alive) continue;
+        char p[MAX_PATH + 64]; snprintf(p, sizeof(p), "%s%s", tmp, fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) remove_tree(p); else DeleteFileA(p);
+        removed++;
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    if (removed) tl_log_line("x64: removed %d translation copies earlier runs left in %s", removed, tmp);
+}
+
 bool tl_x64_translate(const char *cache_dir, char *err, size_t errlen)
 {
+    remove_stale_copies();
     ranges R = { 0 };
     tl_ld_iterate(add_lib, &R);
     R.r[R.n++] = (struct snx_code_range){ .address = STUB_ADDR(0), .code = g_stubs, .size = STUB_PAGE };
@@ -572,6 +639,10 @@ bool tl_x64_translate(const char *cache_dir, char *err, size_t errlen)
          * as no-ops; the MAX target decodes them as the real instructions, which the backend has no code for */
         snx_recompiler_set_a64_target(g_rec, SNX_RECOMPILER_A64_SWITCH);
         snx_recompiler_set_verbose(g_rec, getenv("TL_X64_VERBOSE") ? 1 : 0);
+        /* libRFLib patches the game's code after it is translated (its hooks): the JIT reads the code where it is, each
+         * translated function checks whether its code changed, and IC IVAU reports the change (on_code_changed) */
+        snx_recompiler_set_live_code(g_rec, 1);
+        snx_recompiler_set_hook_direct_calls(g_rec, 1);
         if (cache_dir) snx_recompiler_set_cache(g_rec, cache_dir);
     }
     tl_log_line("x64: translating %zu code ranges with %zu function starts", R.n, nh);
