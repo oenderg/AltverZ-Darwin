@@ -4194,7 +4194,9 @@ static void *guest_find_widget(const char *name)
     if (n > 20) return NULL;             /* too long for the short form */
     obj[0] = (unsigned char)(n << 1);    /* the length, in bits 1..7 */
     memcpy(obj + 1, name, n + 1);
-    void *(*call)(void *) = (void *(*)(void *))fn;
+    /* GUEST_FN: on x86-64 the guest address is ARM64 code, so the call goes through a host function that runs the
+       translated function; calling it as a C function would execute ARM64 bytes as x86-64 */
+    void *(*call)(void *) = (void *(*)(void *))GUEST_FN(fn, "ll");
     return call(obj);
 }
 

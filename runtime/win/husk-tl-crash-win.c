@@ -149,6 +149,39 @@ static LONG CALLBACK on_exception(EXCEPTION_POINTERS *e)
     tl_log_line("CRASH: rsi %016llx rdi %016llx r8  %016llx r9  %016llx", c->Rsi, c->Rdi, c->R8, c->R9);
     tl_log_line("CRASH: r10 %016llx r11 %016llx r12 %016llx r13 %016llx", c->R10, c->R11, c->R12, c->R13);
     tl_log_line("CRASH: r14 %016llx r15 %016llx", c->R14, c->R15);
+    /* The host's own frames: when the fault is in a guest library's bytes, the return address here is what called
+       them (a host function that should have had a wrapper, or translated code that jumped instead of dispatching). */
+    {
+        void *frames[48];
+        USHORT n = CaptureStackBackTrace(0, 48, frames, NULL);
+        for (USHORT i = 0; i < n; i++) {
+            char at[256];
+            where((uint64_t)(uintptr_t)frames[i], at, sizeof(at));
+            tl_log_line("CRASH: host frame %u %s", i, at);
+        }
+    }
+    /* CaptureStackBackTrace walks from the handler, not from where the fault stopped: the words above the faulting
+       stack pointer still hold the return addresses of the call chain that led into guest bytes. Only those that land
+       in the program, the recompiled module or another loaded library go in (pointers and guest data do not). */
+    {
+        MEMORY_BASIC_INFORMATION mi;
+        uint64_t sp = CTX_SP(c);
+        if (VirtualQuery((void *)(uintptr_t)sp, &mi, sizeof(mi)) && mi.State == MEM_COMMIT) {
+            size_t words = (size_t)(((uint64_t)(uintptr_t)mi.BaseAddress + mi.RegionSize - sp) / 8);
+            if (words > 1024) words = 1024;
+            const uint64_t *p = (const uint64_t *)(uintptr_t)sp;
+            for (size_t i = 0; i < words; i++) {
+                uint64_t v = p[i];
+                if (v < 0x10000000000ull) continue;
+                MEMORY_BASIC_INFORMATION vm;
+                if (!VirtualQuery((void *)(uintptr_t)v, &vm, sizeof(vm)) || vm.State != MEM_COMMIT) continue;
+                if (!(vm.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))) continue;
+                char at[256];
+                where(v, at, sizeof(at));
+                tl_log_line("CRASH: stack +%zu %s", i * 8, at);
+            }
+        }
+    }
     if (tl_x64_crash_note) tl_x64_crash_note();
 #else
     tl_log_line("CRASH: lr %s", lr);
