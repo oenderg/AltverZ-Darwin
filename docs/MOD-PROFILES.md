@@ -47,6 +47,11 @@ then its own `JNI_OnLoad` (which re-runs libPVZ2's constructors, as Android's
 `System.loadLibrary` does). Its only Java request, `SnowieConfig`'s feature map,
 is answered in the driver.
 
+The mod OBBs pack their resources differently: Reflourished's parts are zstd
+and its seed-packet atlas is RGBA8888, while AltVerZ's parts are zlib and its
+atlases are ETC1 colour plus an alpha plane. Only the Mac host's cursor-art
+reader parses those files, and each build reads its own profile's OBB.
+
 ## Live content
 
 The HTTP bridge only fetches the profile's hosts over HTTPS, including on

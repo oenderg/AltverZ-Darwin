@@ -86,6 +86,13 @@ cropped images for the launch. Missing images are hidden. This avoids depending 
 capture, which can fail or return stale pixels. The setting is on by default; launch with
 `-showCursorPlant NO` to turn it off for a test. `TL_PVZ2_CURSOR_STATS=1` logs frame costs.
 
+The two profiles pack those atlases differently. Reflourished's OBB compresses its parts with
+zstd and its seed-packet atlas is RGBA8888; AltVerZ's compresses with zlib and stores format
+`0x93`, ETC1 colour blocks followed by a full-size alpha plane. The Mac reader handles both, and
+an unreadable or missing picture is still no picture. AltVerZ has 222 packet pictures for its
+562 plant TypeNames (183 of its 187 almanac entries; the rest are hidden helpers or disabled
+plants).
+
 The pointer cross uses the board's input transform, not fitted screen coordinates. The game
 thread reads app width/height `+0xf4/+0xf8`, app scale `+0x980`, board position `+0x44/+0x48`,
 board scale `+0x460`, pivot `+0x464/+0x468`, and the resolved plant cursor parent's row offset
