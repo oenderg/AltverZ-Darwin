@@ -240,7 +240,8 @@ names each action and why it was refused:
 - A control the level hides publishes no badge and its key logs `ignored: ...` instead: for
   example `ignored: the shovel is hidden` on Ancient Egypt - Day 23, whose HUD leaves the shovel,
   plant food and power-up bar in the tree without showing them. The fast-forward button is shown
-  there, so its badge and key stay.
+  there, so its badge and key stay. AltVerZ's egypt2 (and egypt6, egypt8) behave the same way for
+  the shovel and plant food; start one with `devcmd:startlevel egypt2`.
 - Outside a level, paused or behind a popup, each logs `ignored: ...` and does nothing.
 ### Driving the game by name
 

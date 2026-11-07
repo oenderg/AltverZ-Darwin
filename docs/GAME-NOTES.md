@@ -281,6 +281,15 @@ returns.
   (shown, so its badge and key stay). On egypt2 (a normal level) the shovel, fast-forward, plant
   food and power-up button read `0x00000005` (visible and input-enabled) and the holder reads
   `0x0000000d` (bit 3, visible on its own); egypt4 reads the same, so its badges stay.
+- **AltVerZ's own keys.** The labels come from the same settings the shortcuts read, so an
+  AltVerZ build shows its own `1`-`8`, `S`, `F`, `Q` and `Z`, `X`, `C`, never the comparison
+  profile's keys. Its adventure levels have no power-up buttons, so no power-up badge appears
+  there; the keys log `ignored: this level has no power-up buttons`.
+- **AltVerZ's hidden HUD.** Its egypt2, egypt6 and egypt8 leave the shovel and the plant food
+  counter in the tree but hidden (the `+0xa8` slot says not shown), so they publish no badge and
+  their keys log `ignored: the shovel is hidden` and `ignored: the plant food counter is hidden`;
+  the fast-forward button is shown, so its badge and key stay. This is the same behaviour the fix
+  was written for on Reflourished's Ancient Egypt - Day 23.
 - **Cost.** The probe and all rectangle reads share one guest-call guard per frame: the per-call
   guard is four `sigaction` calls, and a dozen of those cost more than the reads. The board's
   fields are read directly inside that guard, the design height is cached, and the HUD widget
