@@ -146,7 +146,11 @@ cat > "$APP/Info.plist" <<PLIST
 	<!-- No storyboard: an empty UILaunchScreen opts into native full-screen (and
 	     landscape) instead of compatibility letterboxing. -->
 	<key>UILaunchScreen</key><dict/>
-	<key>UIRequiresFullScreen</key><true/>
+	<!-- No UIRequiresFullScreen: Apple deprecated it, and iPadOS 27 still honours it for
+	     an app built with an older SDK. A CI build (iOS 26.5 SDK) then only ever got the
+	     full screen in landscape or portrait, scaled into the window: the window snapped
+	     between a few shapes and sometimes showed the game warped. Without it the window
+	     is any size the player drags, and the host fits the game into it (gameRect). -->
 	<!-- iOS 26+ kills an app that has not adopted the scene lifecycle. -->
 	<key>UIApplicationSceneManifest</key>
 	<dict>
