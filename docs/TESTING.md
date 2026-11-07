@@ -237,6 +237,10 @@ names each action and why it was refused:
   and then `the touch was let go`; click the lawn to use it. Only a level that offers power-ups
   has the buttons: Reflourished's adventure levels do, AltVerZ's do not, and AltVerZ's
   Vasebreaker levels do. Elsewhere the keys log `ignored: this level has no power-up buttons`.
+- A control the level hides publishes no badge and its key logs `ignored: ...` instead: for
+  example `ignored: the shovel is hidden` on Ancient Egypt - Day 23, whose HUD leaves the shovel,
+  plant food and power-up bar in the tree without showing them. The fast-forward button is shown
+  there, so its badge and key stay.
 - Outside a level, paused or behind a popup, each logs `ignored: ...` and does nothing.
 ### Driving the game by name
 
