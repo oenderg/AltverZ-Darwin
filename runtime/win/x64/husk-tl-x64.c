@@ -360,15 +360,52 @@ typedef struct {
     CPU cpu;
     uint8_t *stack_lo, *stack_hi;
     int depth;
+    DWORD tid;           /* the Windows thread, so the sampler can read where it runs */
 } tl_thread;
 static __thread tl_thread *t_th;
 
 #define GUEST_STACK (8u << 20)
 
 /* TL_X64_SAMPLE=<seconds>: a thread that logs where each guest thread is, every so often (pc as the translated code
- * last stored it: a function's entry or a call's return, not each instruction) */
+ * last stored it: a function's entry or a call's return, not each instruction). The guest pc says only where the last
+ * call went, so each sample also suspends the thread for a moment and reads the host's RIP: inside translated code
+ * (and which guest function), the JIT's, or a host function the guest called */
 static tl_thread *g_threads[256];
 static atomic_int g_nthreads;
+
+static bool sample_host(const tl_thread *t, uint64_t *rip, uint64_t *rsp)
+{
+    bool got = false;
+    HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, t->tid);
+    if (!th) return false;
+    if (SuspendThread(th) != (DWORD)-1) {
+        CONTEXT ctx;
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.ContextFlags = CONTEXT_CONTROL;
+        if (GetThreadContext(th, &ctx)) { *rip = (uint64_t)ctx.Rip; *rsp = (uint64_t)ctx.Rsp; got = true; }
+        ResumeThread(th);
+    }
+    CloseHandle(th);
+    return got;
+}
+
+static void host_module(uint64_t addr, char *out, size_t n)
+{
+    HMODULE h = NULL;
+    out[0] = 0;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)(uintptr_t)addr, &h) && h) {
+        char path[MAX_PATH];
+        DWORD len = GetModuleFileNameA(h, path, sizeof(path));
+        if (len) {
+            const char *base = strrchr(path, '\\');
+            snprintf(out, n, "%s+%#llx", base ? base + 1 : path, (unsigned long long)(addr - (uint64_t)(uintptr_t)h));
+            return;
+        }
+    }
+    snprintf(out, n, "%#llx", (unsigned long long)addr);
+}
+
 static DWORD WINAPI sampler(void *arg)
 {
     DWORD ms = (DWORD)(uintptr_t)arg;
@@ -396,8 +433,28 @@ static DWORD WINAPI sampler(void *arg)
             const char *sym = tl_ld_symbol_at((const void *)(uintptr_t)pc, &lib, &sa);
             if (g_stubs && pc >= STUB_ADDR(0) && pc < STUB_ADDR(TL_X64_STUBS)) { lib = "stub"; sym = g_ent[(pc - STUB_ADDR(0)) / 8].name; }
             const char *sym2 = tl_ld_symbol_at((const void *)(uintptr_t)lr, &lib2, &sa);
-            tl_log_line("x64 sample: cpu %d depth %d pc %#llx (%s %s) lr %#llx (%s %s)", i, t->depth, (unsigned long long)pc,
-                        lib ? lib : "?", sym ? sym : "?", (unsigned long long)lr, lib2 ? lib2 : "?", sym2 ? sym2 : "?");
+            uint64_t slot = 0; int stale = 0;
+            int has_slot = g_mod && snx_recompiled_function_state(g_mod, pc, &slot, &stale);
+            tl_log_line("x64 sample: cpu %d depth %d pc %#llx (%s %s) lr %#llx (%s %s) dispatch %#llx%s", i, t->depth, (unsigned long long)pc,
+                        lib ? lib : "?", sym ? sym : "?", (unsigned long long)lr, lib2 ? lib2 : "?", sym2 ? sym2 : "?",
+                        (unsigned long long)slot, has_slot && stale ? " STALE" : "");
+            uint64_t rip = 0, rsp = 0;
+            if (t->tid && sample_host(t, &rip, &rsp)) {
+                uint64_t gs = 0, ge = 0, goff = 0;
+                int in_aot = g_mod && snx_recompiled_host_function(g_mod, rip, &gs, &ge, &goff);
+                if (in_aot) {
+                    const char *hlib = NULL; const void *hsa = NULL;
+                    const char *hsym = tl_ld_symbol_at((const void *)(uintptr_t)gs, &hlib, &hsa);
+                    tl_log_line("x64 sample: cpu %d host rip %#llx sp %#llx in %s %s (%#llx..%#llx) +%#llx", i, (unsigned long long)rip,
+                                (unsigned long long)rsp, hlib ? hlib : "?", hsym ? hsym : "?", (unsigned long long)gs,
+                                (unsigned long long)ge, (unsigned long long)goff);
+                } else {
+                    char mod[160];
+                    host_module(rip, mod, sizeof(mod));
+                    tl_log_line("x64 sample: cpu %d host rip %#llx sp %#llx at %s (not translated guest code)", i, (unsigned long long)rip,
+                                (unsigned long long)rsp, mod);
+                }
+            }
         }
     }
     return 0;
@@ -426,6 +483,7 @@ CPU *tl_x64_cpu(void)
     t->cpu.rt = &g_rt;
     t->cpu.tpidr = g_tp;
     t->cpu.thread = t;
+    t->tid = GetCurrentThreadId();
     if (g_mod && snx_recompiled_bind(g_mod, &t->cpu) != 0) tl_log_line("x64: cannot bind this thread's CPU");
     t_th = t;
     register_thread(t);
@@ -624,6 +682,16 @@ static void remove_stale_copies(void)
     if (removed) tl_log_line("x64: removed %d translation copies earlier runs left in %s", removed, tmp);
 }
 
+/* ScarletNX's invalidator lines go to the driver's log when TL_X64_CODE_TRACE is set: they say which translated
+ * functions a code change retired and which dispatch slots it cleared, the difference between a hook running and a
+ * stale function still being reached. A hooking game changes code many times, so the lines are off by default. */
+static void snx_log(const char *text)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("TL_X64_CODE_TRACE") ? 1 : 0;
+    if (on) tl_log_line("%s", text);
+}
+
 bool tl_x64_translate(const char *cache_dir, char *err, size_t errlen)
 {
     remove_stale_copies();
@@ -635,6 +703,7 @@ bool tl_x64_translate(const char *cache_dir, char *err, size_t errlen)
     if (!g_rec) {
         g_rec = snx_recompiler_new(SNX_RECOMPILER_FLAG_LLVM);
         if (!g_rec) { snprintf(err, errlen, "the recompiler cannot target this computer"); return false; }
+        snx_recompiler_set_log(snx_log);
         /* the default target, an Armv8.0 CPU: pointer authentication and BTI (libRFLib's PACIASP) are hints there and run
          * as no-ops; the MAX target decodes them as the real instructions, which the backend has no code for */
         snx_recompiler_set_a64_target(g_rec, SNX_RECOMPILER_A64_SWITCH);
