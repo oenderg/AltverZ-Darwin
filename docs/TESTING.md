@@ -421,3 +421,8 @@ Worth checking after a change that touches iOS: the first launch (OBB download, 
 level with touch, the hardware keyboard (1-8, S, Space, Esc), going to the Home Screen and back
 (the game shows its pause menu), and the frame rate in the game's own performance overlay
 (Settings in the game).
+
+On an iPad, also drag the window through a few shapes. The log's `ios: geometry WxH` line (once a
+second) should follow the drag; a build that only ever reports the full screen (1376x1032 or 1032x1376
+on a 13-inch iPad) is being scaled by the system, not resized. Check this on a build from CI as well
+as a local one: the two can use different SDKs, and iPadOS treats an older SDK's app differently.
