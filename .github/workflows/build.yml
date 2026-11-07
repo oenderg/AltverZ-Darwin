@@ -146,6 +146,44 @@ jobs:
           done
           ls -lh release
 
+      - name: Keep the iOS download (build only)
+        # A run that doesn't publish keeps its files as run artifacts for 14 days, e.g. a test build
+        # for someone to check a fix. Anyone signed in to GitHub can download them from the run page.
+        if: github.event.inputs.publish != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          path: release/${{ steps.metadata.outputs.prefix }}-iOS.ipa
+          archive: false
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Keep the iOS full download (build only)
+        if: github.event.inputs.publish != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          path: release/${{ steps.metadata.outputs.prefix }}-iOS-Full.ipa
+          archive: false
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Keep the Mac download (build only)
+        if: github.event.inputs.publish != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          path: release/${{ steps.metadata.outputs.prefix }}-Mac.dmg
+          archive: false
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Keep the Mac full download (build only)
+        if: github.event.inputs.publish != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          path: release/${{ steps.metadata.outputs.prefix }}-Mac-Full.dmg
+          archive: false
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Release notes
         if: github.event.inputs.publish == 'true'
         env:

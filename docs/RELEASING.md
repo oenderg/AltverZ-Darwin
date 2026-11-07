@@ -54,6 +54,10 @@ For example: `PvZ2-AltVerZ-1.8.3f-Darwin-0.1.0-iOS.ipa`. Slim is a small downloa
 downloads the game's data (about 1.1 GB) on first launch. Full has the data inside, for an offline
 first launch. Selecting one platform or variant publishes just those files.
 
+A run with **Publish** off creates no release, AltStore entry or Mac feed item: it keeps the same files
+as artifacts of the run for 14 days instead, unzipped, so anyone signed in to GitHub can download a test
+build from the run's page (for example for the reporter of an issue to check a fix).
+
 `build.sh` keeps its plain local names in `out/`. After each build,
 `PROFILE=altverz scripts/package-release.sh out out/release slim` (or `full`) moves the IPA and DMG
 to their release names. It keeps the app bundles for testing and refuses to replace an existing
