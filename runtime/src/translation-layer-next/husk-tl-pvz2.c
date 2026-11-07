@@ -3035,6 +3035,45 @@ static bool guest_read_bytes_raw(uint64_t addr, void *out, size_t size)
     return true;
 }
 
+/* Whether the game would show (and hit-test) a widget: UIWidget::IsVisible,
+ * vtable slot +0xa8 (Reflourished 1.4.2: 0x5c1a18). It reads m_flags at +0x90
+ * -- bit 0 is the widget's own visible switch; bit 3 makes the widget answer
+ * from that bit alone and ignore its parent (a popup over a hidden parent) --
+ * then, unless bit 3 is set, asks the parent named by the m_parentPtr weak
+ * reference at +0x70 and returns visible only when that parent is visible too.
+ * Fail closed: a widget, vtable, handler, flag or parent that cannot be read
+ * means "not shown".
+ *
+ * The badge snapshot calls the raw form inside its own guard; the keyboard
+ * shortcuts call the guarded one. */
+static bool guest_widget_shown_common(void *widget, bool raw)
+{
+    uint64_t vtable = 0, fn = 0;
+    if (!widget) return false;
+    bool read_ok = raw
+        ? guest_read_bytes_raw((uint64_t)(uintptr_t)widget, &vtable, sizeof vtable)
+        : guest_read_bytes((uint64_t)(uintptr_t)widget, &vtable, sizeof vtable);
+    if (!read_ok || !vtable) return false;
+    read_ok = raw ? guest_read_bytes_raw(vtable + 0xa8, &fn, sizeof fn)
+                  : guest_read_bytes(vtable + 0xa8, &fn, sizeof fn);
+    if (!read_ok || !fn) return false;
+    bool ok = false;
+    uint64_t shown = raw
+        ? guest_call2_raw((void *)(uintptr_t)fn, (uint64_t)(uintptr_t)widget, 0, &ok)
+        : guest_call2((void *)(uintptr_t)fn, (uint64_t)(uintptr_t)widget, 0, &ok);
+    return ok && (shown & 1) != 0;
+}
+
+static bool guest_widget_shown(void *widget)
+{
+    return guest_widget_shown_common(widget, false);
+}
+
+static bool guest_widget_shown_raw(void *widget)
+{
+    return guest_widget_shown_common(widget, true);
+}
+
 /* Keyboard presses bypass the widget manager's pointer dispatch. Apply its
  * modal ownership and the board's pause/state checks before calling a HUD
  * handler. Reflourished 1.4.2: ab6858 names state 5 PlayingLevel; ab21dc and
@@ -3302,28 +3341,14 @@ static void guest_collect_sun(void)
 static int g_plant_food_touch_down, g_plant_food_touch_x, g_plant_food_touch_y;
 static int g_powerup_touch_down, g_powerup_touch_x, g_powerup_touch_y;
 
-/* A named widget's rect, in the app's own design space. */
-static bool guest_widget_rect(const char *name, int *rect)
-{
-    rect[0] = rect[1] = rect[2] = rect[3] = 0;
-    void *widget = guest_find_widget(name);
-    return widget && guest_anchored_rect(widget, rect) && rect[2] > 0 && rect[3] > 0;
-}
-
-/* A named widget's centre, in the app's own design space. */
-static bool guest_widget_center(const char *name, double *cx, double *cy)
-{
-    int rect[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
-    if (!guest_widget_rect(name, rect)) return false;
-    *cx = rect[0] + rect[2] / 2.0;
-    *cy = rect[1] + rect[3] / 2.0;
-    return true;
-}
-
 static void guest_fast_forward(void)
 {
     if (!guest_live_shortcut_board("the fast-forward shortcut")) return;
     void *widget = guest_find_widget("UIFastForwardButton");
+    if (widget && !guest_widget_shown(widget)) {
+        tl_log_line("pvz2: the fast-forward shortcut: ignored: the fast-forward button is hidden");
+        return;
+    }
     void *want = tl_aot_guest_data_ptr_any(GUEST_FAST_FORWARD_VTABLE);
     uint64_t vtable = 0, fn = 0;
     int8_t before = -1, after = -1;
@@ -3345,11 +3370,22 @@ static void guest_fast_forward(void)
 static void guest_plant_food(void)
 {
     if (!guest_live_shortcut_board("the plant food shortcut")) return;
-    double cx, cy;
-    if (!guest_widget_center("UIPlantfood", &cx, &cy)) {
+    void *widget = guest_find_widget("UIPlantfood");
+    if (!widget) {
         tl_log_line("pvz2: the plant food shortcut: ignored: the game's own counter is not reachable");
         return;
     }
+    if (!guest_widget_shown(widget)) {
+        tl_log_line("pvz2: the plant food shortcut: ignored: the plant food counter is hidden");
+        return;
+    }
+    int rect[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
+    if (!guest_anchored_rect(widget, rect) || rect[2] <= 0 || rect[3] <= 0) {
+        tl_log_line("pvz2: the plant food shortcut: ignored: the game's own counter is not reachable");
+        return;
+    }
+    double cx = rect[0] + rect[2] / 2.0;
+    double cy = rect[1] + rect[3] / 2.0;
     double s = guest_surface_scale();
     int x = (int)(cx * s), y = (int)(cy * s);
     g_plant_food_touch_x = x;
@@ -3366,8 +3402,17 @@ static void guest_powerup(int index)
     int holder[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
     int first[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
     void *holder_widget = guest_find_widget("UIPowerupHolder");
-    if (!holder_widget || !guest_anchored_rect(holder_widget, holder) ||
-        holder[2] <= 0 || !guest_widget_rect("UIPowerup", first)) {
+    void *first_widget = guest_find_widget("UIPowerup");
+    if (!holder_widget || !first_widget) {
+        tl_log_line("pvz2: the power-up shortcut: ignored: this level has no power-up buttons");
+        return;
+    }
+    if (!guest_widget_shown(holder_widget) || !guest_widget_shown(first_widget)) {
+        tl_log_line("pvz2: the power-up shortcut: ignored: this level's power-up bar is hidden");
+        return;
+    }
+    if (!guest_anchored_rect(holder_widget, holder) || holder[2] <= 0 ||
+        !guest_anchored_rect(first_widget, first) || first[2] <= 0) {
         tl_log_line("pvz2: the power-up shortcut: ignored: this level has no power-up buttons");
         return;
     }
@@ -3615,6 +3660,10 @@ static void guest_seed_pick(int slot)
         tl_log_line("pvz2: the seed pick: slot %d is not a normal seed packet", slot);
         return;
     }
+    if (!guest_widget_shown(packet)) {
+        tl_log_line("pvz2: the seed shortcut: ignored: the seed packet in slot %d is hidden", slot + 1);
+        return;
+    }
     uint64_t fn = 0;
     if (!guest_read_bytes(packet_vtable + 0x90, &fn, sizeof fn) || !fn) {
         tl_log_line("pvz2: the seed pick: the card has no press handler");
@@ -3721,8 +3770,18 @@ static void guest_native_shovel(void)
     if (!guest_live_shortcut_board("the shovel shortcut")) return;
     int mode = atomic_load(&g_shovel_mode);
     void *widget = guest_find_widget("UIShovel");
+    if (!widget) {
+        g_shovel_touch_down = 0;
+        tl_log_line("pvz2: the shovel shortcut: ignored: the game's own button is not reachable");
+        return;
+    }
+    if (!guest_widget_shown(widget)) {
+        g_shovel_touch_down = 0;
+        tl_log_line("pvz2: the shovel shortcut: ignored: the shovel is hidden");
+        return;
+    }
     int rect[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
-    bool have_rect = widget && guest_anchored_rect(widget, rect);
+    bool have_rect = guest_anchored_rect(widget, rect);
     /* The touch first (the game's own path): the button's centre, in the
      * surface's space. */
     if (mode == 1 && have_rect && rect[2] > 0 && rect[3] > 0) {
@@ -4300,6 +4359,9 @@ bool tl_pvz2_ui_geometry(int *tray, int *shovel)
  *
  * A widget whose rectangle is zero, absurd or entirely off the surface is not
  * published: a badge for a control that is not there is worse than no badge.
+ * The game's own IsVisible (UIWidget vtable +0xa8) is asked for every widget
+ * as well; it follows the parent chain, so a hidden holder hides its buttons.
+ * A hidden control publishes no badge, exactly when its key is refused.
  * Conveyor levels use the same bank getter (ConveyorSeedBank is a SeedBank),
  * so their moving cards are followed when the getter answers; `conveyor` says
  * which kind it is, for the log and the host's own decision. */
@@ -4352,7 +4414,8 @@ static bool badge_rect_scale(const int *in, double scale, int surface_w, int sur
 static bool badge_widget_rect(void *widget, double scale, int surface_w, int surface_h, int *out)
 {
     int r[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
-    return widget && guest_anchored_rect_raw(widget, r) &&
+    return widget && guest_widget_shown_raw(widget) &&
+           guest_anchored_rect_raw(widget, r) &&
            badge_rect_scale(r, scale, surface_w, surface_h, out);
 }
 
@@ -4542,7 +4605,8 @@ static void badge_collect(tl_pvz2_badge_snapshot *next, uint64_t *board_out, con
         void *first = g_badge_widget[4];
         int hr[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
         int fr[4] __attribute__((aligned(16))) = { 0, 0, 0, 0 };
-        if (holder && first && guest_anchored_rect_raw(holder, hr) &&
+        if (holder && first && guest_widget_shown_raw(holder) && guest_widget_shown_raw(first) &&
+            guest_anchored_rect_raw(holder, hr) &&
             guest_anchored_rect_raw(first, fr) && hr[2] > 0 && fr[2] > 0) {
             /* The buttons' reference layout in the holder: 73 wide, 98 apart,
              * 19 from its left and 2 from its top. The holder's width tells how

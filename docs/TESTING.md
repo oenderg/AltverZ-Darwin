@@ -220,6 +220,10 @@ names each action and why it was refused:
   and then `the touch was let go`; with plant food in stock the cursor carries one.
 - `press:z`, `press:x`, `press:c` log `pvz2: the power-up shortcut: selected power-up N of M`
   and then `the touch was let go`; click the lawn to use it.
+- A control the level hides publishes no badge and its key logs `ignored: ...` instead: for
+  example `ignored: the shovel is hidden` on Ancient Egypt - Day 23, whose HUD leaves the shovel,
+  plant food and power-up bar in the tree without showing them. The fast-forward button is shown
+  there, so its badge and key stay.
 - Outside a level, paused or behind a popup, each logs `ignored: ...` and does nothing.
 
 ## Reading the result
