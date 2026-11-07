@@ -101,8 +101,9 @@ static void etc1_block(const uint8_t *b, uint8_t rgb[16][3])
     const int *table2 = etc1_modifiers[(b[3] >> 2) & 7];
     uint32_t index = (uint32_t)b[4] << 24 | (uint32_t)b[5] << 16 | (uint32_t)b[6] << 8 | b[7];
     for (int i = 0; i < 16; i++) {
-        int x = i & 3, y = i >> 2;
-        bool second = flip ? x >= 2 : y >= 2;
+        /* ETC1 numbers a block's pixels column by column, and a clear flip bit splits it into left and right halves */
+        int x = i >> 2, y = i & 3;
+        bool second = flip ? y >= 2 : x >= 2;
         const int *base = second ? base2 : base1;
         const int *table = second ? table2 : table1;
         int m = (int)(((index >> i) & 1) | (((index >> (16 + i)) & 1) << 1));
