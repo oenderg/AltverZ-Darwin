@@ -1,10 +1,27 @@
-From 273823f3df81da5df83325beac28a92f69dfeb8a Mon Sep 17 00:00:00 2001
+From f26bfd5049f264ef7ac6880e09062641c22a41ec Mon Sep 17 00:00:00 2001
 From: oenderg <76851476+oenderg@users.noreply.github.com>
 Date: Sat, 7 Nov 2026 21:02:05 +0100
-Subject: [PATCH] [recompiler] clear every leader's dispatch slot on
+Subject: [PATCH] [recompiler] Clear every leader's dispatch slot on
  invalidation
 
-A function can be entered at several leaders, each with its own entry in the dispatch table. keep_invalidation_map remembered only the first leader's entry, so snx_recompiled_invalidate cleared the slots of that wrapper and left the other leaders' slots pointing at the retired function. A call through one of them ran the stale check, which returned with the pc unchanged, and snx_recompiled_run called it again forever. Record every leader's entry and clear all their slots.
+keep_invalidation_map kept only the wrapper of a function's first leader,
+and snx_recompiled_invalidate cleared only the dispatch slots that point
+at that wrapper. The entry table holds one function for each address, so
+a leader address that two functions share has the wrapper of only one of
+them. A slot that the clear misses can then still lead into a retired
+function. Its stale check sets the pc to the same entry and returns, and
+snx_recompiled_run calls it again, so the guest makes no progress.
+
+Keep the entry of every leader of a function and clear all of their
+slots when the function is retired.
+
+Verified on Windows x86-64 with Clang and LLVM 23.1.5. The
+scarletnx-recompiler archive builds and tests/recompiler_library.c
+passes. An Android game whose mod library patches the game's code at
+start-up, run through the library with dispatch hooks on, stopped at one
+pc after the patch without this change. With it, the game reaches its
+title screen, and 854 of 2800 invalidations cleared leader slots that
+the old loop did not reach.
 ---
  src/common/cpu/recompiler/library.c | 33 ++++++++++++++++++++++++-----
  1 file changed, 28 insertions(+), 5 deletions(-)
