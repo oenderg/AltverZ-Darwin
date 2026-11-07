@@ -1,0 +1,264 @@
+diff --git a/src/common/cpu/recompiler/library.c b/src/common/cpu/recompiler/library.c
+index e209d62..c339d32 100644
+--- a/src/common/cpu/recompiler/library.c
++++ b/src/common/cpu/recompiler/library.c
+@@ -78,6 +78,7 @@ struct snx_recompiler {
+     unsigned jobs;
+     int verbose;
+     int hook_direct_calls;
++    int live_code; /* the JIT reads the caller's ranges in place (code patched later is compiled as it is then) */
+     char* keep_ir;
+     char* cache; /* folder of linked modules by the hash of what they were made from (LLVM), NULL for none */
+     char error[1024];
+@@ -93,6 +94,11 @@ typedef struct {
+     GuestFn code;
+     size_t entry;
+     size_t stale_index;
++    /* The entry indices of the function's leaders: each leader has a wrapper of its own (F_<address>), and its slot
++       must go when the function is retired, or a stale check would re-enter it forever. Into snx_recompiled's
++       leader_entries, one block for every function */
++    size_t* leaders;
++    size_t leader_count;
+ } SnxCompiledFunction;
+ 
+ typedef struct {
+@@ -123,6 +129,7 @@ struct snx_recompiled {
+     size_t compiled_function_count;
+     SnxEntryAlias* entry_aliases;
+     size_t entry_alias_count;
++    size_t* leader_entries;
+     struct snx_recompiler* arena_owner; /* PowerPC64: the recompiler whose arena holds the module's code */
+     char opt;
+     SnxU64 features; /* the recompiler's when the module was made: its JIT decodes as its code was */
+@@ -221,6 +228,10 @@ int snx_recompiler_set_a64_target(struct snx_recompiler* r, int target) {
+ }
+ 
+ void snx_recompiler_set_jobs(struct snx_recompiler* r, unsigned jobs) { r->jobs = jobs; }
++void snx_recompiler_set_live_code(struct snx_recompiler* r, int enabled) {
++    if (r) r->live_code = enabled != 0;
++}
++
+ void snx_recompiler_set_hook_direct_calls(struct snx_recompiler* r, int enabled) {
+     if (r) r->hook_direct_calls = enabled != 0;
+ }
+@@ -1075,6 +1086,7 @@ static int keep_code(struct snx_recompiler* r, struct snx_recompiled* m, const s
+         fail(r, "the code ranges are too large");
+         return -1;
+     }
++    if (r->live_code) total = 0; /* no copy: the views are the caller's bytes, which must outlive the module */
+     m->views = (SnxCodeImage*)calloc(1, count * sizeof(SnxCodeImage) + total);
+     if (!m->views) {
+         fail(r, "out of memory for a copy of the code");
+@@ -1083,12 +1095,16 @@ static int keep_code(struct snx_recompiler* r, struct snx_recompiled* m, const s
+     unsigned char* bytes = (unsigned char*)(m->views + count);
+     size_t at = 0;
+     for (size_t i = 0; i < count; ++i) {
+-        memcpy(bytes + at, ranges[i].code, ranges[i].size);
+-        m->views[i].image = bytes + at;
++        if (r->live_code)
++            m->views[i].image = (const unsigned char*)ranges[i].code;
++        else {
++            memcpy(bytes + at, ranges[i].code, ranges[i].size);
++            m->views[i].image = bytes + at;
++            at += ranges[i].size;
++        }
+         m->views[i].image_size = ranges[i].size;
+         m->views[i].base = ranges[i].address;
+         m->views[i].text_size = ranges[i].size;
+-        at += ranges[i].size;
+     }
+     m->view_count = count;
+     return 0;
+@@ -1134,7 +1150,10 @@ static int keep_invalidation_map(struct snx_recompiler* r, struct snx_recompiled
+     }
+     m->compiled_functions = (SnxCompiledFunction*)calloc(codegen->function_count, sizeof(*m->compiled_functions));
+     m->entry_aliases = (SnxEntryAlias*)calloc(m->entry_count ? m->entry_count : 1, sizeof(*m->entry_aliases));
+-    if (!m->compiled_functions || !m->entry_aliases) {
++    size_t total_leaders = 0;
++    for (size_t i = 0; i < codegen->function_count; ++i) total_leaders += codegen->functions[i].leader_count;
++    m->leader_entries = (size_t*)calloc(total_leaders ? total_leaders : 1, sizeof(*m->leader_entries));
++    if (!m->compiled_functions || !m->entry_aliases || !m->leader_entries) {
+         fail(r, "out of memory for guest code invalidation metadata");
+         return -1;
+     }
+@@ -1144,19 +1163,22 @@ static int keep_invalidation_map(struct snx_recompiler* r, struct snx_recompiled
+     }
+     m->entry_alias_count = m->entry_count;
+     qsort(m->entry_aliases, m->entry_alias_count, sizeof(*m->entry_aliases), compare_entry_alias);
++    size_t leader_at = 0;
+     for (size_t i = 0; i < codegen->function_count; ++i) {
+         const SnxFunction* function = &codegen->functions[i];
+         uint64_t start = UINT64_MAX, last = 0;
+         size_t first_entry = m->entry_count;
++        size_t leader_base = leader_at;
+         if (!function->count) continue;
+         for (size_t j = 0; j < function->count; ++j) {
+             uint64_t address = snx_function_address(function, j);
+             if (address < start) start = address;
+             if (address > last) last = address;
+-            if (first_entry == m->entry_count && function->leaders && function->leaders[j]) {
+-                size_t entry = lower_entry(m, address);
+-                if (entry < m->entry_count && m->entry_addresses[entry] == address) first_entry = entry;
+-            }
++            if (!function->leaders || !function->leaders[j]) continue;
++            size_t entry = lower_entry(m, address);
++            if (entry >= m->entry_count || m->entry_addresses[entry] != address) continue;
++            m->leader_entries[leader_at++] = entry;
++            if (first_entry == m->entry_count) first_entry = entry;
+         }
+         if (first_entry == m->entry_count || last > UINT64_MAX - 4) continue;
+         SnxCompiledFunction* compiled = &m->compiled_functions[count++];
+@@ -1165,6 +1187,8 @@ static int keep_invalidation_map(struct snx_recompiler* r, struct snx_recompiled
+         compiled->code = m->entry_functions[first_entry];
+         compiled->entry = first_entry;
+         compiled->stale_index = i;
++        compiled->leaders = m->leader_entries + leader_base;
++        compiled->leader_count = leader_at - leader_base;
+     }
+     /* codegen orders functions by entry, but a span starts at its lowest block, which can lie below the entry (a split
+        or tail-merged function). snx_recompiled_invalidate stops its scan at the first span starting past the changed
+@@ -1292,6 +1316,7 @@ void snx_recompiled_free(struct snx_recompiled* m) {
+     free(m->jit_cache_path);
+     free(m->compiled_functions);
+     free(m->entry_aliases);
++    free(m->leader_entries);
+     free(m->views);
+     if (m->dispatch) free((void**)m->dispatch - 1); /* load_descriptor's block, with the module in front */
+     unload_image(m);
+@@ -1325,6 +1350,70 @@ GuestFn snx_recompiled_function(const struct snx_recompiled* m, uint64_t pc) {
+     return o < m->code_hi - m->code_lo && !(pc & 3) ? __atomic_load_n(&m->dispatch[o >> 2], __ATOMIC_ACQUIRE) : NULL;
+ }
+ 
++/* The guest function whose translated code is at host pc, for a sampler that sees where a thread runs: 1 with the
++   function's guest range and the offset into its host code; 0 for code that is no function's (the JIT's, a wrapper's,
++   or outside the module). The function a host pc belongs to is the last one whose code starts at or below it; translated
++   code is larger than the guest's, but a pc past a generous span of it is not that function's (a gap or other code) */
++int snx_recompiled_host_function(const struct snx_recompiled* m, uint64_t host, uint64_t* guest_start, uint64_t* guest_end,
++                                 uint64_t* offset)
++{
++    if (!m || !m->compiled_function_count) return 0;
++    const SnxCompiledFunction* best = NULL;
++    uint64_t best_code = 0;
++    for (size_t i = 0; i < m->compiled_function_count; ++i) {
++        const SnxCompiledFunction* f = &m->compiled_functions[i];
++        uint64_t code = (uint64_t)(uintptr_t)f->code;
++        if (!code || code > host) continue;
++        if (!best || code >= best_code) { best_code = code; best = f; }
++    }
++    if (!best || best->end <= best->start) return 0;
++    uint64_t span = (best->end - best->start) * 64 + 65536;
++    if (host - best_code >= span) return 0;
++    if (guest_start) *guest_start = best->start;
++    if (guest_end) *guest_end = best->end;
++    if (offset) *offset = host - best_code;
++    return 1;
++}
++
++/* What the dispatch table holds for guest pc, and whether that function was retired by a code change: 1 with its host
++   address and 1 in *stale; 0 when the slot is empty (the next call compiles the code there) */
++int snx_recompiled_function_state(const struct snx_recompiled* m, uint64_t pc, uint64_t* code, int* stale)
++{
++    if (code) *code = 0;
++    if (stale) *stale = 0;
++    if (!m || (pc & 3)) return 0;
++    uint64_t o = pc - m->code_lo;
++    if (o >= m->code_hi - m->code_lo) return 0;
++    GuestFn f = __atomic_load_n(&m->dispatch[o >> 2], __ATOMIC_ACQUIRE);
++    if (!f) return 0;
++    if (code) *code = (uint64_t)(uintptr_t)f;
++    if (stale) {
++        for (size_t i = 0; i < m->compiled_function_count; ++i) {
++            const SnxCompiledFunction* g = &m->compiled_functions[i];
++            if (g->entry < m->entry_count && m->entry_addresses[g->entry] == pc) {
++                *stale = m->stale[g->stale_index] != 0;
++                break;
++            }
++        }
++    }
++    return 1;
++}
++
++/* The invalidator's lines, when a caller asks for them (the driver's log): which functions it retired and which
++   dispatch slots it cleared, to tell a hook that went in and left a stale function reachable from one that did not */
++static void (*library_log_fn)(const char*);
++void snx_recompiler_set_log(void (*fn)(const char*)) { library_log_fn = fn; }
++static void library_log(const char* fmt, ...)
++{
++    if (!library_log_fn) return;
++    char text[512];
++    va_list ap;
++    va_start(ap, fmt);
++    vsnprintf(text, sizeof(text), fmt, ap);
++    va_end(ap);
++    library_log_fn(text);
++}
++
+ void snx_recompiled_set_fallback(struct snx_recompiled* m, GuestFn fallback) {
+     __atomic_store_n(&m->fallback, fallback, __ATOMIC_RELEASE);
+ }
+@@ -1355,14 +1444,31 @@ size_t snx_recompiled_invalidate(struct snx_recompiled* m, uint64_t addr, uint64
+             else
+                 alias_hi = mid;
+         }
++        size_t cleared = 0;
+         for (; alias_lo < m->entry_alias_count && m->entry_aliases[alias_lo].code == code; ++alias_lo) {
+             size_t entry = m->entry_aliases[alias_lo].entry;
+             uint64_t address = m->entry_addresses[entry];
+-            if (address >= m->code_lo && address < m->code_hi)
++            if (address >= m->code_lo && address < m->code_hi) {
+                 __atomic_store_n(&m->dispatch[(address - m->code_lo) >> 2], NULL, __ATOMIC_RELEASE);
++                ++cleared;
++            }
++        }
++        /* Every leader of the function has a wrapper of its own, so the slot of each one goes; the aliases above cover
++           the slots of other entries that share a wrapper (a tail merge). Clear dispatch before marking stale so
++           diversions miss rather than re-enter */
++        for (size_t k = 0; k < function->leader_count; ++k) {
++            size_t entry = function->leaders[k];
++            uint64_t address = m->entry_addresses[entry];
++            if (address >= m->code_lo && address < m->code_hi) {
++                __atomic_store_n(&m->dispatch[(address - m->code_lo) >> 2], NULL, __ATOMIC_RELEASE);
++                ++cleared;
++            }
+         }
+-        /* Clear dispatch before marking stale so diversions miss rather than re-enter */
+         __atomic_store_n(&m->stale[function->stale_index], 1, __ATOMIC_RELEASE);
++        library_log("invalidate: %#llx..%#llx (entry %#llx, code %#llx): %zu dispatch slot(s) cleared, stale byte %zu set",
++                    (unsigned long long)function->start, (unsigned long long)function->end,
++                    (unsigned long long)(function->entry < m->entry_count ? m->entry_addresses[function->entry] : 0),
++                    (unsigned long long)code, cleared, function->stale_index);
+         if (callback) callback(context, function->start, function->end);
+         ++count;
+     }
+diff --git a/src/common/cpu/recompiler/snx_recompiler.h b/src/common/cpu/recompiler/snx_recompiler.h
+index 6f0f478..8cf101c 100644
+--- a/src/common/cpu/recompiler/snx_recompiler.h
++++ b/src/common/cpu/recompiler/snx_recompiler.h
+@@ -77,6 +77,9 @@ SNX_RECOMPILER_API int snx_recompiler_set_optimization(struct snx_recompiler* r,
+ SNX_RECOMPILER_API int snx_recompiler_set_a64_target(struct snx_recompiler* r, int target);
+ /* Code units compiled at once, on host threads; 0, the default, uses one per processor */
+ SNX_RECOMPILER_API void snx_recompiler_set_jobs(struct snx_recompiler* r, unsigned jobs);
++/* The module's JIT reads the code ranges where the caller has them instead of a copy, so code the guest patches after
++   recompiling (and reports with IC IVAU, RtAPI.code_changed) is compiled as it then is. The ranges must outlive it */
++SNX_RECOMPILER_API void snx_recompiler_set_live_code(struct snx_recompiler* r, int enabled);
+ /* Route calls between recompiled functions through CPU.disp so code invalidation can retire callees safely */
+ SNX_RECOMPILER_API void snx_recompiler_set_hook_direct_calls(struct snx_recompiler* r, int enabled);
+ /* Progress lines on stdout, as the scarletnx command prints them; off by default */
+@@ -158,6 +161,17 @@ SNX_RECOMPILER_API int snx_recompiled_bind(struct snx_recompiled* m, CPU* cpu);
+ SNX_RECOMPILER_API GuestFn snx_recompiled_lookup(struct snx_recompiled* m, uint64_t pc);
+ /* The recompiled function entered at pc (a leader), NULL for any other pc */
+ SNX_RECOMPILER_API GuestFn snx_recompiled_function(const struct snx_recompiled* m, uint64_t pc);
++/* The guest function whose translated code is at host pc, for a sampler that sees where a thread runs: 1 with the
++   function's guest range and the offset into its host code; 0 for code that is no function's (the JIT's, a wrapper's,
++   or outside the module) */
++SNX_RECOMPILER_API int snx_recompiled_host_function(const struct snx_recompiled* m, uint64_t host, uint64_t* guest_start,
++                                                    uint64_t* guest_end, uint64_t* offset);
++/* What the dispatch table holds for guest pc, and whether that function was retired by a code change: 1 with its host
++   address and 1 in *stale; 0 when the slot is empty (the next call compiles the code there) */
++SNX_RECOMPILER_API int snx_recompiled_function_state(const struct snx_recompiled* m, uint64_t pc, uint64_t* code,
++                                                     int* stale);
++/* Receives the invalidator's lines, when set */
++SNX_RECOMPILER_API void snx_recompiler_set_log(void (*fn)(const char*));
+ /* What a miss in the module runs (snx_runtime_defaults' RtAPI.miss, snx_recompiled_lookup and _call) instead of the
+    module's JIT: a caller's own just-in-time compiler, called as the guest function at the pc, which compiles the code
+    there and runs it. NULL restores the module's JIT. A caller with its own RtAPI.miss and dispatch table (gnuabi)
