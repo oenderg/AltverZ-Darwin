@@ -43,8 +43,8 @@ and the mod's own content built in.
 * **Keyboard** (Mac, and iPad with a keyboard)
   * `1`-`8` take a seed packet, `S` the shovel.
   * `Space` collects every sun, coin, gem, plant food and sprout drop on the lawn.
-  * `F` toggles fast-forward, `Q` picks up plant food, and `Z`, `X`, `C` select the level's
-    power-ups from left to right.
+  * `F` toggles fast-forward and `Q` picks up plant food. `Z`, `X`, `C` would select power-ups,
+    but AltVerZ removed them, so no level has any.
   * `Esc` pauses and resumes. The keys rest while the game is paused.
   * On the Mac, Settings (`Cmd-,`) lets you pick any keys; Keyboard → **Show keys in levels**
     (on by default) writes each key at its control's corner in the game's font.

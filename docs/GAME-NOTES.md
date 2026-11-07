@@ -42,7 +42,7 @@ through a guard that turns a fault into a log line instead of a crash.
 | 0x5beb44, 0x5c1788 | find a UI widget by name, and its rect in the app's design space | the pause button (`UIPauseButton`), the shovel, the seed tray, fast-forward, plant food and power-ups |
 | 0x24b2dc0, +0x88 = 0x12300ec, +0x19a | FastForwardButton's vtable, its toggle (flips the byte at +0x19a and tells the game), and that state | F (`UIFastForwardButton`) |
 | 0x24c21b0, +0x90 = 0x1311f90 | PlantfoodUI's vtable and its pointer-down (starts the counter's pickup) | Q (`UIPlantfood`) |
-| 0x249dfa0, +0x90 = 0x1162138 | PowerupTimeUI's vtable and its pointer-down (selects the power-up) | Z, X, C (`UIPowerupHolder`, buttons named `UIPowerup`; 73 px wide, 98 apart, holder 308 wide for three). Reflourished's adventure levels offer them, AltVerZ's do not; AltVerZ's Vasebreaker levels do |
+| 0x249dfa0, +0x90 = 0x1162138 | PowerupTimeUI's vtable and its pointer-down (selects the power-up) | Z, X, C (`UIPowerupHolder`, buttons named `UIPowerup`; 73 px wide, 98 apart, holder 308 wide for three). Reflourished's adventure levels offer them; AltVerZ removed power-ups, so none of its levels do (Vasebreaker included) |
 | 0x24bcf00 | the pause menu (`PauseDialog`); its rect is at +0x44 | Escape on the pause menu taps RESUME (82% across, 90% down) |
 
 - **Android's Back does nothing in a level** in this game, so Escape presses the pause button
@@ -283,8 +283,7 @@ returns.
   `0x0000000d` (bit 3, visible on its own); egypt4 reads the same, so its badges stay.
 - **AltVerZ's own keys.** The labels come from the same settings the shortcuts read, so an
   AltVerZ build shows its own `1`-`8`, `S`, `F`, `Q` and `Z`, `X`, `C`, never the comparison
-  profile's keys. Its adventure levels have no power-up buttons, so no power-up badge appears
-  there; the keys log `ignored: this level has no power-up buttons`.
+  profile's keys. It has no power-up buttons in any level (Vasebreaker included), so no power-up badge appears; the keys log `ignored: this level has no power-up buttons`.
 - **AltVerZ's hidden HUD.** Its egypt2, egypt6 and egypt8 leave the shovel and the plant food
   counter in the tree but hidden (the `+0xa8` slot says not shown), so they publish no badge and
   their keys log `ignored: the shovel is hidden` and `ignored: the plant food counter is hidden`;
