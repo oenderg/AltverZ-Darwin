@@ -100,9 +100,11 @@ What to check:
   open panel, "Choose the quests zip to import."), not a save panel. Import the exported zip; unzip it elsewhere and `diff -r` the two
   `activequests` folders (the game may rewrite its quest save on exit, so compare right after
   the import or use the log's file count).
-- **Import Level**: import any JSON; it lands byte-identical at
-  `No_Backup/CDN.1.4.2/levels/egypt1.json`. No valid level JSON ships with the repo, so the
-  file placement is what a Mac test can show.
+- **Import Level**: import a known level JSON; it lands byte-identical at
+  `No_Backup/CDN.1.4.2/levels/egypt1.json`. Import a profile save or malformed JSON and
+  confirm it is rejected, the prior level is unchanged, and an alert appears. Restart with
+  an invalid override and check that it is preserved under an `.invalid.N` name.
+  The level check does not validate every guest reference or guarantee a custom level loads.
 
 On the iOS Simulator, install the app with an OBB and a save, launch with `SIMCTL_CHILD_`
 versions of the switches, and capture the picker with `xcrun simctl io booted screenshot`.

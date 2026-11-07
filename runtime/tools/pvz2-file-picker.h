@@ -112,11 +112,24 @@ static void pvz2_file_picker_open(int kind, const char *internal, const char *su
                        prepared:[NSString stringWithUTF8String:prepared ?: ""]];
 }
 
+static void pvz2_level_rejected(void)
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *root = pvz2_file_picker.root;
+        if (!root) return;
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Level Not Imported"
+            message:@"Choose a valid JSON level file. The existing level was not changed."
+            preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [root presentViewController:alert animated:YES completion:nil];
+    });
+}
+
 static void pvz2_file_picker_install(UIViewController *root)
 {
     pvz2_file_picker = [PVZ2FilePicker new];
     pvz2_file_picker.root = root;
-    static const tl_pvz2_file_picker_hooks hooks = { .open = pvz2_file_picker_open };
+    static const tl_pvz2_file_picker_hooks hooks = { .open = pvz2_file_picker_open, .level_rejected = pvz2_level_rejected };
     tl_pvz2_set_file_picker_hooks(&hooks);
 }
 
@@ -188,11 +201,24 @@ static void pvz2_file_picker_open(int kind, const char *internal, const char *su
                        prepared:[NSString stringWithUTF8String:prepared ?: ""]];
 }
 
+static void pvz2_level_rejected(void)
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSWindow *window = pvz2_file_picker.window;
+        if (!window) return;
+        NSAlert *alert = [NSAlert new];
+        alert.messageText = @"Level Not Imported";
+        alert.informativeText = @"Choose a valid JSON level file. The existing level was not changed.";
+        [alert addButtonWithTitle:@"OK"];
+        [alert beginSheetModalForWindow:window completionHandler:nil];
+    });
+}
+
 static void pvz2_file_picker_install(NSWindow *window)
 {
     pvz2_file_picker = [PVZ2FilePicker new];
     pvz2_file_picker.window = window;
-    static const tl_pvz2_file_picker_hooks hooks = { .open = pvz2_file_picker_open };
+    static const tl_pvz2_file_picker_hooks hooks = { .open = pvz2_file_picker_open, .level_rejected = pvz2_level_rejected };
     tl_pvz2_set_file_picker_hooks(&hooks);
 }
 

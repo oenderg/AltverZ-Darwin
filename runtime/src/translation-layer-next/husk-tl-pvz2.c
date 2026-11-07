@@ -1880,6 +1880,10 @@ static void J_mtx_component(tl_jcall *c) { (void)c; c->ret = vl(tl_jni_new_objec
 static void J_log_component(tl_jcall *c) { (void)c; c->ret = vl(tl_jni_new_object(tl_jni_class("com/ea/nimble/ILog"))); }
 static void J_network_component(tl_jcall *c) { (void)c; c->ret = vl(tl_jni_new_object(tl_jni_class("com/ea/nimble/INetwork"))); }
 static void J_network_status(tl_jcall *c) { (void)c; c->ret = vl(tl_jni_new_object(tl_jni_class("com/ea/nimble/Network$Status"))); }
+static void J_nonfatal_error(tl_jcall *c)
+{
+    tl_log_line("pvz2: game nonfatal error: %s", S(c->args[0].l));
+}
 
 /* ------------------------------------------- AltVerZ's Java (libSnowie only)
  *
@@ -1953,6 +1957,7 @@ static void J_application_class_loader(tl_jcall *c)
 
 #define M(cls, name, fn) { cls, name, NULL, fn }
 static const tl_jhle k_hle[] = {
+    M("com/popcap/SexyAppFramework/CrashlyticsNonFatalErrorLogger", "LogNonFatalError", J_nonfatal_error),
     /* The Activity: the OBB path is the one that matters (it is how the RSB is
      * found), the rest are the expansion-file questions answered as "present". */
     M(ACT, "FrameworkInfo_SysGetMainExpansionFilePath", J_obb_path),

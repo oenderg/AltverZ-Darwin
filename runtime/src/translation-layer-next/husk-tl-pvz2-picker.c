@@ -39,6 +39,9 @@
 
 void tl_log_line(const char *fmt, ...);
 const char *tl_data_dir(void);
+int tl_pvz2_level_valid(const char *path, char *err, size_t n);
+
+#define LEVEL_OVERRIDE "No_Backup/CDN.1.4.2/levels/egypt1.json"
 
 typedef struct pick_job {
     int kind;
@@ -670,6 +673,33 @@ done:
     if (job->temp_dir[0]) rmdir(job->temp_dir);
 }
 
+/* Validate the exact bytes that will be installed, not a file that can change
+ * while the picker worker is copying it. */
+static bool import_level(const char *source, const char *dest, char *err, size_t n)
+{
+    char parent[1200], temp[1400];
+    dirname_of(dest, parent, sizeof(parent));
+    mkdirs(parent);
+    if (snprintf(temp, sizeof(temp), "%s.import.XXXXXX", dest) >= (int)sizeof(temp)) {
+        snprintf(err, n, "level path is too long");
+        return false;
+    }
+    int fd = mkstemp(temp);
+    if (fd < 0) {
+        snprintf(err, n, "cannot stage level: %s", strerror(errno));
+        return false;
+    }
+    close(fd);
+    bool ok = copy_file(source, temp, err, n);
+    if (ok) ok = tl_pvz2_level_valid(temp, err, n) == 1;
+    if (ok && rename(temp, dest) != 0) {
+        snprintf(err, n, "cannot replace level: %s", strerror(errno));
+        ok = false;
+    }
+    if (!ok) unlink(temp);
+    return ok;
+}
+
 /* ------------------------------------------------------------------ worker */
 
 static void run_job(pick_job *job)
@@ -734,7 +764,14 @@ static void run_job(pick_job *job)
         char dest[1200];
         if (!under_files(job->internal, dest, sizeof(dest))) {
             tl_log_line("pvz2: file picker: bad import path %s", job->internal);
-        } else if (!copy_file(answer, dest, err, sizeof(err))) {
+        } else if (!strcmp(job->internal, LEVEL_OVERRIDE) &&
+                   !import_level(answer, dest, err, sizeof(err))) {
+            tl_log_line("pvz2: file picker: level import rejected: %s", err);
+            pthread_mutex_lock(&g_lock);
+            tl_pvz2_file_picker_hooks hooks = g_hooks;
+            pthread_mutex_unlock(&g_lock);
+            if (hooks.level_rejected) hooks.level_rejected();
+        } else if (strcmp(job->internal, LEVEL_OVERRIDE) && !copy_file(answer, dest, err, sizeof(err))) {
             tl_log_line("pvz2: file picker: import failed: %s", err);
         } else {
             struct stat st;
@@ -817,6 +854,28 @@ static void request(int kind, const char *internal)
 void tl_pvz2_file_picker_configure(const char *files_dir)
 {
     snprintf(g_files_dir, sizeof(g_files_dir), "%s", files_dir ? files_dir : "");
+    char path[1200], backup[1250], err[400];
+    if (!under_files(LEVEL_OVERRIDE, path, sizeof(path))) return;
+    struct stat st;
+    if (lstat(path, &st) || !S_ISREG(st.st_mode)) return;
+    int valid = tl_pvz2_level_valid(path, err, sizeof(err));
+    if (valid != 0) {
+        if (valid < 0) tl_log_line("pvz2: cannot validate level override: %s", err);
+        return;
+    }
+    /* Never overwrite an earlier recovery copy, even across repeated launches. */
+    for (unsigned i = 0; i < 1000; i++) {
+        snprintf(backup, sizeof(backup), "%s.invalid.%u", path, i);
+        if (link(path, backup) == 0) {
+            if (unlink(path) == 0)
+                tl_log_line("pvz2: invalid level override preserved at %s: %s", backup, err);
+            else
+                tl_log_line("pvz2: cannot remove invalid level override: %s", strerror(errno));
+            return;
+        }
+        if (errno != EEXIST) break;
+    }
+    tl_log_line("pvz2: cannot preserve invalid level override: %s", strerror(errno));
 }
 
 void tl_pvz2_set_file_picker_hooks(const tl_pvz2_file_picker_hooks *hooks)

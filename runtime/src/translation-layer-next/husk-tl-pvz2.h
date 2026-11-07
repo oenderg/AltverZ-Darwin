@@ -96,6 +96,7 @@ enum {
 typedef struct {
     void (*open)(int kind, const char *internal_path, const char *suggested_name,
                  const char *prepared_path);
+    void (*level_rejected)(void);
 } tl_pvz2_file_picker_hooks;
 
 void tl_pvz2_set_file_picker_hooks(const tl_pvz2_file_picker_hooks *hooks);

@@ -324,9 +324,11 @@ After an import:
   it next loads its quest state. Importing while the title is open does not rebuild the
   open quest UI by itself.
 - **Level.** `egypt1.json` is a level override for Egypt level 1. The game reads the JSON
-  when that level is loaded. The test data and the pinned APK contain no JSON level to
-  show, and the schema is not documented in the repo, so the port proves the byte-exact
-  placement only.
+  when that level is loaded. The picker rejects non-JSON and files without a plausible
+  `LevelDefinition` before replacing the existing override. On startup the same check
+  preserves a rejected override as `egypt1.json.invalid.N` and lets the bundled level load.
+  This is not a full semantic validation: a JSON level with missing or invalid references
+  can still crash the game. Keep a backup before importing a custom level.
 
 The suggested export name and the zip format match Android's `SimpleDateFormat`
 (`yyyyMMdd_HHmmss`) and `ZipOutputStream`: directories have their own entries, files are
