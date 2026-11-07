@@ -35,7 +35,7 @@ downloads `PvZ2-AltVerZ-1.8.3f.apk` from it when `apk_url` is empty. For a new g
 its APK to that draft (Releases > the draft > Edit). **Never publish it.** A fork has no such draft:
 it passes a link.
 
-The run uses a `macos-26` runner; expect the better part of an hour the first time. For both
+The run uses GitHub's `xcode-27` runner (Xcode 27, the same SDK as a local build; a preview image, so a run can queue); expect the better part of an hour the first time. For both
 variants it builds slim first, packages it, removes intermediate bundles, then builds full with
 the same converted game libraries. The build number comes from the version, not the run number.
 The release title is `AltVerZ-Darwin <version> · PvZ2 AltVerZ <game> (early build)`, and every
