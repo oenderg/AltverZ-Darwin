@@ -26,6 +26,32 @@ time by the runtime's ELF loader (`husk-tl-ld.c`), with no conversion step. Work
 (`runtime/tools/pvz2-windows-settings.c`). It needs `libEGL.dll` and `libGLESv2.dll` (ANGLE)
 beside it, and `Game/pvz2.apk` (with `Game/1.4.2.main.tar` when the APK is the slim one).
 
+## ANGLE
+
+The program draws through ANGLE over Direct3D 11: `libEGL.dll` and `libGLESv2.dll` beside it,
+and `d3dcompiler_47.dll`, which ANGLE's D3D11 backend loads to compile shaders. The zips carry
+our own build of ANGLE, for x64 and ARM64, from one pinned commit (`runtime/win/ANGLE_COMMIT`,
+the commit Chrome 158.0.8127.18 builds ANGLE from).
+
+`runtime/win/build-angle.cmd` builds it from a prompt on a Windows PC with Visual Studio (the
+C++ workload for x64 and ARM64) and the Windows SDK the commit's build names:
+
+```bat
+runtime\win\build-angle.cmd             both architectures
+runtime\win\build-angle.cmd arm64       one of them, x64 or arm64
+set ANGLE_COMMIT=<sha> & runtime\win\build-angle.cmd
+```
+
+It fetches depot_tools and ANGLE into `out\win\angle-build`, drops the DEPS entries a D3D11
+renderer does not need, runs `gclient sync`, `gn gen` with the Vulkan, desktop GL and WGPU
+backends off, then `autoninja libEGL libGLESv2`, and leaves the DLLs, `commit.txt`,
+`gn-args.txt` and ANGLE's `LICENSE` in `prebuilt\win-<arch>`.
+
+`.github/workflows/angle-windows.yml` runs that script on `windows-2025` for both architectures
+at once and uploads one artifact per architecture. The DLLs committed in `prebuilt/win-*` come
+from it, and the READMEs there name the run. docs/windows-shipping.md has the pinned commit,
+the build arguments and how to refresh them.
+
 ## Folders
 
 | What | Normal | Portable (`portable` beside the .exe) |
@@ -117,17 +143,16 @@ callback, so the bar is a marquee, not a percentage.
 ## Zips
 
 `runtime/win/package-zip.sh --arch all --apk <apk> [--tar <1.4.2.main.tar>]` makes
-`out/zips/PvZ2Reflourished-<version>-windows-{arm64,x64}.zip`: the program, ANGLE, `Game/`
-(the APK and the CDN archive) and a README. It takes ANGLE from `out/win/angle-arm64` and
-`out/win/angle-x64` (or `--angle`), and the x64 program's compiler DLLs from
-`out/win/x64-runtime` (`--x64-runtime`).
+`out/zips/PvZ2Reflourished-<version>-windows-{arm64,x64}.zip`: the program, ANGLE and its
+license, `Game/` (the APK and the CDN archive) and a README. It takes ANGLE from
+`prebuilt/win-arm64` and `prebuilt/win-x64` (or `--angle`), and the x64 program's compiler
+DLLs from `out/win/x64-runtime` (`--x64-runtime`).
 
 The ARM64 program is linked statically and imports only Windows DLLs. The x64 program
 imports `libLLVM-23.dll`, `libwinpthread-1.dll`, `libc++.dll`, `libffi-8.dll`, `zlib1.dll`,
 `libzstd.dll`, `libxml2-16.dll` and `libiconv-2.dll` from MSYS2's clang64 (LLVM 23); they go
 in the zip beside the program, and Windows' own DLLs come from the system. See
-`docs/windows-shipping.md` for where the ANGLE copies come from and the options for
-building it later.
+`docs/windows-shipping.md` for where the ANGLE copies come from and how to refresh them.
 
 ## Build
 

@@ -7,8 +7,8 @@ PvZ2Reflourished-<version>-windows-arm64.zip
 PvZ2Reflourished-<version>-windows-x64.zip
 ```
 
-Each holds the program, ANGLE (`libEGL.dll`, `libGLESv2.dll` and the D3D/Vulkan
-companions), `Game/pvz2.apk`, `Game/1.4.2.main.tar`, the level key label font
+Each holds the program, ANGLE (`libEGL.dll`, `libGLESv2.dll` and `d3dcompiler_47.dll`),
+`Game/pvz2.apk`, `Game/1.4.2.main.tar`, the level key label font
 (`level-ui.ttf`) and a README. Neither zip carries the game's OBB (1.3 GB): the
 first start downloads it from the Mac build's own link (`data/game-1.4.2.json`'s
 first `obb_urls` entry) into the data folder, checking its size and sha256, with a
@@ -54,30 +54,110 @@ dynamic library is what the build uses now.
 
 ## ANGLE
 
-The current copies:
+Both programs draw through ANGLE over Direct3D 11, and the zips carry our own build of it:
+`libEGL.dll` and `libGLESv2.dll` from one ANGLE commit for x64 and ARM64, and
+`d3dcompiler_47.dll` for the same architecture (the Windows SDK's copy, which ANGLE's D3D11
+backend loads to compile shaders). ANGLE's license travels as `LICENSE-ANGLE.txt`.
 
-- ARM64: `libEGL.dll` and `libGLESv2.dll`, version 2.1.41232 (git 08d326a25514),
-  Microsoft-signed, from the Edge ANGLE the ARM64 port was proved with. The exact Edge
-  folder they were taken from was not recorded; they were staged in the test machine's
-  `C:\rfl\game` folder. `d3dcompiler_47.dll` (Microsoft), `vk_swiftshader.dll` and
-  `vulkan-1.dll` travel with them for the D3D11 and Vulkan/SwiftShader paths.
-- x86-64: `libEGL.dll` and `libGLESv2.dll`, version 2.1.25748 (git 890b5d8fa298), from
-  MSYS2's `clang64` (the package `mingw-w64-clang-x86_64-angleproject`). The x86-64 port
-  was proved with these.
+The copies this replaces were Edge's ANGLE 2.1.41232 (git 08d326a25514, its source folder not
+recorded) with `vk_swiftshader.dll` and `vulkan-1.dll` for ARM64, and MSYS2's 2.1.25748 (git
+890b5d8fa298), MinGW built, for x86-64. Neither could be rebuilt from a pinned commit and the
+two architectures did not share a version: Edge's copy follows Edge's releases and its
+redistribution terms were never checked, and MSYS2's ties the player's graphics to that
+distribution. Of the three routes this document used to list, the project builds its own
+ANGLE: the only one that pins a version and covers both architectures from one source.
 
-Nothing was built or downloaded for ANGLE tonight. The options for a copy the project
-controls are:
+### How the build works
 
-1. Build ANGLE from source for both architectures. The repository already builds it for
-   iOS and the Simulator (`runtime/scripts/build_angle_ios.sh`); a Windows script would
-   run ANGLE's GN/ninja build with the D3D11 backend and copy the two DLLs (and
-   `d3dcompiler_47.dll`) into `out/win/angle-arm64` and `out/win/angle-x64`. This is the
-   only option that pins a version and works on ARM64 and x86-64 with the same source.
-2. Ship Microsoft Edge's ANGLE DLLs, as the ARM64 test machine has. They are signed and
-   fast, but their version follows Edge and their redistribution terms have to be checked.
-3. Use MSYS2's ANGLE packages for both architectures (x86-64 is what the x64 build uses;
-   the `mingw-w64-clang-aarch64-angleproject` package would cover ARM64). That ties the
-   player's graphics to MSYS2's package, which is why it is a test option, not the plan.
+`runtime/win/build-angle.cmd [x64|arm64|all]` builds it, and
+`.github/workflows/angle-windows.yml` runs that script on `windows-2025`, once per
+architecture, in parallel. It does what Chrome's own ANGLE build does:
 
-Until one of those is chosen, `package-zip.sh` takes the DLLs from `out/win/angle-arm64`
-and `out/win/angle-x64`; the zips are not published from this branch.
+1. `depot_tools` into `out/win/angle-build/depot_tools` (the workflow caches it), then ANGLE
+   at `runtime/win/ANGLE_COMMIT`, with a shallow fetch of that one commit.
+2. `scripts/bootstrap.py`, which writes `.gclient`.
+3. `runtime/win/trim-angle-deps.py` drops the DEPS entries a D3D11 renderer does not need:
+   catapult, dawn, `third_party/llvm/src`, SwiftShader and `VK-GL-CTS/src`. They are large
+   checkouts, and nothing in a D3D11 build reads them.
+4. `gclient sync -f -D -R`: Chromium's build files, Chromium's clang and libc++, gn, ninja
+   and the smaller third party libraries.
+5. `gn gen out/<arch>`, whose arguments are:
+
+   ```
+   target_cpu="x64"          (or "arm64")
+   angle_build_all=false
+   is_debug=false
+   angle_has_frame_capture=false
+   angle_enable_gl=false
+   angle_enable_vulkan=false
+   angle_enable_wgpu=false
+   angle_enable_null=false
+   use_siso=false
+   ```
+
+6. `autoninja -C out/<arch> libEGL libGLESv2`.
+7. The DLLs, `d3dcompiler_47.dll`, `LICENSE`, `commit.txt` and `gn-args.txt` into
+   `prebuilt/win-<arch>`, then a check of the DLLs' imports with `dumpbin /dependents`.
+
+Chrome's compiler (Chromium's clang, which `is_clang` selects for Windows), a static C runtime
+(`/MT`, which Chromium's non component Windows builds use), `is_debug=false` and DCHECKs off:
+a player needs no Visual C++ redistributable and the DLLs carry no debug assertions.
+
+cmd and not PowerShell because the script has to run from any Windows prompt as it is, and a
+`.ps1` is refused by the default execution policy on many PCs. The one step cmd cannot express,
+a DEPS removal that counts braces instead of lines, is a small Python file run under the Python
+depot_tools brings (`vpython3`). On a PC with Visual Studio (C++ for x64 and ARM64) and the SDK
+the script names, the same script builds it; `set ANGLE_COMMIT=<sha>` builds another commit.
+
+### What it imports
+
+`llvm-objdump -p` on `libGLESv2.dll` from mmozeiko/build-angle's 2026-11-08 zips, which are the
+same configuration (D3D11 only, static C runtime), x64 and ARM64 alike:
+
+```
+KERNEL32.dll USER32.dll api-ms-win-core-synch-l1-2-0.dll dxgi.dll
+```
+
+No `vulkan-1.dll` and no `vk_swiftshader.dll`: the D3D11 backend is compiled in and loads
+`d3d11.dll` and `d3dcompiler_47.dll` at run time, so the zips no longer carry those two.
+`libEGL.dll` imports `KERNEL32.dll` alone. `build-angle.cmd` runs the same check on its own
+output and stops if a DLL would want the Visual C++ runtime, Vulkan or SwiftShader.
+
+### The pinned commit
+
+`runtime/win/ANGLE_COMMIT` holds it. It is the ANGLE revision of the Chromium DEPS of the
+current Chrome stable release, here `a9d273575638975f4f31aff9523c5194f36ecb61`
+(Chrome 158.0.8127.18):
+
+```
+$ curl -s 'https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Windows&num=1'
+  "hashes": { "angle": "a9d273575638975f4f31aff9523c5194f36ecb61",
+              "chromium": "6449d9f9a6a906edff724b7b220199b3fde4615c", ... },
+  "version": "158.0.8127.18"
+$ curl -s 'https://chromium.googlesource.com/chromium/src/+/6449d9f9.../DEPS?format=TEXT' \
+    | base64 -d | grep angle_revision
+  'angle_revision': 'a9d273575638975f4f31aff9523c5194f36ecb61',
+```
+
+The two agree, and that agreement is the check: chromiumdash reads the same DEPS. ANGLE keeps
+the branch a release came from as `refs/heads/chromium/<build number>` (`git ls-remote` on
+`https://chromium.googlesource.com/angle/angle` lists them); the commit must be in that
+branch's history, which it is here (`chromium/8127`).
+
+### Refreshing ANGLE
+
+1. Find the new commit as above and put it in `runtime/win/ANGLE_COMMIT`, the one place the
+   pin lives. The workflow's input has an empty default and reads that file.
+2. Run `.github/workflows/angle-windows.yml`: push to `ci/angle-windows`, or Actions, "ANGLE
+   for Windows", "Run workflow" with the commit left empty.
+3. Copy from the `angle-windows-x64` artifact into `prebuilt/win-x64` the three DLLs,
+   `commit.txt`, `gn-args.txt`, `run.txt` and `LICENSE`; and the same from
+   `angle-windows-arm64` into `prebuilt/win-arm64`. Update the commit line of both READMEs.
+4. Run `runtime/win/package-zip.sh`, which takes ANGLE from those folders (`--angle` still
+   overrides them for a test build).
+
+The runner is x64, so the ARM64 build is a cross build with the image's ARM64 MSVC tools and
+libraries, which is how Chrome's ANGLE builds and mmozeiko/build-angle build it on the same
+image. A run takes about 20 to 30 minutes per architecture. The workflow installs the Windows
+SDK the commit's build names (10.0.28000.0 for this one) when the image lacks it, about five
+minutes on top.
