@@ -19,6 +19,62 @@ time by the runtime's ELF loader (`husk-tl-ld.c`), with no conversion step. Work
   objects, jmp_buf, z_stream, errno values and open() flags are all converted.
 - **Assembly** in the shared files spells symbols with `TL_ASM_NAME` (no underscore on COFF).
 
+## The game program (`PvZ2 Reflourished.exe`)
+
+`runtime/win/build-win.sh game` builds it from the shared driver, the Windows host
+(`runtime/tools/pvz2-windows.c`) and the settings window
+(`runtime/tools/pvz2-windows-settings.c`). It needs `libEGL.dll` and `libGLESv2.dll` (ANGLE)
+beside it, and `Game/pvz2.apk` (with `Game/1.4.2.main.tar` when the APK is the slim one).
+
+## Folders
+
+| What | Normal | Portable (`portable` beside the .exe) |
+|---|---|---|
+| Settings file | `%APPDATA%\PvZ2 Reflourished\settings.ini` | `<exe>\data\settings.ini` |
+| The game's saves (`/sdcard/Android/data/<pkg>`) | `%APPDATA%\PvZ2 Reflourished\sdcard\Android\data\<pkg>` | `<exe>\data\sdcard\Android\data\<pkg>` |
+| Game data: the OBB, the CDN archive, the x64 translation cache | `%LOCALAPPDATA%\PvZ2 Reflourished` | `<exe>\data` |
+
+`TL_DATA` overrides all of it for tests: everything (settings, saves, game data) goes in that
+one folder, so a scripted run touches nothing else. The log, `pvz2.log`, is in the game data
+folder and every launch names the three folders in it.
+
+## Settings
+
+`settings.ini` is a plain INI file:
+
+```ini
+[keys]
+seed1=1
+...
+seed8=R
+shovel=S
+fastForward=Tab
+plantFood=F
+collectSun=Space
+powerup1=Z
+powerup2=X
+powerup3=C
+[window]
+startFullScreen=0
+keepSizeAndPlace=1
+x=...
+y=...
+width=...
+height=...
+maximized=0
+```
+
+An empty value means "None" for that shortcut. A missing file or a broken value means the
+defaults. The Keyboard page of the settings window (window menu: Settings..., or Ctrl+,)
+records a key by clicking its field and pressing the key; Escape cancels, Delete clears,
+and a key another shortcut already uses is refused with that shortcut's name.
+
+The shortcuts are the Mac host's, from `runtime/tools/pvz2-keys.h`: 1-4 and Q W E R pick seed
+packets 1-8, S the shovel, F plant food, Tab fast-forward, Space collects suns and coins, and
+Z X C the level's power-ups. They use the game's own card press and shovel, as on the Mac.
+There are no in-level key labels yet on Windows, so the Mac's "Show keys in levels" choice is
+not offered.
+
 ## Build
 
 ```sh

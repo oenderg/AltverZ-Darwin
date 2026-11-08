@@ -14,7 +14,7 @@ N="$H/../src/translation-layer-next"; T="$H/../src/translation-layer"
 target="${1:-starttest}"
 case "$target" in
     starttest) SRCS="$WIN_CORE $H/win-starttest.c"; OUT="$BIN/rfl-starttest.exe" ;;
-    game) SRCS="$WIN_CORE $WIN_GAME"; OUT="$BIN/PvZ2 Reflourished.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32" ;;
+    game) SRCS="$WIN_CORE $WIN_GAME"; OUT="$BIN/PvZ2 Reflourished.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
 OBJS=""
@@ -25,5 +25,13 @@ for f in $SRCS; do
     fi
     OBJS="$OBJS $o"
 done
+if [ "$target" = game ]; then
+    RC="$OBJ/win-manifest.o"
+    if [ ! -f "$RC" ] || [ "$H/win-manifest.rc" -nt "$RC" ] || [ "$H/win-manifest.xml" -nt "$RC" ]; then
+        "$TC/llvm-mingw-20261020-ucrt-macos-universal/bin/llvm-windres" -I"$H" -O coff \
+            -i "$H/win-manifest.rc" -o "$RC"
+    fi
+    OBJS="$OBJS $RC"
+fi
 "$CC" -static -o "$OUT" $OBJS $LDX -L"$TC/win-arm64/lib" -lz -lz-guest -lpsapi -lws2_32 -lbcrypt -lsynchronization -lpthread -Wl,--error-limit=0
 echo "built $OUT"

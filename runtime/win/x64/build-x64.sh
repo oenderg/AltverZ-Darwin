@@ -23,7 +23,7 @@ fi
 . "$H/sources.sh"
 case "$target" in
     starttest) SRCS="$WIN_CORE $X/husk-tl-x64.c $X/x64-starttest.c"; EXE="$OUT/rfl-x64-starttest.exe" ;;
-    game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/PvZ2 Reflourished x64.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32" ;;
+    game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/PvZ2 Reflourished x64.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
 OBJS=""
@@ -35,6 +35,14 @@ for f in $SRCS; do
     fi
     OBJS="$OBJS $o"
 done
+if [ "$target" = game ]; then
+    RC="$OBJ/win-manifest.o"
+    if [ ! -f "$RC" ] || [ "$H/win-manifest.rc" -nt "$RC" ] || [ "$H/win-manifest.xml" -nt "$RC" ]; then
+        echo "  windres win-manifest.rc"
+        windres -I"$H" -O coff -i "$H/win-manifest.rc" -o "$RC"
+    fi
+    OBJS="$OBJS $RC"
+fi
 L="$SNX/build/lib"
 clang++ -o "$EXE" $OBJS -Wl,--start-group "$L/recompiler-library/libscarletnx-recompiler.a" "$L/llvm-backend/libsnx_llvm.a" \
     "$L/src/common/libscarletnx-common.a" "$L/llvm-backend/arm-backend/libsnx_arm_llvm.a" "$L/llvm-backend/arm-backend/libsnx_arm_rt.a" \
