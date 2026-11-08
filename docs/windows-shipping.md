@@ -174,20 +174,27 @@ Signing on Windows, with `winsparkle-tool` from the release (`bin\winsparkle-too
 base64 of the 32-byte seed, which becomes a PKCS#8 Ed25519 key with the prefix `302e0201003005
 06032b657004220420` and PEM armour. Never put either form in the repository or a build log.
 
-### Release steps (for the manager to wire)
+### Release steps
+
+The Windows builds are made on the release Mac and in a Windows PC or VM (the x86-64 program
+needs MSYS2), not in GitHub Actions, so a Windows release is three steps after the Mac and iOS
+release exists (docs/RELEASING.md, "Windows updates"):
 
 1. Build the setup with `runtime/win/installer/build-installer.sh` and `build-installer.cmd`
    from the release's APK, with `VERSION` as its version.
-2. Sign it (above) and attach it to the GitHub release as
-   `PvZ2Reflourished-<version>-windows-setup.exe`.
-3. Add one item to `sparkle/windows-appcast.xml`, newest first, with the two enclosures (x64 and
-   ARM64), the same URL, its `length` and the signature, `sparkle:version` from `VERSION`, and
-   the release notes in the description; commit the feed (`chore(sparkle-windows): ...`).
-4. Keep the older items: WinSparkle uses the newest compatible one, and older players updating
-   step through them as needed.
+2. On the Mac: `scripts/publish-windows-setup.sh PvZ2Reflourished-<version>-windows-setup.exe
+   --tag <tag> --upload --commit`. It signs the setup with the Mac app's key from the login
+   keychain (Sparkle's `sign_update`; `--key-file` takes the exported key instead), checks the
+   signature against `sparkle/public-key`, the key the Windows program carries, attaches the
+   setup to the release, writes `sparkle/windows-appcast.xml` with
+   `scripts/update-windows-appcast.py` (the release notes from CHANGELOG, as the Mac feed has
+   them), validates it and commits it (`chore(sparkle-windows): ...`). Without `--upload` and
+   `--commit` it only signs, checks and writes the feed.
+3. Push the commit to the default branch: that is when installed copies see the update.
 
-This is not wired into `.github/workflows/build.yml` yet; the Mac feed and the Mac release job
-stay as they are.
+The feed offers only the newest release, as the Mac feed does: the setup is a whole install,
+so a player on any older version goes straight to the newest one. The release workflow and the
+Mac feed are not changed by any of this.
 
 The app checks once a day at start-up (Settings > About: "Check for updates automatically", on
 by default, `[updates] automaticChecks` in `settings.ini`) and at once from "Check for Updates..."

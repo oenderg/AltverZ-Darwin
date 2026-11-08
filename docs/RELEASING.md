@@ -125,6 +125,25 @@ window, which asks before it installs. `build.sh` fetches the pinned Sparkle
 - A build without `sparkle/public-key` (or `SPARKLE_PUBLIC_KEY`) has no updater and no menu item.
   `SPARKLE_FEED_URL` points a test build at another feed (see [TESTING.md](TESTING.md)).
 
+## Windows updates (WinSparkle)
+
+The installed Windows build (the setup, not the portable zips) updates itself with WinSparkle:
+Check for Updates... in the window menu, a daily check (Settings > About > Updates turns it off),
+and WinSparkle's window, which asks before it installs. docs/windows-shipping.md has the details.
+
+- **The feed** is `sparkle/windows-appcast.xml` on the default branch, a separate file from the
+  Mac feed so neither release can rewrite the other's. One item, the newest release's setup,
+  with one enclosure for `windows-x64` and one for `windows-arm64` (the same file: the setup
+  installs either build). `scripts/update-windows-appcast.py` writes it; `--check` validates it.
+- **The key** is the Mac app's: the Windows program carries the same `sparkle/public-key`, so
+  one private key signs both platforms. Nothing new to keep safe.
+- **Publishing.** The Windows builds are not made in GitHub Actions (the x86-64 one needs
+  MSYS2), so after the release exists, build the setup, then on the release Mac run
+  `scripts/publish-windows-setup.sh <setup.exe> --tag <tag> --upload --commit` and push. The
+  script signs from the login keychain, refuses a signature that does not verify with
+  `sparkle/public-key`, attaches the setup to the release and commits the feed. Until the first
+  Windows release, the feed does not exist and an installed build's check reports an error.
+
 ## The AltStore / SideStore source
 
 `altstore/source.json` lists the app and its versions, newest first; its icon is
