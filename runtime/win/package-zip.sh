@@ -98,6 +98,9 @@ EOF
 
 make_zip() {
     dir="$1"; name="$2"
+    # zip updates an existing archive instead of replacing it, so a file that
+    # left the staging folder (the old Vulkan DLLs) would stay in the zip.
+    rm -f "$OUT/$name.zip"
     (cd "$dir" && zip -q -r -9 "$OUT/$name.zip" .)
     echo "made $OUT/$name.zip"
 }
