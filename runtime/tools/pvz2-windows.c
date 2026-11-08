@@ -80,6 +80,7 @@ static void pointer_reposition(void);
 static void pointer_hide(void);
 static void pointer_tick(void);
 static void make_pointer_window(HINSTANCE inst);
+static void overlays_above_game(void);
 static void badges_apply_setting(void);
 static int g_layout_w = DESIGN_W, g_layout_h = DESIGN_H;
 static bool g_down;
@@ -390,6 +391,7 @@ static void toggle_fullscreen(int on)
         g_fullscreen = 0;
         tl_log_line("windows: back to the window's own size and place");
     }
+    overlays_above_game();
     save_geometry();
 }
 
@@ -904,6 +906,7 @@ static void badges_draw(const tl_pvz2_badge_snapshot *s)
     if (!g_badge_visible) {
         ShowWindow(g_badge_win, SW_SHOWNOACTIVATE);
         g_badge_visible = 1;
+        overlays_above_game();
     }
 }
 
@@ -1043,6 +1046,20 @@ static void pointer_below_badges(void)
     if (g_pointer_win && g_badge_win)
         SetWindowPos(g_pointer_win, g_badge_win, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+/* Both overlays are owned by the game's window, which normally keeps them
+ * above it. The full screen switch breaks that: SetWindowPos puts the game
+ * window itself at the top of the z-order, and from then on the labels and
+ * the plant preview are drawn behind the picture. Raise the labels first and
+ * put the pointer preview back directly below them, so the pair is above the
+ * game window again without swapping their order. */
+static void overlays_above_game(void)
+{
+    if (g_badge_win)
+        SetWindowPos(g_badge_win, HWND_TOP, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    pointer_below_badges();
 }
 
 static void pointer_reposition(void)
@@ -1538,7 +1555,7 @@ static void pointer_tick(void)
     if (!g_pointer_visible) {
         ShowWindow(g_pointer_win, SW_SHOWNOACTIVATE);
         g_pointer_visible = 1;
-        pointer_below_badges();
+        overlays_above_game();
     }
 }
 
@@ -2027,11 +2044,12 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     if (!g_hwnd) { tl_log_line("windows: CreateWindow failed (%lu)", GetLastError()); return 1; }
     make_pointer_window(inst);
     pointer_reposition();
-    pointer_below_badges();
+    overlays_above_game();
     /* The window is created at its final size; ShowWindow only shows it, so the
      * game never sees a different size while it starts. */
     ShowWindow(g_hwnd, g_fullscreen ? SW_SHOW : (g_windowed_placement.showCmd == SW_SHOWMAXIMIZED ? SW_SHOWMAXIMIZED : show));
     UpdateWindow(g_hwnd);
+    overlays_above_game();
     /* The shown window can be a different size than the created one (a
      * maximized start): the shape the game starts in is chosen from it. */
     startup_layout_from_window();
