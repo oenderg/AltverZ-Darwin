@@ -5,6 +5,7 @@
 set -e
 H="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$H/../.." && pwd)"
+VERSION="$(cat "$REPO/VERSION")"
 TC="${TL_WIN_TOOLCHAIN:?set TL_WIN_TOOLCHAIN to the folder holding llvm-mingw-* and win-arm64 (see runtime/win/README.md)}"
 CC="$TC/llvm-mingw-20261020-ucrt-macos-universal/bin/aarch64-w64-mingw32-clang"
 CXX="$TC/llvm-mingw-20261020-ucrt-macos-universal/bin/aarch64-w64-mingw32-clang++"
@@ -22,8 +23,8 @@ esac
 OBJS=""
 for f in $SRCS; do
     o="$OBJ/$(basename "$f" | sed 's/\.c$//').o"
-    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ]; then
-        "$H/cc.sh" "$f" -c -o "$o"
+    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$REPO/VERSION" -nt "$o" ] || [ "$H/../tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ]; then
+        "$H/cc.sh" "$f" "-DPVZ2_APP_VERSION=\"$VERSION\"" -c -o "$o"
     fi
     OBJS="$OBJS $o"
 done

@@ -3,7 +3,7 @@
  * PvZ2: Reflourished on Windows: the settings window.
  *
  * A plain Win32 window with common controls v6, the system's own message font
- * at the window's DPI, and three pages: General, Keyboard and Pointer. The look follows
+ * at the window's DPI, and four pages: General, Gameplay, Keyboard and About. The look follows
  * the mock-up the player approved; the controls are laid out from the DPI, and
  * the page windows answer WM_CTLCOLORSTATIC themselves so their labels do not
  * sit on grey boxes.
@@ -200,8 +200,9 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 
 #define ID_TABS          100
 #define ID_PAGE_GENERAL  110
-#define ID_PAGE_KEYBOARD 111
-#define ID_PAGE_POINTER  112
+#define ID_PAGE_GAMEPLAY 111
+#define ID_PAGE_KEYBOARD 112
+#define ID_PAGE_ABOUT    113
 
 #define ID_START_FULL    200
 #define ID_KEEP_WINDOW   201
@@ -212,6 +213,7 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 #define ID_SHOW_CURSOR   206
 #define ID_CROSS_BRIGHTNESS 207
 #define ID_CROSS_VALUE   208
+#define ID_OPEN_LOG      209
 
 #define ID_RESTORE       300
 #define ID_APPLY         301
@@ -221,19 +223,20 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 #define ID_KEY_BASE 1000
 enum {
     FIELD_SLOT0 = 0, FIELD_SLOT7 = 7,
-    FIELD_SHOVEL, FIELD_PLANT_FOOD, FIELD_FAST_FORWARD, FIELD_COLLECT_SUN,
-    FIELD_POWERUP1, FIELD_POWERUP2, FIELD_POWERUP3, FIELD_COUNT
+    FIELD_SHOVEL, FIELD_PLANT_FOOD, FIELD_FAST_FORWARD,
+    FIELD_POWERUP1, FIELD_POWERUP2, FIELD_POWERUP3, FIELD_COLLECT_SUN, FIELD_COUNT
 };
 static const int g_field_ids[FIELD_COUNT] = {
     ID_KEY_BASE + FIELD_SLOT0, ID_KEY_BASE + FIELD_SLOT0 + 1, ID_KEY_BASE + FIELD_SLOT0 + 2,
     ID_KEY_BASE + FIELD_SLOT0 + 3, ID_KEY_BASE + FIELD_SLOT0 + 4, ID_KEY_BASE + FIELD_SLOT0 + 5,
     ID_KEY_BASE + FIELD_SLOT0 + 6, ID_KEY_BASE + FIELD_SLOT0 + 7,
     ID_KEY_BASE + FIELD_SHOVEL, ID_KEY_BASE + FIELD_PLANT_FOOD, ID_KEY_BASE + FIELD_FAST_FORWARD,
-    ID_KEY_BASE + FIELD_COLLECT_SUN, ID_KEY_BASE + FIELD_POWERUP1, ID_KEY_BASE + FIELD_POWERUP2,
-    ID_KEY_BASE + FIELD_POWERUP3
+    ID_KEY_BASE + FIELD_POWERUP1, ID_KEY_BASE + FIELD_POWERUP2,
+    ID_KEY_BASE + FIELD_POWERUP3, ID_KEY_BASE + FIELD_COLLECT_SUN
 };
 
-static HWND g_self, g_tabs, g_page[3];
+enum { GENERAL, GAMEPLAY, KEYBOARD, ABOUT, PAGE_COUNT };
+static HWND g_self, g_tabs, g_page[PAGE_COUNT];
 static HFONT g_font;
 static HBRUSH g_page_bg, g_dialog_bg;
 static int g_tab;
@@ -275,8 +278,8 @@ static const wchar_t *field_label(int field)
     static const wchar_t *labels[FIELD_COUNT] = {
         L"Seed packet 1", L"Seed packet 2", L"Seed packet 3", L"Seed packet 4",
         L"Seed packet 5", L"Seed packet 6", L"Seed packet 7", L"Seed packet 8",
-        L"Shovel", L"Plant food", L"Fast-forward", L"Collect suns",
-        L"Power-up 1", L"Power-up 2", L"Power-up 3"
+        L"Shovel", L"Plant food", L"Fast-forward",
+        L"Power-up 1", L"Power-up 2", L"Power-up 3", L"Collect sun, coins, gems and plant food"
     };
     return labels[field];
 }
@@ -393,27 +396,25 @@ static void key_row(HWND page, int field, int x, int y, int label_w, int key_w)
 static void build_keyboard_page(HWND p)
 {
     add(p, L"BUTTON", L"Seed packets", BS_GROUPBOX, 10, 8, 500, 142, 0);
-    for (int i = 0; i < 4; i++) {
-        key_row(p, FIELD_SLOT0 + i, 22, 32 + i * 26, 96, 56);
-        key_row(p, FIELD_SLOT0 + 4 + i, 272, 32 + i * 26, 96, 56);
-    }
-    add(p, L"BUTTON", L"Controls", BS_GROUPBOX, 10, 156, 500, 144, 0);
+    for (int i = 0; i < 8; i++)
+        key_row(p, FIELD_SLOT0 + i, i < 4 ? 22 : 272, 32 + (i % 4) * 26, 96, 56);
+    add(p, L"BUTTON", L"Controls", BS_GROUPBOX, 10, 156, 500, 172, 0);
     key_row(p, FIELD_SHOVEL, 22, 180, 96, 56);
     key_row(p, FIELD_PLANT_FOOD, 22, 208, 96, 56);
     key_row(p, FIELD_FAST_FORWARD, 22, 236, 96, 56);
-    key_row(p, FIELD_COLLECT_SUN, 22, 264, 96, 56);
     key_row(p, FIELD_POWERUP1, 272, 180, 96, 56);
     key_row(p, FIELD_POWERUP2, 272, 208, 96, 56);
     key_row(p, FIELD_POWERUP3, 272, 236, 96, 56);
-    HWND keys = add(p, L"BUTTON", L"Show keys in levels", BS_AUTOCHECKBOX, 22, 310, 300, 22, ID_SHOW_KEYS);
-    SendMessageW(keys, BM_SETCHECK, g_pending.show_level_keys ? BST_CHECKED : BST_UNCHECKED, 0);
-    add(p, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON, 390, 306, 120, 26, ID_RESTORE);
+    key_row(p, FIELD_COLLECT_SUN, 22, 294, 346, 100);
+    add(p, L"STATIC", L"Click a key field and press the key you want: letters, digits, punctuation, Space, Tab, the arrows or F1–F12. Esc cancels, Delete clears. A key can only belong to one shortcut.",
+        0, 22, 338, 476, 48, 0);
+    add(p, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON, 390, 392, 120, 26, ID_RESTORE);
 }
 
 static void pointer_page_label(void)
 {
-    if (!g_page[2]) return;
-    HWND label = GetDlgItem(g_page[2], ID_CROSS_VALUE);
+    if (!g_page[GAMEPLAY]) return;
+    HWND label = GetDlgItem(g_page[GAMEPLAY], ID_CROSS_VALUE);
     if (!label) return;
     wchar_t text[16];
     swprintf(text, sizeof(text) / sizeof(text[0]), L"%d%%", g_pending.cursor_cross_brightness);
@@ -422,35 +423,37 @@ static void pointer_page_label(void)
 
 static void pointer_page_refresh(void)
 {
-    if (!g_page[2]) return;
-    HWND show = GetDlgItem(g_page[2], ID_SHOW_CURSOR);
+    if (!g_page[GAMEPLAY]) return;
+    HWND show = GetDlgItem(g_page[GAMEPLAY], ID_SHOW_CURSOR);
     if (show) SendMessageW(show, BM_SETCHECK,
                            g_pending.show_cursor_plant ? BST_CHECKED : BST_UNCHECKED, 0);
-    HWND bar = GetDlgItem(g_page[2], ID_CROSS_BRIGHTNESS);
+    HWND bar = GetDlgItem(g_page[GAMEPLAY], ID_CROSS_BRIGHTNESS);
     if (bar) SendMessageW(bar, TBM_SETPOS, TRUE, g_pending.cursor_cross_brightness);
     pointer_page_label();
 }
 
 static void build_pointer_page(HWND p)
 {
-    add(p, L"BUTTON", L"Selected plant", BS_GROUPBOX, 10, 8, 500, 90, 0);
+    add(p, L"BUTTON", L"Playing", BS_GROUPBOX, 10, 8, 500, 116, 0);
+    HWND keys = add(p, L"BUTTON", L"Show keys in levels", BS_AUTOCHECKBOX, 24, 30, 440, 22, ID_SHOW_KEYS);
+    SendMessageW(keys, BM_SETCHECK, g_pending.show_level_keys ? BST_CHECKED : BST_UNCHECKED, 0);
+    add(p, L"STATIC", L"“Show keys in levels” writes the key that works each control on its corner, in the game's own font (seed packets, shovel, fast-forward, plant food and the level's power-ups); it is on by default.",
+        0, 24, 60, 460, 54, 0);
+    add(p, L"BUTTON", L"Selected plant", BS_GROUPBOX, 10, 134, 500, 186, 0);
     HWND show = add(p, L"BUTTON", L"Show the selected plant at the pointer", BS_AUTOCHECKBOX,
-                    24, 34, 440, 22, ID_SHOW_CURSOR);
+                    24, 158, 440, 22, ID_SHOW_CURSOR);
     SendMessageW(show, BM_SETCHECK, g_pending.show_cursor_plant ? BST_CHECKED : BST_UNCHECKED, 0);
-    add(p, L"STATIC", L"The plant follows the pointer while a seed packet, the shovel or",
-        0, 24, 60, 460, 16, 0);
-    add(p, L"STATIC", L"plant food is held.", 0, 24, 76, 460, 16, 0);
-
-    add(p, L"BUTTON", L"Cross", BS_GROUPBOX, 10, 108, 500, 116, 0);
-    add(p, L"STATIC", L"Cross brightness", 0, 24, 134, 140, 20, 0);
+    add(p, L"STATIC", L"The plant follows the pointer while a seed packet, the shovel or plant food is held.",
+        0, 24, 188, 460, 36, 0);
+    add(p, L"STATIC", L"Cross brightness", 0, 24, 250, 140, 20, 0);
     HWND bar = add(p, L"msctls_trackbar32", L"", TBS_HORZ | TBS_NOTICKS,
-                   180, 128, 220, 32, ID_CROSS_BRIGHTNESS);
+                   180, 244, 220, 32, ID_CROSS_BRIGHTNESS);
     SendMessageW(bar, TBM_SETRANGE, TRUE, MAKELONG(0, 100));
     SendMessageW(bar, TBM_SETPOS, TRUE, g_pending.cursor_cross_brightness);
-    add(p, L"STATIC", L"", 0, 410, 134, 60, 20, ID_CROSS_VALUE);
+    add(p, L"STATIC", L"", 0, 410, 250, 60, 20, ID_CROSS_VALUE);
     pointer_page_label();
 
-    add(p, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON, 390, 236, 120, 26, ID_RESTORE_POINTER);
+    add(p, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON, 390, 334, 120, 26, ID_RESTORE_POINTER);
 }
 
 static void build_general_page(HWND p)
@@ -468,13 +471,24 @@ static void build_general_page(HWND p)
     add(p, L"STATIC", L"A new shape takes effect when the game next starts. Until then the", 0, 38, 112, 460, 16, 0);
     add(p, L"STATIC", L"picture keeps the shape it started in, with bars.", 0, 38, 128, 460, 16, 0);
 
-    add(p, L"BUTTON", L"Saves and game data", BS_GROUPBOX, 10, 156, 500, 178, 0);
-    add(p, L"STATIC", L"Saves and settings:", 0, 24, 178, 200, 20, 0);
-    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, 196, 470, 18, 0);
-    add(p, L"BUTTON", L"Open saves folder", BS_PUSHBUTTON, 24, 220, 130, 26, ID_OPEN_SAVES);
-    add(p, L"STATIC", L"Game data (the OBB and the translation cache):", 0, 24, 254, 300, 20, 0);
-    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, 272, 470, 18, 0);
-    add(p, L"BUTTON", L"Open game data folder", BS_PUSHBUTTON, 24, 296, 140, 26, ID_OPEN_DATA);
+}
+
+static void build_about_page(HWND p)
+{
+    add(p, L"STATIC", L"PvZ2 Reflourished", 0, 24, 20, 460, 24, 0);
+    add(p, L"STATIC", L"Version " L"" PVZ2_APP_VERSION, 0, 24, 50, 460, 20, 0);
+    add(p, L"STATIC", L"Plants vs. Zombies 2: Reflourished, running on Windows: the game's own Android code, drawn through Direct3D 11.",
+        0, 24, 80, 460, 42, 0);
+    add(p, L"BUTTON", L"Files", BS_GROUPBOX, 10, 138, 500, 246, 0);
+    add(p, L"STATIC", L"Saves and settings", 0, 24, 164, 350, 20, 0);
+    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, 188, 346, 22, 0);
+    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, 174, 112, 26, ID_OPEN_SAVES);
+    add(p, L"STATIC", L"Game data", 0, 24, 232, 350, 20, 0);
+    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, 256, 346, 22, 0);
+    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, 242, 112, 26, ID_OPEN_DATA);
+    add(p, L"STATIC", L"Log", 0, 24, 300, 350, 20, 0);
+    add(p, L"STATIC", L"pvz2.log, for a bug report", 0, 24, 324, 346, 22, 0);
+    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, 310, 112, 26, ID_OPEN_LOG);
 }
 
 /* The two path labels are made here and filled by layout, which knows the
@@ -499,7 +513,7 @@ static void fill_paths(HWND page)
 
 static void show_page(int i)
 {
-    for (int j = 0; j < 3; j++) ShowWindow(g_page[j], j == i ? SW_SHOW : SW_HIDE);
+    for (int j = 0; j < PAGE_COUNT; j++) ShowWindow(g_page[j], j == i ? SW_SHOW : SW_HIDE);
 }
 
 static void layout(HWND h)
@@ -512,7 +526,7 @@ static void layout(HWND h)
                      SWP_NOZORDER | SWP_NOACTIVATE);
         RECT pr = { 0, 0, rc.right - S(20), rc.bottom - S(60) };
         TabCtrl_AdjustRect(g_tabs, FALSE, &pr);
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < PAGE_COUNT; i++)
             if (g_page[i])
                 SetWindowPos(g_page[i], NULL, S(10) + pr.left, S(10) + pr.top,
                              pr.right - pr.left, pr.bottom - pr.top,
@@ -535,29 +549,31 @@ static void build(HWND h)
     g_dialog_bg = GetSysColorBrush(COLOR_BTNFACE);
     g_page_bg = GetSysColorBrush(COLOR_WINDOW);
     g_font = make_font((int)GetDpiForWindow(h));
-    for (int i = 0; i < 3; i++) if (g_page[i]) DestroyWindow(g_page[i]);
+    for (int i = 0; i < PAGE_COUNT; i++) if (g_page[i]) DestroyWindow(g_page[i]);
     if (g_tabs) DestroyWindow(g_tabs);
     for (int id = IDOK; id <= ID_APPLY; id++) { HWND old = GetDlgItem(h, id); if (old) DestroyWindow(old); }
     g_tabs = NULL;
-    g_page[0] = g_page[1] = g_page[2] = NULL;
+    memset(g_page, 0, sizeof(g_page));
 
     RECT rc;
     GetClientRect(h, &rc);
     g_tabs = add(h, WC_TABCONTROLW, L"", WS_CLIPSIBLINGS, 10, 10, 520, 400, ID_TABS);
-    const wchar_t *names[3] = { L"General", L"Keyboard", L"Pointer" };
-    for (int i = 0; i < 3; i++) {
+    const wchar_t *names[PAGE_COUNT] = { L"General", L"Gameplay", L"Keyboard", L"About" };
+    for (int i = 0; i < PAGE_COUNT; i++) {
         TCITEMW t = { .mask = TCIF_TEXT, .pszText = (wchar_t *)names[i] };
         SendMessageW(g_tabs, TCM_INSERTITEMW, i, (LPARAM)&t);
     }
     RECT pr = { S(10), S(10), rc.right - S(10), rc.bottom - S(50) };
     TabCtrl_AdjustRect(g_tabs, FALSE, &pr);
     g_page[0] = add_page(h, 10, 10, 520, 400, ID_PAGE_GENERAL);
-    g_page[1] = add_page(h, 10, 10, 520, 400, ID_PAGE_KEYBOARD);
-    g_page[2] = add_page(h, 10, 10, 520, 400, ID_PAGE_POINTER);
-    build_general_page(g_page[0]);
-    build_keyboard_page(g_page[1]);
-    build_pointer_page(g_page[2]);
-    fill_paths(g_page[0]);
+    g_page[GAMEPLAY] = add_page(h, 10, 10, 520, 400, ID_PAGE_GAMEPLAY);
+    g_page[KEYBOARD] = add_page(h, 10, 10, 520, 400, ID_PAGE_KEYBOARD);
+    g_page[ABOUT] = add_page(h, 10, 10, 520, 400, ID_PAGE_ABOUT);
+    build_general_page(g_page[GENERAL]);
+    build_keyboard_page(g_page[KEYBOARD]);
+    build_pointer_page(g_page[GAMEPLAY]);
+    build_about_page(g_page[ABOUT]);
+    fill_paths(g_page[ABOUT]);
 
     add(h, L"BUTTON", L"OK", BS_DEFPUSHBUTTON, 0, 0, 80, 26, IDOK);
     add(h, L"BUTTON", L"Cancel", BS_PUSHBUTTON, 0, 0, 80, 26, IDCANCEL);
@@ -572,7 +588,7 @@ static void build(HWND h)
 static void darkmode_apply(HWND h)
 {
     tl_win_darkmode_window(h);
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < PAGE_COUNT; i++)
         if (g_page[i]) tl_win_darkmode_page(g_page[i]);
 }
 
@@ -605,7 +621,7 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return (LRESULT)g_dialog_bg;
     }
     case WM_HSCROLL:
-        if (g_page[2] && (HWND)lp == GetDlgItem(g_page[2], ID_CROSS_BRIGHTNESS)) {
+        if (g_page[GAMEPLAY] && (HWND)lp == GetDlgItem(g_page[GAMEPLAY], ID_CROSS_BRIGHTNESS)) {
             int v = (int)SendMessageW((HWND)lp, TBM_GETPOS, 0, 0);
             if (v < 0) v = 0;
             if (v > 100) v = 100;
@@ -637,18 +653,27 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             pvz2_settings d;
             pvz2_settings_defaults(&d);
             g_pending.show_cursor_plant = d.show_cursor_plant;
+            g_pending.show_level_keys = d.show_level_keys;
+            SendMessageW(GetDlgItem(g_page[GAMEPLAY], ID_SHOW_KEYS), BM_SETCHECK, BST_CHECKED, 0);
             g_pending.cursor_cross_brightness = d.cursor_cross_brightness;
             pointer_page_refresh();
             return 0;
         }
         case ID_OPEN_SAVES: ShellExecuteA(h, "open", g_host.saves_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
         case ID_OPEN_DATA: ShellExecuteA(h, "open", g_host.data_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
+        case ID_OPEN_LOG: ShellExecuteA(h, "open", g_host.data_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
         case ID_RESTORE: {
             pvz2_settings d;
             pvz2_settings_defaults(&d);
-            g_pending = d;
+            /* Restoring keys must not reset the window or gameplay choices. */
+            memcpy(g_pending.slot, d.slot, sizeof(d.slot));
+            memcpy(g_pending.shovel, d.shovel, sizeof(d.shovel));
+            memcpy(g_pending.plant_food, d.plant_food, sizeof(d.plant_food));
+            memcpy(g_pending.fast_forward, d.fast_forward, sizeof(d.fast_forward));
+            memcpy(g_pending.collect_sun, d.collect_sun, sizeof(d.collect_sun));
+            memcpy(g_pending.powerup, d.powerup, sizeof(d.powerup));
             for (int i = 0; i < FIELD_COUNT; i++) {
-                HWND f = GetDlgItem(g_page[1], g_field_ids[i]);
+                HWND f = GetDlgItem(g_page[KEYBOARD], g_field_ids[i]);
                 if (f) field_refresh(f, i);
             }
             pointer_page_refresh();
@@ -684,7 +709,7 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         g_self = NULL;
         g_tabs = NULL;
-        g_page[0] = g_page[1] = g_page[2] = NULL;
+        memset(g_page, 0, sizeof(g_page));
         if (g_font) { DeleteObject(g_font); g_font = NULL; }
         return 0;
     default: break;
@@ -755,7 +780,7 @@ void pvz2_settings_open(HWND owner, pvz2_settings *live, const pvz2_settings_hos
 
     int dpi = (int)GetDpiForWindow(owner);
     if (!dpi) dpi = (int)GetDpiForSystem();
-    RECT r = { 0, 0, MulDiv(540, dpi, 96), MulDiv(470, dpi, 96) };
+    RECT r = { 0, 0, MulDiv(540, dpi, 96), MulDiv(510, dpi, 96) };
     AdjustWindowRectExForDpi(&r, WS_CAPTION | WS_SYSMENU, FALSE, 0, (UINT)dpi);
     int w = r.right - r.left, h = r.bottom - r.top;
     RECT o = { 0, 0, 0, 0 };

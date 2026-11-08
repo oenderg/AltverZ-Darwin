@@ -5,6 +5,7 @@
 set -e
 R="$(cd "$1" && pwd)"; SNX="$(cd "$2" && pwd)"; Z="$(cd "$3" && pwd)"; OUT="$4"; target="${5:-starttest}"
 H="$R/win"; N="$R/src/translation-layer-next"; T="$R/src/translation-layer"; X="$H/x64"
+VERSION="$(cat "$R/../VERSION")"
 OBJ="$OUT/obj"; mkdir -p "$OBJ" "$OUT"
 CC=clang
 CFLAGS="-std=gnu11 -g -O1 -D_GNU_SOURCE -DTL_WINDOWS=1 -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -Wno-unused-function
@@ -29,9 +30,9 @@ esac
 OBJS=""
 for f in $SRCS; do
     o="$OBJ/$(basename "$f" | sed 's/\.c$//').o"
-    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ] || [ "$X/sigs-tables.inc" -nt "$o" ]; then
+    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$R/../VERSION" -nt "$o" ] || [ "$R/tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ] || [ "$X/sigs-tables.inc" -nt "$o" ]; then
         echo "  cc $(basename "$f")"
-        $CC $CFLAGS -c "$f" -o "$o"
+        $CC $CFLAGS "-DPVZ2_APP_VERSION=\"$VERSION\"" -c "$f" -o "$o"
     fi
     OBJS="$OBJS $o"
 done
