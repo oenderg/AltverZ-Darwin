@@ -52,6 +52,11 @@
 #define PVZ2_HAVE_MACH_VM 1
 #endif
 #include <sys/sysctl.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 #include "husk-tl-bionic.h"
 #include "husk-tl-codewrite.h"
@@ -4070,6 +4075,101 @@ static bool guest_write_u64(uint64_t addr, uint64_t value)
                                      (vm_offset_t)&value, sizeof value);
     return kr == KERN_SUCCESS;
 }
+#elif defined(_WIN32)
+/* Windows has no mach_vm, but its own process memory can be read and mapped
+ * with the Win32 calls. The guest's heap is this process's heap, so the same
+ * signature the Mac's search uses finds the LawnApp here too. */
+static bool guest_read(uint64_t addr, void *out, size_t size)
+{
+    SIZE_T got = 0;
+    return addr && out && size &&
+           ReadProcessMemory(GetCurrentProcess(), (LPCVOID)(uintptr_t)addr,
+                             out, size, &got) && got == size;
+}
+
+static bool guest_app_looks_right(uint64_t app, uint64_t screen_pair)
+{
+    uint64_t pair = 0;
+    int32_t size[2] = { 0, 0 };
+    float design_h = 0.0f;
+    if (!guest_read(app + 0x86c, &pair, sizeof pair) || pair != screen_pair) return false;
+    if (!guest_read(app + 0xf4, size, sizeof size)) return false;
+    if (size[0] <= 0 || size[1] <= 0 || size[0] > 100000 || size[1] > 100000) return false;
+    if (!guest_read(app + 0x9c4, &design_h, sizeof design_h)) return false;
+    return design_h > 1.0f && design_h < 100000.0f && size[1] == (int)design_h;
+}
+
+static uint64_t guest_app_find(int start_w, int start_h, bool writable_only)
+{
+    unsigned char *buf = malloc(4u << 20);
+    if (!buf) return 0;
+    uint64_t found = 0;
+    unsigned long long scanned = 0;
+    unsigned char *addr = NULL;
+    for (;;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (VirtualQuery(addr, &mbi, sizeof mbi) != sizeof mbi) break;
+        unsigned char *base = mbi.BaseAddress;
+        size_t size = mbi.RegionSize;
+        DWORD protect = mbi.Protect;
+        bool readable = mbi.State == MEM_COMMIT &&
+                        !(protect & (PAGE_NOACCESS | PAGE_GUARD)) &&
+                        (protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+                                    PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                                    PAGE_EXECUTE_WRITECOPY));
+        bool writable = protect & (PAGE_READWRITE | PAGE_WRITECOPY |
+                                   PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY);
+        if (readable && (!writable_only || writable)) {
+            for (size_t off = 0; off < size && !found; ) {
+                SIZE_T want = size - off;
+                if (want > (4u << 20)) want = 4u << 20;
+                SIZE_T got = 0;
+                if (ReadProcessMemory(GetCurrentProcess(), base + off, buf, want, &got) &&
+                    got >= 8) {
+                    for (SIZE_T i = 0; i + 8 <= got; i += 4) {
+                        if (i < 0x744) continue;
+                        int32_t pair[2];
+                        memcpy(pair, buf + i, sizeof pair);
+                        if (pair[0] <= 0 || pair[1] <= 0 ||
+                            pair[0] > 100000 || pair[1] > 100000) continue;
+                        uint64_t candidate = (uint64_t)(uintptr_t)(base + off + i - 0x744);
+                        uint64_t packed = ((uint64_t)(uint32_t)pair[0]) |
+                                          ((uint64_t)(uint32_t)pair[1] << 32);
+                        if (!guest_app_looks_right(candidate, packed)) continue;
+                        found = candidate;
+                        break;
+                    }
+                }
+                scanned += want;
+                off += want > 8 ? want - 8 : want;
+            }
+        }
+        unsigned char *next = base + size;
+        if (next <= base) break;
+        addr = next;
+        if (found) break;
+    }
+    free(buf);
+    if (!found)
+        tl_log_line("pvz2: the guest's app object was not found (%d x %d) after %llu bytes%s",
+                    start_w, start_h, scanned, writable_only ? " (the writable regions)" : "");
+    return found;
+}
+
+static bool guest_write_u32(uint64_t addr, int32_t value)
+{
+    SIZE_T wrote = 0;
+    return addr && WriteProcessMemory(GetCurrentProcess(), (LPVOID)(uintptr_t)addr,
+                                      &value, sizeof value, &wrote) &&
+           wrote == sizeof value;
+}
+static bool guest_write_u64(uint64_t addr, uint64_t value)
+{
+    SIZE_T wrote = 0;
+    return addr && WriteProcessMemory(GetCurrentProcess(), (LPVOID)(uintptr_t)addr,
+                                      &value, sizeof value, &wrote) &&
+           wrote == sizeof value;
+}
 #else /* not iOS: the guest's app object cannot be found there */
 /* The mach_vm calls do not exist on iOS (mach_vm.h says so), so the app
  * object's address cannot be found and the screen size cannot be written into
@@ -4834,7 +4934,9 @@ static void guest_cursor_placement(tl_pvz2_cursor_snapshot *geometry, uint64_t b
                                           (uint64_t)(uintptr_t)tile, pending + 0x40, mode, &ok);
             if (ok) { known = 1; allowed = (result & 1) != 0; }
         }
-        if (getenv("TL_PVZ2_CURSOR_VALIDITY"))
+        static int validity_enabled = -1;
+        if (validity_enabled < 0) validity_enabled = getenv("TL_PVZ2_CURSOR_VALIDITY") != NULL;
+        if (validity_enabled)
             tl_log_line("pvz2: cursor validity: %s tile %d,%d known %d allowed %d", g_cursor_plant, col, row, known, known && allowed);
     }
     geometry->placement_known = known;
@@ -4880,6 +4982,23 @@ static bool guest_cursor_geometry_read(uint64_t app, uint64_t board, uint64_t pa
     if (plant) guest_read_bytes_raw(parent + 0xd4, row_offset, sizeof *row_offset);
     guest_guard_leave();
     return true;
+}
+
+/* The app's own size (+0xf4/+0xf8) and design height (+0x9c4) are the
+ * signature the Mac's search uses; the same pair tells a candidate from a
+ * random pointer on the hosts without mach_vm. */
+static uint64_t cursor_app_candidate(uint64_t candidate)
+{
+    int32_t size[2] = { 0, 0 };
+    float design_h = 0.0f;
+    if (!candidate || !guest_read_bytes(candidate + 0xf4, size, sizeof size) ||
+        !guest_read_bytes(candidate + 0x9c4, &design_h, sizeof design_h))
+        return 0;
+    if (size[0] <= 0 || size[1] <= 0 || size[0] > 100000 || size[1] > 100000)
+        return 0;
+    if (!(design_h > 1.0f && design_h < 100000.0f) || size[1] != (int)design_h)
+        return 0;
+    return candidate;
 }
 
 static void guest_cursor_update(void)
@@ -4952,6 +5071,16 @@ static void guest_cursor_update(void)
     if (board && pending && (g_cursor_kind == TL_PVZ2_CURSOR_PLANT || g_cursor_kind == TL_PVZ2_CURSOR_SHOVEL ||
                              g_cursor_kind == TL_PVZ2_CURSOR_PLANT_FOOD)) {
         uint64_t app = atomic_load(&g_app_object);
+        /* The mach_vm search that fills g_app_object runs on the Mac; Windows
+         * and iPad have none, and a Mac search may still be going. Their
+         * driver's global is the LawnApp itself on some builds and the driver
+         * that holds it at +0x98 on others, so both candidates are accepted
+         * only when they have the app's own size and design height. */
+        if (!app) app = cursor_app_candidate((uint64_t)(uintptr_t)guest_app_object());
+        if (!app) {
+            void *slot = tl_aot_guest_data_ptr_any(0x25a4e50);
+            if (slot) app = cursor_app_candidate(*(uint64_t *)slot);
+        }
         int app_size[2] = {0}, board_xy[2] = {0}, dimensions[2] = {0};
         float camera[3] = {0}, app_scale = 0, row_offset = 0;
         if (guest_cursor_geometry_read(app, board, g_cursor_parent, g_cursor_kind == TL_PVZ2_CURSOR_PLANT,
@@ -4968,6 +5097,19 @@ static void guest_cursor_update(void)
             geometry.app_scale = app_scale;
             geometry.camera_scale = camera[0]; geometry.camera_x = camera[1]; geometry.camera_y = camera[2];
             geometry.row_offset = row_offset;
+        }
+        if (stats_enabled) {
+            static double last_geometry_log;
+            double now = now_s();
+            if (now - last_geometry_log >= 1.0) {
+                last_geometry_log = now;
+                tl_log_line("pvz2: cursor geometry: app %p board %p parent %p app %d,%d board %d,%d dims %d,%d camera %.3f,%.3f,%.3f scale %.4f row_offset %.2f valid %d",
+                            (void *)(uintptr_t)app, (void *)(uintptr_t)board,
+                            (void *)(uintptr_t)g_cursor_parent, app_size[0], app_size[1],
+                            board_xy[0], board_xy[1], dimensions[0], dimensions[1],
+                            camera[0], camera[1], camera[2], app_scale, row_offset,
+                            geometry.grid_valid);
+            }
         }
     }
     geometry.surface_w = P.w; geometry.surface_h = P.h;

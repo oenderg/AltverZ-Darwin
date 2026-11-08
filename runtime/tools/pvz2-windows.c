@@ -21,6 +21,7 @@
 #include <windows.h>
 #include <gdiplus.h>
 #include <commctrl.h>
+#include <ctype.h>
 #include <shlobj.h>
 #include <shellapi.h>
 #include <stdatomic.h>
@@ -31,12 +32,15 @@
 
 #include "husk-tl-audio.h"
 #include "husk-tl-cdn.h"
+#include "husk-tl-cursor-grid.h"
 #include "husk-tl-jni.h"
 #include "husk-tl-ld.h"
 #include "husk-tl-pvz2.h"
 #include "husk-tl-xmem.h"
+#include "pvz2-cursor-images.h"
 #include "pvz2-keys.h"
 #include "pvz2-windows-settings.h"
+#include "../win/pvz2-obb-win.h"
 #if defined(__x86_64__)
 #include "husk-tl-x64.h"
 #endif
@@ -66,7 +70,14 @@ static HWND g_hwnd;
 static HWND g_view;
 static int g_adapt;
 static int g_show_keys;
+static int g_show_cursor_plant = 1;
+static int g_cross_brightness = 45;
 static void badges_reposition(void);
+static void pointer_apply_setting(void);
+static void pointer_reposition(void);
+static void pointer_hide(void);
+static void pointer_tick(void);
+static void make_pointer_window(HINSTANCE inst);
 static void badges_apply_setting(void);
 static int g_layout_w = DESIGN_W, g_layout_h = DESIGN_H;
 static bool g_down;
@@ -330,8 +341,11 @@ static void settings_applied(void *user, const pvz2_settings *s)
     g_settings = *s;
     g_adapt = s->adapt_shape;
     g_show_keys = s->show_level_keys;
+    g_show_cursor_plant = s->show_cursor_plant;
+    g_cross_brightness = s->cursor_cross_brightness;
     view_layout();
     badges_apply_setting();
+    pointer_apply_setting();
     save_geometry();
     toggle_fullscreen(g_settings.start_fullscreen ? 1 : 0);
     tl_log_line("windows: the settings are applied without a restart (%s shape at the next start)",
@@ -395,6 +409,7 @@ static void view_layout(void)
     int x = (cw - vw) / 2, y = (ch - vh) / 2;
     SetWindowPos(g_view, NULL, x, y, vw, vh, SWP_NOZORDER | SWP_NOACTIVATE);
     badges_reposition();
+    pointer_reposition();
     if (vw != g_sw || vh != g_sh) {
         g_sw = vw; g_sh = vh;
         tl_log_line("windows: window %dx%d client, the game draws at %dx%d (%d,%d), bars %d left %d right %d top %d bottom",
@@ -798,6 +813,586 @@ static void make_badge_window(HINSTANCE inst)
                                   0, 0, 1, 1, g_hwnd, NULL, inst, NULL);
 }
 
+/* ---------------------------------------------------------- pointer preview
+ *
+ * The selected plant follows the pointer, and two white bands mark the lawn
+ * row and column it would go to. The runtime publishes the selection and the
+ * grid; this host owns the pixels, as the Mac's CALayer does.
+ *
+ * The overlay is a second click-through layered window, below the key badge
+ * window (the labels stay readable over the plant). It is drawn only when the
+ * pointer, the snapshot, the image or the tile changes; while the pointer is
+ * still and the game is idle it does no work.
+ *
+ * The packet art comes from the player's OBB through the plain C loader. It is
+ * loaded once on a worker thread; a missing or bad OBB logs one line and turns
+ * the preview off.
+ */
+#define CURSOR_TIMER 104
+#define WM_APP_POINTER_ART (WM_APP + 1)
+
+#define POINTER_ART_NONE 0
+#define POINTER_ART_LOADING 1
+#define POINTER_ART_READY 2
+#define POINTER_ART_FAILED 3
+
+typedef struct {
+    int ok;
+    pvz2_cursor_images images;
+    char why[256];
+    double ms;
+} pointer_art_result;
+
+typedef struct {
+    char path[MAX_PATH + 96];
+} pointer_art_job;
+
+typedef struct {
+    int dx, dy, dw, dh;
+    int band_ok;
+    int band[8];              /* left, right, top, bottom, x0, x1, y0, y1 */
+    int brightness;
+    const pvz2_cursor_image *image;
+} pointer_draw_state;
+
+static HWND g_pointer_win;
+static int g_pointer_visible;
+static int g_pointer_tracking;
+static int g_pointer_x, g_pointer_y, g_pointer_inside;
+static HDC g_pointer_dc;
+static HBITMAP g_pointer_dib;
+static HGDIOBJ g_pointer_old;
+static void *g_pointer_bits;
+static int g_pointer_w, g_pointer_h;
+
+static pvz2_cursor_images g_pointer_art;
+static int g_pointer_art_state;
+static unsigned g_pointer_art_serial;
+static unsigned g_pointer_generation, g_pointer_art_seen;
+
+static GpBitmap *g_plant_bitmap;
+static unsigned char *g_plant_pixels;
+static const pvz2_cursor_image *g_plant_image;
+static char g_plant_key[64];
+
+static int g_pointer_band_valid, g_pointer_band_shown;
+static int g_pointer_band[8];
+static int g_pointer_band_col = -1, g_pointer_band_row = -1;
+static unsigned g_pointer_band_generation;
+static int g_pointer_wait_col = -1, g_pointer_wait_row = -1;
+static unsigned g_pointer_wait_generation;
+static ULONGLONG g_pointer_wait_since;
+static pointer_draw_state g_pointer_draw;
+
+static LRESULT CALLBACK pointer_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+static void pointer_below_badges(void)
+{
+    if (g_pointer_win && g_badge_win)
+        SetWindowPos(g_pointer_win, g_badge_win, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+static void pointer_reposition(void)
+{
+    if (!g_pointer_win || !g_view) return;
+    RECT vr;
+    if (!GetWindowRect(g_view, &vr)) return;
+    SetWindowPos(g_pointer_win, NULL, vr.left, vr.top, vr.right - vr.left, vr.bottom - vr.top,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+    if (g_pointer_w != g_sw || g_pointer_h != g_sh)
+        memset(&g_pointer_draw, 0, sizeof g_pointer_draw);
+}
+
+static void pointer_hide(void)
+{
+    if (g_pointer_win && g_pointer_visible) {
+        ShowWindow(g_pointer_win, SW_HIDE);
+        g_pointer_visible = 0;
+    }
+    memset(&g_pointer_draw, 0, sizeof g_pointer_draw);
+    g_pointer_band_valid = 0;
+    g_pointer_band_shown = 0;
+    g_pointer_wait_col = g_pointer_wait_row = -1;
+    tl_pvz2_cursor_target(0, 0, 0);
+}
+
+static void make_pointer_window(HINSTANCE inst)
+{
+    static int registered;
+    if (!registered) {
+        WNDCLASSEXW pc = { sizeof(pc) };
+        pc.lpfnWndProc = pointer_proc;
+        pc.hInstance = inst;
+        pc.lpszClassName = L"PvZ2ReflourishedPointer";
+        RegisterClassExW(&pc);
+        registered = 1;
+    }
+    g_pointer_win = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW |
+                                    WS_EX_NOACTIVATE, L"PvZ2ReflourishedPointer", L"", WS_POPUP,
+                                    0, 0, 1, 1, g_hwnd, NULL, inst, NULL);
+    if (!g_pointer_win)
+        tl_log_line("windows: the pointer window could not be made (%lu)", GetLastError());
+}
+
+static int pointer_ensure_dib(int w, int h)
+{
+    if (!g_pointer_dc) g_pointer_dc = CreateCompatibleDC(NULL);
+    if (!g_pointer_dc) return 0;
+    if (g_pointer_dib && w == g_pointer_w && h == g_pointer_h) return 1;
+    if (g_pointer_dib) {
+        SelectObject(g_pointer_dc, g_pointer_old);
+        DeleteObject(g_pointer_dib);
+        g_pointer_dib = NULL;
+    }
+    BITMAPINFO bi;
+    memset(&bi, 0, sizeof bi);
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    g_pointer_dib = CreateDIBSection(g_pointer_dc, &bi, DIB_RGB_COLORS, &g_pointer_bits, NULL, 0);
+    if (!g_pointer_dib) return 0;
+    g_pointer_old = SelectObject(g_pointer_dc, g_pointer_dib);
+    g_pointer_w = w;
+    g_pointer_h = h;
+    memset(&g_pointer_draw, 0, sizeof g_pointer_draw);
+    return 1;
+}
+
+static void pointer_clear_bitmap(void)
+{
+    if (g_plant_bitmap) {
+        GdipDisposeImage((GpImage *)g_plant_bitmap);
+        g_plant_bitmap = NULL;
+    }
+    free(g_plant_pixels);
+    g_plant_pixels = NULL;
+    g_plant_image = NULL;
+    g_plant_key[0] = 0;
+}
+
+/* GDI+ holds the pixels in BGRA order and uses premultiplied alpha. The loader
+ * gives premultiplied RGBA; the fixed 0.6 preview opacity is folded into the
+ * cached bitmap here, so the 60 Hz draw is a plain image blit. */
+static int pointer_set_bitmap(const pvz2_cursor_image *image, const char *key)
+{
+    if (image == g_plant_image && g_plant_bitmap && !strcmp(key, g_plant_key)) return 1;
+    pointer_clear_bitmap();
+    if (!image || image->width <= 0 || image->height <= 0) return 0;
+    size_t n = (size_t)image->width * (size_t)image->height;
+    g_plant_pixels = malloc(n * 4);
+    if (!g_plant_pixels) return 0;
+    const unsigned char *src = image->rgba;
+    unsigned char *dst = g_plant_pixels;
+    for (size_t i = 0; i < n; i++, src += 4, dst += 4) {
+        dst[0] = (unsigned char)((src[2] * 153u + 127u) / 255u);
+        dst[1] = (unsigned char)((src[1] * 153u + 127u) / 255u);
+        dst[2] = (unsigned char)((src[0] * 153u + 127u) / 255u);
+        dst[3] = (unsigned char)((src[3] * 153u + 127u) / 255u);
+    }
+    if (GdipCreateBitmapFromScan0(image->width, image->height, image->width * 4,
+                                  PixelFormat32bppPARGB, (BYTE *)g_plant_pixels,
+                                  &g_plant_bitmap) != Ok) {
+        pointer_clear_bitmap();
+        return 0;
+    }
+    g_plant_image = image;
+    snprintf(g_plant_key, sizeof g_plant_key, "%s", key);
+    return 1;
+}
+
+static const pvz2_cursor_image *pointer_find(const char *key)
+{
+    if (g_pointer_art_state != POINTER_ART_READY) return NULL;
+    for (int i = 0; i < g_pointer_art.count; i++)
+        if (!strcmp(g_pointer_art.items[i].id, key)) return &g_pointer_art.items[i];
+    return NULL;
+}
+
+static int pointer_key_for(const tl_pvz2_cursor_snapshot *s, char *key, size_t n)
+{
+    if (s->kind == TL_PVZ2_CURSOR_PLANT) {
+        char up[32];
+        int i = 0;
+        for (; s->plant[i] && i < (int)sizeof(up) - 1; i++)
+            up[i] = (char)toupper((unsigned char)s->plant[i]);
+        up[i] = 0;
+        snprintf(key, n, "IMAGE_UI_PACKETS_%s", up);
+        return 1;
+    }
+    if (s->kind == TL_PVZ2_CURSOR_SHOVEL) {
+        snprintf(key, n, "IMAGE_UI_HUD_INGAME_SHOVEL_ICON");
+        return 1;
+    }
+    if (s->kind == TL_PVZ2_CURSOR_PLANT_FOOD) {
+        snprintf(key, n, "IMAGE_UI_HUD_INGAME_PLANTFOOD_BUTTON");
+        return 1;
+    }
+    return 0;
+}
+
+static void pointer_update_image(const tl_pvz2_cursor_snapshot *s)
+{
+    char key[64];
+    if (!pointer_key_for(s, key, sizeof key)) {
+        pointer_clear_bitmap();
+        return;
+    }
+    pointer_set_bitmap(pointer_find(key), key);
+    if (getenv("TL_PVZ2_CURSOR_STATS"))
+        tl_log_line("windows: pointer preview: kind %d plant %s", s->kind,
+                    s->plant[0] ? s->plant : "none");
+}
+
+static void pointer_art_done(pointer_art_result *r)
+{
+    pointer_clear_bitmap();
+    if (g_pointer_art_state == POINTER_ART_READY) pvz2_cursor_images_free(&g_pointer_art);
+    if (r->ok) {
+        g_pointer_art = r->images;
+        g_pointer_art_state = POINTER_ART_READY;
+        g_pointer_art_serial++;
+        size_t bytes = 0;
+        for (int i = 0; i < r->images.count; i++)
+            bytes += (size_t)r->images.items[i].width * r->images.items[i].height * 4;
+        tl_log_line("windows: pointer art: %d images loaded in %.1f ms (%zu bytes)",
+                    r->images.count, r->ms, bytes);
+    } else {
+        g_pointer_art_state = POINTER_ART_FAILED;
+        if (g_hwnd) KillTimer(g_hwnd, CURSOR_TIMER);
+        pointer_hide();
+        tl_log_line("windows: pointer art: %s", r->why[0] ? r->why : "could not read the OBB");
+    }
+    g_pointer_generation = 0;
+    free(r);
+}
+
+static DWORD WINAPI pointer_art_worker(void *argument)
+{
+    pointer_art_job *job = argument;
+    pointer_art_result *r = calloc(1, sizeof *r);
+    if (!r) {
+        free(job);
+        return 0;
+    }
+    ULONGLONG started = GetTickCount64();
+    r->ok = pvz2_cursor_images_load(job->path, &r->images, r->why, sizeof r->why);
+    r->ms = (double)(GetTickCount64() - started);
+    free(job);
+    if (!PostMessageA(g_hwnd, WM_APP_POINTER_ART, 0, (LPARAM)r)) {
+        pvz2_cursor_images_free(&r->images);
+        free(r);
+    }
+    return 0;
+}
+
+static void pointer_load_art_once(void)
+{
+    if (g_pointer_art_state != POINTER_ART_NONE) return;
+    g_pointer_art_state = POINTER_ART_LOADING;
+    char dir[MAX_PATH + 64], path[MAX_PATH * 2];
+    join(dir, sizeof dir, g_data, "sdcard/Android/obb/com.ea.game.pvz2_rfl");
+    join(path, sizeof path, dir, PVZ2_OBB_NAME);
+    WIN32_FILE_ATTRIBUTE_DATA attrs;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &attrs)) {
+        g_pointer_art_state = POINTER_ART_FAILED;
+        tl_log_line("windows: pointer art: the OBB is missing (%s)", path);
+        return;
+    }
+    pointer_art_job *job = malloc(sizeof *job);
+    if (!job) {
+        g_pointer_art_state = POINTER_ART_FAILED;
+        tl_log_line("windows: pointer art: out of memory");
+        return;
+    }
+    snprintf(job->path, sizeof job->path, "%s", path);
+    HANDLE thread = CreateThread(NULL, 0, pointer_art_worker, job, 0, NULL);
+    if (!thread) {
+        free(job);
+        g_pointer_art_state = POINTER_ART_FAILED;
+        tl_log_line("windows: pointer art: the loader thread could not start");
+        return;
+    }
+    CloseHandle(thread);
+}
+
+static void pointer_apply_setting(void)
+{
+    if (!g_pointer_win) {
+        tl_log_line("windows: pointer preview is off: no overlay window");
+        return;
+    }
+    tl_pvz2_set_cursor_enabled(g_show_cursor_plant);
+    if (!g_show_cursor_plant) {
+        if (g_hwnd) KillTimer(g_hwnd, CURSOR_TIMER);
+        pointer_hide();
+        tl_log_line("windows: pointer preview is off");
+        return;
+    }
+    pointer_load_art_once();
+    if (g_hwnd) SetTimer(g_hwnd, CURSOR_TIMER, 16, NULL);
+    tl_log_line("windows: pointer preview is on, cross brightness %d%%", g_cross_brightness);
+}
+
+/* The Mac's binary search over the surface extent: the pixel where the mapped
+ * band number reaches value. Zero row offset, as the row band must be. */
+static int pointer_band_axis(const tl_pvz2_cursor_snapshot *s, int axis, int value)
+{
+    int lo = 0, hi = axis ? s->surface_h : s->surface_w;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (tl_cursor_grid_band_axis(s, axis, mid) < value) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
+static void pointer_band_rect(const tl_pvz2_cursor_snapshot *s, int col, int row, int band[8])
+{
+    band[0] = pointer_band_axis(s, 0, 0);
+    band[1] = pointer_band_axis(s, 0, s->columns);
+    band[2] = pointer_band_axis(s, 1, 0);
+    band[3] = pointer_band_axis(s, 1, s->rows);
+    band[4] = pointer_band_axis(s, 0, col);
+    band[5] = pointer_band_axis(s, 0, col + 1);
+    band[6] = pointer_band_axis(s, 1, row);
+    band[7] = pointer_band_axis(s, 1, row + 1);
+}
+
+static int pointer_draw(const pointer_draw_state *state, const int band[8], int band_ok)
+{
+    if (!pointer_ensure_dib(g_sw, g_sh)) return 0;
+    GpBitmap *bitmap = NULL;
+    if (GdipCreateBitmapFromScan0(g_pointer_w, g_pointer_h, g_pointer_w * 4,
+                                  PixelFormat32bppPARGB, (BYTE *)g_pointer_bits, &bitmap) != Ok)
+        return 0;
+    GpGraphics *g = NULL;
+    if (GdipGetImageGraphicsContext((GpImage *)bitmap, &g) != Ok) {
+        GdipDisposeImage((GpImage *)bitmap);
+        return 0;
+    }
+    GdipSetSmoothingMode(g, SmoothingModeAntiAlias);
+    GdipSetPixelOffsetMode(g, PixelOffsetModeHalf);
+    GdipGraphicsClear(g, 0);
+    if (band_ok) {
+        GpPath *path = NULL;
+        if (GdipCreatePath(FillModeWinding, &path) == Ok) {
+            GdipAddPathRectangle(path, (REAL)band[0], (REAL)band[6],
+                                 (REAL)(band[1] - band[0]), (REAL)(band[7] - band[6]));
+            GdipAddPathRectangle(path, (REAL)band[4], (REAL)band[2],
+                                 (REAL)(band[5] - band[4]), (REAL)(band[3] - band[2]));
+            unsigned alpha = (unsigned)((state->brightness * 255 + 50) / 100);
+            if (alpha > 255) alpha = 255;
+            GpSolidFill *fill = NULL;
+            if (GdipCreateSolidFill((ARGB)((alpha << 24) | 0xFFFFFF), &fill) == Ok) {
+                GdipFillPath(g, fill, path);
+                GdipDeleteBrush((GpBrush *)fill);
+            }
+            GdipDeletePath(path);
+        }
+    }
+    if (g_plant_bitmap) {
+        GdipSetInterpolationMode(g, InterpolationModeHighQualityBilinear);
+        GdipDrawImageRect(g, (GpImage *)g_plant_bitmap, (REAL)state->dx, (REAL)state->dy,
+                          (REAL)state->dw, (REAL)state->dh);
+    }
+    GdipDeleteGraphics(g);
+    GdipDisposeImage((GpImage *)bitmap);
+
+    RECT vr;
+    if (!GetWindowRect(g_view, &vr)) return 0;
+    POINT dst = { vr.left, vr.top };
+    SIZE size = { g_sw, g_sh };
+    POINT src = { 0, 0 };
+    BLENDFUNCTION blend = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+    return UpdateLayeredWindow(g_pointer_win, NULL, &dst, &size, g_pointer_dc, &src, 0,
+                               &blend, ULW_ALPHA) != 0;
+}
+
+static void pointer_tick(void)
+{
+    if (!g_show_cursor_plant || !g_ready || !g_gdiplus_started || !g_pointer_win) {
+        pointer_hide();
+        return;
+    }
+    tl_pvz2_cursor_snapshot s;
+    tl_pvz2_cursor(&s);
+    if (!s.live || s.kind == TL_PVZ2_CURSOR_NONE || s.surface_w <= 0 || s.surface_h <= 0 ||
+        s.surface_w != g_sw || s.surface_h != g_sh) {
+        pointer_hide();
+        return;
+    }
+
+    int inside = 0, got = 0, sx = 0, sy = 0;
+    POINT pt;
+    if (GetCursorPos(&pt) && ScreenToClient(g_view, &pt)) {
+        got = 1;
+        RECT rc;
+        GetClientRect(g_view, &rc);
+        if (pt.x >= 0 && pt.y >= 0 && pt.x < rc.right && pt.y < rc.bottom) {
+            inside = 1;
+            sx = pt.x;
+            sy = pt.y;
+        }
+    }
+    if (!got && g_pointer_inside) {
+        inside = 1;
+        sx = g_pointer_x;
+        sy = g_pointer_y;
+    }
+    if (!inside) {
+        pointer_hide();
+        return;
+    }
+
+    if (s.generation != g_pointer_generation || g_pointer_art_serial != g_pointer_art_seen) {
+        g_pointer_generation = s.generation;
+        g_pointer_art_seen = g_pointer_art_serial;
+        pointer_update_image(&s);
+    }
+    if (!g_plant_bitmap || !g_plant_image) {
+        pointer_hide();
+        return;
+    }
+
+    int col = -1, row = -1, in_bounds = 0, cross = 0, keep = 0;
+    int band[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    if (s.grid_valid) {
+        col = tl_cursor_grid_axis(&s, 0, (int)(sx + 0.5f));
+        row = tl_cursor_grid_axis(&s, 1, (int)(sy + 0.5f));
+        in_bounds = col >= 0 && col < s.columns && row >= 0 && row < s.rows;
+    }
+    if (in_bounds) {
+        tl_pvz2_cursor_target((int)(sx + 0.5f), (int)(sy + 0.5f),
+                              s.kind == TL_PVZ2_CURSOR_PLANT);
+        if (s.kind == TL_PVZ2_CURSOR_PLANT) {
+            int answer = s.placement_known && s.placement_col == col && s.placement_row == row;
+            if (answer) {
+                g_pointer_wait_col = g_pointer_wait_row = -1;
+                cross = s.placement_allowed;
+                if (cross) {
+                    pointer_band_rect(&s, col, row, band);
+                    memcpy(g_pointer_band, band, sizeof band);
+                    g_pointer_band_col = col;
+                    g_pointer_band_row = row;
+                    g_pointer_band_generation = s.generation;
+                    g_pointer_band_valid = 1;
+                }
+            } else {
+                if (g_pointer_wait_col != col || g_pointer_wait_row != row ||
+                    g_pointer_wait_generation != s.generation) {
+                    g_pointer_wait_col = col;
+                    g_pointer_wait_row = row;
+                    g_pointer_wait_generation = s.generation;
+                    g_pointer_wait_since = GetTickCount64();
+                }
+                keep = g_pointer_band_shown && g_pointer_band_valid &&
+                       s.placement_known && s.placement_allowed &&
+                       s.placement_col == g_pointer_band_col &&
+                       s.placement_row == g_pointer_band_row &&
+                       g_pointer_band_generation == s.generation &&
+                       GetTickCount64() - g_pointer_wait_since < 100;
+                if (keep)
+                    memcpy(band, g_pointer_band, sizeof band);
+                else
+                    g_pointer_band_valid = 0;
+            }
+        } else {
+            cross = 1;
+            pointer_band_rect(&s, col, row, band);
+            memcpy(g_pointer_band, band, sizeof band);
+            g_pointer_band_col = col;
+            g_pointer_band_row = row;
+            g_pointer_band_generation = s.generation;
+            g_pointer_band_valid = 1;
+        }
+    } else {
+        tl_pvz2_cursor_target(0, 0, 0);
+        g_pointer_wait_col = g_pointer_wait_row = -1;
+    }
+    int band_ok = cross || keep;
+    g_pointer_band_shown = band_ok;
+    if (!band_ok) g_pointer_band_valid = 0;
+    static int pointer_stats = -1;
+    if (pointer_stats < 0) pointer_stats = getenv("TL_PVZ2_CURSOR_STATS") != NULL;
+    if (pointer_stats) {
+        static ULONGLONG last_log;
+        ULONGLONG now = GetTickCount64();
+        if (now - last_log >= 500) {
+            last_log = now;
+            tl_log_line("windows: pointer state: %d,%d tile %d,%d known %d allowed %d col,row %d,%d cross %d keep %d",
+                        sx, sy, col, row, s.placement_known, s.placement_allowed,
+                        s.placement_col, s.placement_row, cross, keep);
+        }
+    }
+
+    double row_height = 0;
+    if (s.grid_valid && s.app_h > 0 && s.app_scale > 0 && s.camera_scale > 0)
+        row_height = 76.0 * s.app_scale * s.camera_scale * (double)g_sh / (double)s.app_h;
+    double side = row_height > 0 ? row_height * 0.65 : (double)g_sh * 0.14;
+    if (!(side > 0)) side = 1;
+    int long_side = g_plant_image->width > g_plant_image->height
+                        ? g_plant_image->width : g_plant_image->height;
+    double scale = side / (double)long_side;
+    int dw = (int)((double)g_plant_image->width * scale + 0.5);
+    int dh = (int)((double)g_plant_image->height * scale + 0.5);
+    if (dw < 1) dw = 1;
+    if (dh < 1) dh = 1;
+    int dx = (int)(sx - dw / 2.0);
+    int dy = (int)(sy - dh / 2.0);
+
+    pointer_draw_state next;
+    memset(&next, 0, sizeof next);
+    next.dx = dx;
+    next.dy = dy;
+    next.dw = dw;
+    next.dh = dh;
+    next.band_ok = band_ok;
+    memcpy(next.band, band, sizeof band);
+    next.brightness = g_cross_brightness;
+    next.image = g_plant_image;
+
+    if (g_pointer_w != g_sw || g_pointer_h != g_sh)
+        memset(&g_pointer_draw, 0, sizeof g_pointer_draw);
+    if (!g_pointer_visible || memcmp(&next, &g_pointer_draw, sizeof next) != 0) {
+        LARGE_INTEGER begin, end, freq;
+        QueryPerformanceFrequency(&freq);
+        QueryPerformanceCounter(&begin);
+        int drawn = pointer_draw(&next, band, band_ok);
+        QueryPerformanceCounter(&end);
+        if (!drawn) {
+            pointer_hide();
+            return;
+        }
+        g_pointer_draw = next;
+        if (pointer_stats) {
+            static double total_ms, worst_ms;
+            static unsigned updates;
+            double ms = (double)(end.QuadPart - begin.QuadPart) * 1000.0 /
+                        (double)(freq.QuadPart ? freq.QuadPart : 1);
+            total_ms += ms;
+            if (ms > worst_ms) worst_ms = ms;
+            if (++updates == 300) {
+                tl_log_line("windows: pointer draw: %.3f ms average, %.3f ms worst (%u updates)",
+                            total_ms / updates, worst_ms, updates);
+                updates = 0;
+                total_ms = worst_ms = 0;
+            }
+        }
+    }
+    if (!g_pointer_visible) {
+        ShowWindow(g_pointer_win, SW_SHOWNOACTIVATE);
+        g_pointer_visible = 1;
+        pointer_below_badges();
+    }
+}
+
 static void touch(int phase, LPARAM lp)
 {
     if (!atomic_load(&g_ready)) return;
@@ -828,7 +1423,19 @@ static LRESULT CALLBACK view_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         touch(0, lp);
         return 0;
     case WM_MOUSEMOVE:
+        g_pointer_x = (int)(short)LOWORD(lp);
+        g_pointer_y = (int)(short)HIWORD(lp);
+        g_pointer_inside = 1;
+        if (!g_pointer_tracking) {
+            TRACKMOUSEEVENT tm = { sizeof(tm), TME_LEAVE, h, 0 };
+            if (TrackMouseEvent(&tm)) g_pointer_tracking = 1;
+        }
         if (g_down) touch(1, lp);
+        return 0;
+    case WM_MOUSELEAVE:
+        g_pointer_tracking = 0;
+        g_pointer_inside = 0;
+        pointer_hide();
         return 0;
     case WM_LBUTTONUP:
         ReleaseCapture();
@@ -878,20 +1485,30 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (h == g_hwnd && wp == SIZE_MINIMIZED) {
             g_badge_generation = 0;
             badges_hide();
+            pointer_hide();
         } else if (h == g_hwnd) {
             view_layout();
+            pointer_reposition();
             InvalidateRect(h, NULL, TRUE);
         }
         return 0;
     case WM_MOVE:
         badges_reposition();
+        pointer_reposition();
         return 0;
     case WM_TIMER:
         if (wp == BADGE_TIMER) {
             badges_tick();
             return 0;
         }
+        if (wp == CURSOR_TIMER) {
+            pointer_tick();
+            return 0;
+        }
         break;
+    case WM_APP_POINTER_ART:
+        pointer_art_done((pointer_art_result *)lp);
+        return 0;
     case WM_EXITSIZEMOVE:
         if (!g_fullscreen) save_geometry();
         return 0;
@@ -1134,6 +1751,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     g_start_fullscreen = g_settings.start_fullscreen;
     g_adapt = g_settings.adapt_shape;
     g_show_keys = g_settings.show_level_keys;
+    g_show_cursor_plant = g_settings.show_cursor_plant;
+    g_cross_brightness = g_settings.cursor_cross_brightness;
 
     snprintf(g_apk, sizeof(g_apk), "%s", env_or("TL_PVZ2_APK", "")); 
     if (!g_apk[0]) { char p[MAX_PATH + 32]; join(p, sizeof(p), g_exe_dir, "Game/pvz2.apk"); snprintf(g_apk, sizeof(g_apk), "%s", p); }
@@ -1171,6 +1790,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 
     g_hwnd = make_window(inst);
     if (!g_hwnd) { tl_log_line("windows: CreateWindow failed (%lu)", GetLastError()); return 1; }
+    make_pointer_window(inst);
+    pointer_reposition();
+    pointer_below_badges();
     /* The window is created at its final size; ShowWindow only shows it, so the
      * game never sees a different size while it starts. */
     ShowWindow(g_hwnd, g_fullscreen ? SW_SHOW : (g_windowed_placement.showCmd == SW_SHOWMAXIMIZED ? SW_SHOWMAXIMIZED : show));
@@ -1199,6 +1821,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 
     badge_font_init();
     badges_apply_setting();
+    pointer_apply_setting();
     tl_pvz2_set_keyboard_hook(keyboard_shown);
     /* The shortcuts are the Mac's: the game's own card press for a seed packet
      * and its own shovel, so neither needs coordinates at any surface size. */
