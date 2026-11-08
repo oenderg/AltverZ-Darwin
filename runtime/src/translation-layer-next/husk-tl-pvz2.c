@@ -5550,7 +5550,11 @@ static void *gl_main(void *arg)
     v_fn pump = (v_fn)tl_jni_native(VIEW, "PumpMessageQueue", "()V");
     if (!draw) { tl_log_line("pvz2: Native_onDrawFrame is not registered"); return NULL; }
     if (!pump) tl_log_line("pvz2: PumpMessageQueue is not registered");
-    g_pump = (pump_fn)GUEST_FN(pump, "vll");
+    /* On x86-64 tl_jni_native already answers with a host-callable thunk, and GUEST_FN would wrap
+     * that thunk again: the pump would be entered at a host address with no guest code, which the
+     * translator reports as an undefined instruction and abandons. The guest address is what needs
+     * GUEST_FN, and that is not what this call returns. */
+    g_pump = (pump_fn)pump;
 
     if (created) { tl_log_line("pvz2: Native_onSurfaceCreated"); created(tl_jni_env(), P.view); }
     if (changed) {

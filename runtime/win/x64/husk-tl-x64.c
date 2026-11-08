@@ -587,17 +587,35 @@ __asm__(
     "  mov rsp, rbp\n  pop rbp\n  ret\n"
     ".att_syntax prefix\n");
 
+/* A guest function wrapped for the host. `pc` must be a guest address: a value that is already one of
+ * these host thunks is a double wrap (GUEST_FN over tl_jni_native's host form, say), and wrapping it
+ * again would ask the translator to run host code as guest code. Such a call is refused loudly. */
+#define THUNK_PAGE (1u << 16)
+static uint8_t *g_thunk_pages[64];
+static int g_thunk_page_count;
+
 void *tl_x64_host_fn(uint64_t pc, const char *sig)
 {
     if (!pc) return NULL;
     static struct { uint64_t pc; const char *sig; void *fn; } cache[4096];
     static int n;
-    static uint8_t *page; static size_t used = 1 << 16;
+    static uint8_t *page; static size_t used = THUNK_PAGE;
     AcquireSRWLockExclusive(&g_lock);
+    for (int i = 0; i < g_thunk_page_count; i++)
+        if ((uint8_t *)(uintptr_t)pc >= g_thunk_pages[i] && (uint8_t *)(uintptr_t)pc < g_thunk_pages[i] + THUNK_PAGE) {
+            tl_log_line("x64: %#llx is already a host thunk, not guest code: not wrapping it again",
+                        (unsigned long long)pc);
+            ReleaseSRWLockExclusive(&g_lock);
+            return NULL;
+        }
     void *fn = NULL;
     for (int i = 0; i < n; i++) if (cache[i].pc == pc && !strcmp(cache[i].sig, sig)) { fn = cache[i].fn; break; }
     if (!fn && n < 4096) {
-        if (used + 48 > (1 << 16)) { page = VirtualAlloc(NULL, 1 << 16, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE); used = 0; }
+        if (used + 48 > THUNK_PAGE) {
+            page = VirtualAlloc(NULL, THUNK_PAGE, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+            used = 0;
+            if (page && g_thunk_page_count < 64) g_thunk_pages[g_thunk_page_count++] = page;
+        }
         if (page) {
             rev_ctx *ctx = malloc(sizeof(*ctx));
             ctx->pc = pc; ctx->sig = sig;
