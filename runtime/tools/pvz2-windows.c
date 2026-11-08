@@ -52,11 +52,17 @@ void tl_win_set_saves_dir(const char *dir);
 #define DESIGN_H 804
 #define MIN_CLIENT_W 800
 #define MIN_CLIENT_H 450
-#define WINDOW_STYLE (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME)
+#define WINDOW_STYLE (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME | WS_CLIPCHILDREN)
 #define ID_SETTINGS 0x1000
 
 static int g_sw = DESIGN_W, g_sh = DESIGN_H;
 static HWND g_hwnd;
+/* The picture: the game is a child window, the largest rectangle of the game's
+ * shape that fits, centred. See "the picture" below. */
+static HWND g_view;
+static int g_layout_w = DESIGN_W, g_layout_h = DESIGN_H;
+static bool g_down;
+static void view_layout(void);
 static char g_exe_dir[MAX_PATH], g_data[MAX_PATH], g_saves[MAX_PATH], g_apk[MAX_PATH], g_egl[MAX_PATH], g_gles[MAX_PATH];
 static char g_settings_path[MAX_PATH];
 static pvz2_settings g_settings;
@@ -313,6 +319,7 @@ static void settings_applied(void *user, const pvz2_settings *s)
 {
     (void)user;
     g_settings = *s;
+    view_layout();
     save_geometry();
     toggle_fullscreen(g_settings.start_fullscreen ? 1 : 0);
     tl_log_line("windows: the settings are applied without a restart");
@@ -330,20 +337,96 @@ static void open_settings(void)
     pvz2_settings_open(g_hwnd, &g_settings, &host);
 }
 
-/* ---------------------------------------------------------------- the mouse */
+/* ---------------------------------------------------------------- the picture
+ *
+ * The window is the frame; the game is a child window inside it, the largest
+ * rectangle of the game's shape (1748x804) that fits, centred, with black bars
+ * around it. ANGLE draws into that child, so the guest's surface is exactly
+ * the picture, and the bars are the parent's black background, never stale
+ * game pixels. A tap in the bars is the parent's, and does nothing.
+ */
+static void view_layout(void)
+{
+    if (!g_hwnd || !g_view) return;
+    RECT rc;
+    GetClientRect(g_hwnd, &rc);
+    int cw = rc.right - rc.left, ch = rc.bottom - rc.top;
+    if (cw <= 0 || ch <= 0) return;
+    double aspect = (double)g_layout_w / (double)g_layout_h;
+    int vw = cw, vh = (int)((double)vw / aspect + 0.5);
+    if (vh > ch) { vh = ch; vw = (int)((double)vh * aspect + 0.5); }
+    if (vw < 1) vw = 1;
+    if (vh < 1) vh = 1;
+    int x = (cw - vw) / 2, y = (ch - vh) / 2;
+    SetWindowPos(g_view, NULL, x, y, vw, vh, SWP_NOZORDER | SWP_NOACTIVATE);
+    if (vw != g_sw || vh != g_sh) {
+        g_sw = vw; g_sh = vh;
+        tl_log_line("windows: window %dx%d client, the game draws at %dx%d (%d,%d), bars %d left %d right %d top %d bottom",
+                    cw, ch, vw, vh, x, y, x, cw - vw - x, y, ch - vh - y);
+        tl_pvz2_set_surface_size(vw, vh);
+    }
+}
 
-static bool g_down;
 static void touch(int phase, LPARAM lp)
 {
     if (!atomic_load(&g_ready)) return;
-    RECT rc; GetClientRect(g_hwnd, &rc);
+    RECT rc; GetClientRect(g_view, &rc);
     int cw = rc.right - rc.left, ch = rc.bottom - rc.top;
     if (cw <= 0 || ch <= 0) return;
-    float x = (float)(short)LOWORD(lp) * (float)g_sw / (float)cw;
-    float y = (float)(short)HIWORD(lp) * (float)g_sh / (float)ch;
+    int mx = (short)LOWORD(lp), my = (short)HIWORD(lp);
+    /* A drag that leaves the picture still belongs to the finger that went
+     * down in it: it stays at the picture's edge (the Mac keeps the last point
+     * in the picture). */
+    if (mx < 0) mx = 0;
+    if (my < 0) my = 0;
+    if (mx >= cw) mx = cw - 1;
+    if (my >= ch) my = ch - 1;
+    float x = (float)mx * (float)g_sw / (float)cw;
+    float y = (float)my * (float)g_sh / (float)ch;
     if (phase == 0) { tl_pvz2_keyboard_dismissed(); g_down = true; }
     else if (phase == 3) g_down = false;
     tl_pvz2_touch(phase, 1, x, y);
+}
+
+static LRESULT CALLBACK view_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+    case WM_LBUTTONDOWN:
+        SetFocus(GetParent(h));
+        SetCapture(h);
+        touch(0, lp);
+        return 0;
+    case WM_MOUSEMOVE:
+        if (g_down) touch(1, lp);
+        return 0;
+    case WM_LBUTTONUP:
+        ReleaseCapture();
+        touch(3, lp);
+        return 0;
+    case WM_ERASEBKGND:
+        /* ANGLE presents every frame; GDI painting here would only flash. */
+        return 1;
+    default: break;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+static void make_view(HINSTANCE inst)
+{
+    static int registered;
+    if (!registered) {
+        WNDCLASSEXW vc = { sizeof(vc) };
+        vc.style = CS_OWNDC;
+        vc.lpfnWndProc = view_proc;
+        vc.hInstance = inst;
+        vc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        vc.lpszClassName = L"PvZ2ReflourishedView";
+        RegisterClassExW(&vc);
+        registered = 1;
+    }
+    g_view = CreateWindowExW(0, L"PvZ2ReflourishedView", L"", WS_CHILD | WS_VISIBLE,
+                             0, 0, 1, 1, g_hwnd, NULL, inst, NULL);
+    view_layout();
 }
 
 static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
@@ -362,15 +445,8 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CHAR: typed(wp); return 0;
     case WM_SIZE:
         if (h == g_hwnd && wp != SIZE_MINIMIZED) {
-            int cw = LOWORD(lp), ch = HIWORD(lp);
-            if (cw > 0 && ch > 0 && (cw != g_sw || ch != g_sh)) {
-                g_sw = cw; g_sh = ch;
-                tl_log_line("windows: the window is now %dx%d, the game draws at %dx%d", cw, ch, cw, ch);
-                /* Adapt: the guest is told the new size on the GL thread, as Android tells it on a
-                 * surface change, and lays its UI out again. Before the driver starts this only stores
-                 * the size; the driver is started with the same one. */
-                tl_pvz2_set_surface_size(cw, ch);
-            }
+            view_layout();
+            InvalidateRect(h, NULL, TRUE);
         }
         return 0;
     case WM_EXITSIZEMOVE:
@@ -389,10 +465,23 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_SYSCOMMAND:
         if ((wp & 0xfff0) == ID_SETTINGS) { open_settings(); return 0; }
         break;
-    case WM_LBUTTONDOWN: SetCapture(h); touch(0, lp); return 0;
-    case WM_MOUSEMOVE: if (g_down) touch(1, lp); return 0;
-    case WM_LBUTTONUP: ReleaseCapture(); touch(3, lp); return 0;
-    case WM_ERASEBKGND: return 1;
+    case WM_LBUTTONDOWN:
+        /* A click on a bar: the window takes the focus, the game gets no
+         * touch (the picture is the child window). */
+        SetFocus(h);
+        return 0;
+    case WM_ERASEBKGND:
+    case WM_PAINT: {
+        /* The bars are the window's own background: black, and repainted when
+         * the window changes size, never the game's stale pixels. */
+        PAINTSTRUCT ps;
+        HDC dc = msg == WM_PAINT ? BeginPaint(h, &ps) : (HDC)wp;
+        RECT r;
+        GetClientRect(h, &r);
+        FillRect(dc, &r, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        if (msg == WM_PAINT) EndPaint(h, &ps);
+        return 1;
+    }
     case WM_CLOSE:
         /* Android's way out: the game hears it is going to the background, and saves. */
         save_geometry();
@@ -413,6 +502,7 @@ static HWND make_window(HINSTANCE inst)
     wc.lpfnWndProc = wndproc;
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.lpszClassName = L"PvZ2Reflourished";
     RegisterClassExW(&wc);
 
@@ -424,22 +514,27 @@ static HWND make_window(HINSTANCE inst)
     g_windowed_placement.rcNormalPosition = wr;
     g_windowed_style = WINDOW_STYLE;
 
+    HWND parent;
     if (g_start_fullscreen) {
         HMONITOR mon = monitor_for(&wr);
         MONITORINFO mi = { .cbSize = sizeof(mi) };
         if (GetMonitorInfoW(mon, &mi)) {
             g_fullscreen = 1;
-            return CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", WS_POPUP | WS_VISIBLE,
-                                   mi.rcMonitor.left, mi.rcMonitor.top,
-                                   mi.rcMonitor.right - mi.rcMonitor.left,
-                                   mi.rcMonitor.bottom - mi.rcMonitor.top,
-                                   NULL, NULL, inst, NULL);
+            parent = CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN,
+                                     mi.rcMonitor.left, mi.rcMonitor.top,
+                                     mi.rcMonitor.right - mi.rcMonitor.left,
+                                     mi.rcMonitor.bottom - mi.rcMonitor.top,
+                                     NULL, NULL, inst, NULL);
+            if (parent) { g_hwnd = parent; make_view(inst); }
+            return parent;
         }
     }
     g_fullscreen = 0;
-    return CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", WINDOW_STYLE,
-                           wr.left, wr.top, wr.right - wr.left, wr.bottom - wr.top,
-                           NULL, NULL, inst, NULL);
+    parent = CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", WINDOW_STYLE,
+                             wr.left, wr.top, wr.right - wr.left, wr.bottom - wr.top,
+                             NULL, NULL, inst, NULL);
+    if (parent) { g_hwnd = parent; make_view(inst); }
+    return parent;
 }
 
 /* ------------------------------------------------------- the first x64 start */
@@ -628,10 +723,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
      * game never sees a different size while it starts. */
     ShowWindow(g_hwnd, g_fullscreen ? SW_SHOW : (g_windowed_placement.showCmd == SW_SHOWMAXIMIZED ? SW_SHOWMAXIMIZED : show));
     UpdateWindow(g_hwnd);
+    view_layout();
     RECT rc; GetClientRect(g_hwnd, &rc);
-    g_sw = (int)(rc.right - rc.left);
-    g_sh = (int)(rc.bottom - rc.top);
-    tl_log_line("windows: window %dx%d client, the game draws at %dx%d", g_sw, g_sh, g_sw, g_sh);
+    int cw = (int)(rc.right - rc.left), ch = (int)(rc.bottom - rc.top);
+    tl_log_line("windows: window %dx%d client, the game draws at %dx%d", cw, ch, g_sw, g_sh);
 
     /* The window menu: Settings..., then a separator, as the player's mock-up
      * had it. Windows' own items (Move, Size, Close) follow it. */
@@ -642,7 +737,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     }
 
     g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = "com.ea.game.pvz2_rfl",
-                            .width = g_sw, .height = g_sh, .metal_layer = g_hwnd, .angle_egl = g_egl,
+                            .width = g_sw, .height = g_sh, .metal_layer = g_view, .angle_egl = g_egl,
                             .angle_gles = g_gles, .frame_dir = NULL, .frame_every = 0 };
     const char *frames = getenv("TL_PVZ2_FRAMES");
     if (frames && *frames) { tl_win_mkdirs(frames); g_cfg.frame_dir = frames; g_cfg.frame_every = getenv("TL_PVZ2_FRAME_EVERY") ? atoi(getenv("TL_PVZ2_FRAME_EVERY")) : 60; }
