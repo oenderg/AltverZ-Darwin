@@ -4101,6 +4101,9 @@ static bool guest_app_looks_right(uint64_t app, uint64_t screen_pair)
 
 static uint64_t guest_app_find(int start_w, int start_h, bool writable_only)
 {
+    LARGE_INTEGER began, ended, freq;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&began);
     unsigned char *buf = malloc(4u << 20);
     if (!buf) return 0;
     uint64_t found = 0;
@@ -4150,9 +4153,17 @@ static uint64_t guest_app_find(int start_w, int start_h, bool writable_only)
         if (found) break;
     }
     free(buf);
-    if (!found)
-        tl_log_line("pvz2: the guest's app object was not found (%d x %d) after %llu bytes%s",
-                    start_w, start_h, scanned, writable_only ? " (the writable regions)" : "");
+    QueryPerformanceCounter(&ended);
+    double ms = (double)(ended.QuadPart - began.QuadPart) * 1000.0 /
+                (double)(freq.QuadPart ? freq.QuadPart : 1);
+    if (found)
+        tl_log_line("pvz2: the guest's app object is %p after %llu bytes in %.1f ms%s",
+                    (void *)(uintptr_t)found, scanned, ms,
+                    writable_only ? " (the writable regions)" : "");
+    else
+        tl_log_line("pvz2: the guest's app object was not found (%d x %d) after %llu bytes in %.1f ms%s",
+                    start_w, start_h, scanned, ms,
+                    writable_only ? " (the writable regions)" : "");
     return found;
 }
 
