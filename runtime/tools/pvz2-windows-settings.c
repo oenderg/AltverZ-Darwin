@@ -464,18 +464,18 @@ static void build_pointer_page(HWND p)
     SendMessageW(keys, BM_SETCHECK, g_pending.show_level_keys ? BST_CHECKED : BST_UNCHECKED, 0);
     add(p, L"STATIC", L"“Show keys in levels” writes the key that works each control on its corner, in the game's own font (seed packets, shovel, fast-forward, plant food and the level's power-ups); it is on by default.",
         0, 24, 60, 460, 54, 0);
-    add(p, L"BUTTON", L"Selected plant", BS_GROUPBOX, 10, 134, 500, 186, 0);
+    add(p, L"BUTTON", L"The pointer", BS_GROUPBOX, 10, 134, 500, 200, 0);
     HWND show = add(p, L"BUTTON", L"Show the selected plant at the pointer", BS_AUTOCHECKBOX,
                     24, 158, 440, 22, ID_SHOW_CURSOR);
     SendMessageW(show, BM_SETCHECK, g_pending.show_cursor_plant ? BST_CHECKED : BST_UNCHECKED, 0);
-    add(p, L"STATIC", L"The plant follows the pointer while a seed packet, the shovel or plant food is held.",
-        0, 24, 188, 460, 36, 0);
-    add(p, L"STATIC", L"Cross brightness", 0, 24, 250, 140, 20, 0);
+    add(p, L"STATIC", L"Cross brightness", 0, 24, 206, 140, 20, 0);
     HWND bar = add(p, L"msctls_trackbar32", L"", TBS_HORZ | TBS_NOTICKS,
-                   180, 244, 220, 32, ID_CROSS_BRIGHTNESS);
+                   180, 200, 220, 32, ID_CROSS_BRIGHTNESS);
     SendMessageW(bar, TBM_SETRANGE, TRUE, MAKELONG(0, 100));
     SendMessageW(bar, TBM_SETPOS, TRUE, g_pending.cursor_cross_brightness);
-    add(p, L"STATIC", L"", 0, 410, 250, 60, 20, ID_CROSS_VALUE);
+    add(p, L"STATIC", L"", 0, 410, 206, 60, 20, ID_CROSS_VALUE);
+    add(p, L"STATIC", L"The plant, shovel or plant food in your hand follows the pointer, as it would under your finger, and a cross marks the tile it will land on; the cross hides where a plant cannot go. “Cross brightness” sets how bright the cross is: 45% by default.",
+        0, 24, 238, 460, 80, 0);
     pointer_page_label();
 
 }
