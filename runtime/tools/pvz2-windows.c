@@ -452,9 +452,10 @@ static HGDIOBJ g_badge_old;
 static void *g_badge_bits;
 static int g_badge_w, g_badge_h;
 
-/* The Mac's colours and stroke widths, at its 32 px measuring size: the
- * yellow is (1.0, 0.94, 0.18), the outline (0.08, 0.06, 0.02); the yellow
- * stroke is 3/32 of the font size, the dark one 18/32. */
+/* The Mac's colours and stroke widths: the yellow is (1.0, 0.94, 0.18), the
+ * outline (0.08, 0.06, 0.02). CoreText's stroke width is a percentage of the
+ * font size and its pen is centred on the glyph, so the yellow pen is 0.03 em
+ * and the dark one 0.18 em; the dark layer sits em/32 right and down. */
 #define BADGE_YELLOW 0xFFFFF02E
 #define BADGE_DARK   0xFF140F05
 
@@ -544,7 +545,7 @@ static void badge_font_init(void)
 }
 
 /* The Mac's Lucida Grande Bold fallback has no Windows counterpart that stays
- * bold inside the Mac's 18/32 em outline, so the five symbols are paths. The
+ * bold inside the Mac's 0.18 em outline, so the five symbols are paths. The
  * measurements are em fractions from the Mac's symbol screenshot: the arrow
  * is 0.70 em long and 0.54 em tall, the head 0.30 em long and the full height,
  * and the shaft 0.22 em thick (a little thicker than Lucida's, so the yellow
@@ -649,8 +650,9 @@ static void badges_reposition(void)
  * the key's box is 0.46 of the control's height, 30% wider and 1.3 times as
  * tall as the glyphs, at the control's top right (bottom for the shovel and
  * plant food, left for plant food), with 8% of the control's height at the
- * right edge. The dark outline is drawn first, then the yellow edge and fill;
- * nothing else is painted, so the game shows between and around the letters. */
+ * right edge. The dark shadow is drawn first, shifted em/32 right and down,
+ * then the yellow edge and fill; nothing else is painted, so the game shows
+ * between and around the letters. */
 static void badges_draw(const tl_pvz2_badge_snapshot *s)
 {
     if (!g_gdiplus_started) return;
@@ -693,7 +695,10 @@ static void badges_draw(const tl_pvz2_badge_snapshot *s)
         wchar_t text[32];
         const wchar_t *label = badge_label(i, s, text, 32);
         if (!label) continue;
-        int em = (int)(r[3] * 0.46);
+        /* CoreText's 0.46 em is the Mac's layer size; its rendered digit is
+         * about 13% larger than GDI+'s path at that factor, and 0.52 matches
+         * the reference crop's digit against the packet. */
+        int em = (int)(r[3] * 0.52);
         if (em < 10) em = 10;
         if (em > 160) em = 160;
         RectF ink = { 0, 0, 0, 0 };
@@ -714,22 +719,37 @@ static void badges_draw(const tl_pvz2_badge_snapshot *s)
             continue;
         }
         float dx = x + (box_w - ink.Width) / 2.0f;
-        float dy = y + (box_h - ink.Height) / 2.0f;
+        /* CoreText centers the font's line box, not the ink; the level-ui
+         * digits sit about 0.08 em above the ink box's centre. */
+        float dy = y + (box_h - ink.Height) / 2.0f - em * 0.08f;
         GpMatrix *m = NULL;
         if (GdipCreateMatrix2(1.0f, 0.0f, 0.0f, 1.0f, dx, dy, &m) == Ok) {
             GdipTransformPath(path, m);
             GdipDeleteMatrix(m);
         }
-        GpPen *dark = NULL;
-        if (GdipCreatePen1(BADGE_DARK, em * 18.0f / 32.0f, UnitPixel, &dark) == Ok) {
-            GdipSetPenLineJoin(dark, LineJoinRound);
-            GdipSetPenStartCap(dark, LineCapRound);
-            GdipSetPenEndCap(dark, LineCapRound);
-            GdipDrawPath(g, dark, path);
-            GdipDeletePen(dark);
+        /* The Mac's back text layer is offset by 1/32 em; CoreText's dark
+         * stroke is a 0.18 em pen centred on the glyph, so the shadow is
+         * thin at the top left and about twice as thick at the bottom right. */
+        GpPath *shadow = NULL;
+        if (GdipClonePath(path, &shadow) == Ok) {
+            GpMatrix *shift = NULL;
+            if (GdipCreateMatrix2(1.0f, 0.0f, 0.0f, 1.0f, em / 32.0f, em / 32.0f,
+                                  &shift) == Ok) {
+                GdipTransformPath(shadow, shift);
+                GdipDeleteMatrix(shift);
+            }
+            GpPen *dark = NULL;
+            if (GdipCreatePen1(BADGE_DARK, em * 0.18f, UnitPixel, &dark) == Ok) {
+                GdipSetPenLineJoin(dark, LineJoinRound);
+                GdipSetPenStartCap(dark, LineCapRound);
+                GdipSetPenEndCap(dark, LineCapRound);
+                GdipDrawPath(g, dark, shadow);
+                GdipDeletePen(dark);
+            }
+            GdipDeletePath(shadow);
         }
         GpPen *edge = NULL;
-        if (GdipCreatePen1(BADGE_YELLOW, em * 3.0f / 32.0f, UnitPixel, &edge) == Ok) {
+        if (GdipCreatePen1(BADGE_YELLOW, em * 0.03f, UnitPixel, &edge) == Ok) {
             GdipSetPenLineJoin(edge, LineJoinRound);
             GdipSetPenStartCap(edge, LineCapRound);
             GdipSetPenEndCap(edge, LineCapRound);
