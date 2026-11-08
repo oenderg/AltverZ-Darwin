@@ -150,11 +150,19 @@ branch's history, which it is here (`chromium/8127`).
    pin lives. The workflow's input has an empty default and reads that file.
 2. Run `.github/workflows/angle-windows.yml`: push to `ci/angle-windows`, or Actions, "ANGLE
    for Windows", "Run workflow" with the commit left empty.
-3. Copy from the `angle-windows-x64` artifact into `prebuilt/win-x64` the three DLLs,
-   `commit.txt`, `gn-args.txt`, `run.txt` and `LICENSE`; and the same from
-   `angle-windows-arm64` into `prebuilt/win-arm64`. Update the commit line of both READMEs.
-4. Run `runtime/win/package-zip.sh`, which takes ANGLE from those folders (`--angle` still
-   overrides them for a test build).
+3. Zip each artifact's files (the three DLLs, `commit.txt`, `gn-args.txt`, `run.txt`,
+   `LICENSE`) as `angle-windows-<arch>-<first 8 of the commit>.zip` and upload both to the
+   repository's private draft release `build-inputs`, next to the APK. Keep the old zips there
+   so older commits still build.
+4. Put the two names and their sha256 in `runtime/win/ANGLE_ZIPS` and update the commit line of
+   `prebuilt/win-x64/README.md` and `prebuilt/win-arm64/README.md`.
+5. Run `runtime/win/package-zip.sh`. It runs `runtime/win/fetch-angle.sh` first, which downloads
+   the zips `ANGLE_ZIPS` names (with `gh`, signed in to an account that can see the draft),
+   checks their sha256 and unpacks them into `prebuilt/win-<arch>`. `--angle` still overrides
+   that for a test build, for example with DLLs `build-angle.cmd` made on a PC.
+
+The DLLs are not in git: every refresh would add about 24 MB to the repository's history for
+good. The player zips carry them, so the game needs no download for ANGLE.
 
 The runner is x64, so the ARM64 build is a cross build with the image's ARM64 MSVC tools and
 libraries, which is how Chrome's ANGLE builds and mmozeiko/build-angle build it on the same

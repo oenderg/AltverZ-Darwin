@@ -48,8 +48,9 @@ backends off, then `autoninja libEGL libGLESv2`, and leaves the DLLs, `commit.tx
 `gn-args.txt` and ANGLE's `LICENSE` in `prebuilt\win-<arch>`.
 
 `.github/workflows/angle-windows.yml` runs that script on `windows-2025` for both architectures
-at once and uploads one artifact per architecture. The DLLs committed in `prebuilt/win-*` come
-from it, and the READMEs there name the run. docs/windows-shipping.md has the pinned commit,
+at once and uploads one artifact per architecture. Those builds live as zips in the private
+draft release `build-inputs`, not in git; `runtime/win/fetch-angle.sh` downloads and checks them
+into `prebuilt/win-*`, and the READMEs there name the run. docs/windows-shipping.md has the pinned commit,
 the build arguments and how to refresh them.
 
 ## Folders
@@ -145,7 +146,7 @@ callback, so the bar is a marquee, not a percentage.
 `runtime/win/package-zip.sh --arch all --apk <apk> [--tar <1.4.2.main.tar>]` makes
 `out/zips/PvZ2Reflourished-<version>-windows-{arm64,x64}.zip`: the program, ANGLE and its
 license, `Game/` (the APK and the CDN archive) and a README. It takes ANGLE from
-`prebuilt/win-arm64` and `prebuilt/win-x64` (or `--angle`), and the x64 program's compiler
+`prebuilt/win-arm64` and `prebuilt/win-x64`, which it fills with `fetch-angle.sh` first (or `--angle`), and the x64 program's compiler
 DLLs from `out/win/x64-runtime` (`--x64-runtime`).
 
 The ARM64 program is linked statically and imports only Windows DLLs. The x64 program

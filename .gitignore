@@ -6,3 +6,7 @@ runtime/third_party/
 .DS_Store
 __pycache__/
 scripts/dmg/art
+
+# ANGLE DLLs come from the build-inputs draft (runtime/win/fetch-angle.sh), not git
+prebuilt/win-*/*
+!prebuilt/win-*/README.md

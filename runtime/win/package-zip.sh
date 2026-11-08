@@ -28,6 +28,7 @@ ARCH=all
 APK=""; TAR=""; OUT="$REPO/out/zips"
 ANGLE_ARM="$REPO/prebuilt/win-arm64"
 ANGLE_X64="$REPO/prebuilt/win-x64"
+ANGLE_GIVEN=""
 X64_EXE="$REPO/out/win-x64/PvZ2 Reflourished x64.exe"
 X64_RUNTIME=""
 
@@ -36,7 +37,7 @@ while [ $# -gt 0 ]; do
     --arch) ARCH="$2"; shift 2 ;;
     --apk) APK="$2"; shift 2 ;;
     --tar) TAR="$2"; shift 2 ;;
-    --angle) ANGLE_ARM="$2"; ANGLE_X64="$2"; shift 2 ;;
+    --angle) ANGLE_ARM="$2"; ANGLE_X64="$2"; ANGLE_GIVEN=1; shift 2 ;;
     --x64-exe) X64_EXE="$2"; shift 2 ;;
     --x64-runtime) X64_RUNTIME="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
@@ -44,6 +45,9 @@ while [ $# -gt 0 ]; do
     *) echo "unknown option $1" >&2; exit 2 ;;
     esac
 done
+
+# Our ANGLE build is not in git: fetch-angle.sh downloads and checks it (runtime/win/ANGLE_ZIPS).
+if [ -z "$ANGLE_GIVEN" ]; then "$H/fetch-angle.sh" "$ARCH" || exit 1; fi
 
 [ -n "$APK" ] || { echo "package-zip: --apk is required" >&2; exit 2; }
 [ -f "$APK" ] || { echo "package-zip: no APK at $APK" >&2; exit 2; }
