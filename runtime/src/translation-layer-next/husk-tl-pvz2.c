@@ -80,6 +80,21 @@ void *tl_jni_native_host(const char *cls, const char *name, const char *sig);
 #define GUEST_FN(p, sig) ((void *)(p))
 #endif
 
+/* Windows' CRT rename() refuses an existing target; the Mac's and iPad's
+ * rename replaces it. Every host file the driver commits through a .tmp needs
+ * the replacement to survive the second save. */
+static int host_rename_replace(const char *from, const char *to)
+{
+#ifdef _WIN32
+    if (MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        return 0;
+    errno = EIO;
+    return -1;
+#else
+    return rename(from, to);
+#endif
+}
+
 void tl_jni_hle_install(void);
 void tl_hle_configure(const char *pkg, const char *apk, const char *data, int w, int h);
 void tl_hle_set_activity(jobj *a);
@@ -245,7 +260,7 @@ static void cfg_save(void)
     }
     pthread_mutex_unlock(&CFG.mu);
     fclose(f);
-    rename(tmp, cfg_file_path());
+    host_rename_replace(tmp, cfg_file_path());
 }
 
 /* ---------------------------------------------------------------- Java side */
@@ -1135,7 +1150,7 @@ static void reminders_save_locked(void)
     int fd = fileno(f);
     if (fflush(f) != 0 || fsync(fd) != 0 || ferror(f)) failed = true;
     if (fclose(f) != 0) failed = true;
-    if (!failed && rename(temporary, path) == 0) return;
+    if (!failed && host_rename_replace(temporary, path) == 0) return;
     unlink(temporary);
     tl_log_line("pvz2: reminder data could not be committed atomically (errno=%d)", errno);
 }
@@ -1765,7 +1780,7 @@ static void ps_save_locked(void)
     int fd = fileno(f);
     if (fflush(f) != 0 || fsync(fd) != 0 || ferror(f)) failed = true;
     if (fclose(f) != 0) failed = true;
-    if (!failed && rename(temporary, path) == 0) return;
+    if (!failed && host_rename_replace(temporary, path) == 0) return;
     unlink(temporary);
     tl_log_line("pvz2: Nimble persistence atomic commit failed (errno=%d)", errno);
 }
