@@ -30,6 +30,7 @@ typedef struct {
     int show_level_keys;  /* 1: draw the key on each control in a live level */
     int show_cursor_plant; /* 1: draw the selected plant and its cross at the pointer */
     int cursor_cross_brightness; /* 0..100, percent of white for the cross bands */
+    int automatic_updates; /* 1: the installed build checks for updates once a day */
 } pvz2_settings;
 
 typedef struct {

@@ -73,6 +73,139 @@ A static LLVM link would remove `libLLVM-23.dll` and its companions, but MSYS2's
 LLVM is 440 MB of component libraries and the link is a separate piece of work; the
 dynamic library is what the build uses now.
 
+## The installer
+
+`runtime/win/installer/build-installer.sh --apk <apk> [--tar <tar>] --zip` stages the two
+architecture trees in `out/win-installer/` and zips them for a Windows PC;
+`runtime/win/installer/build-installer.cmd <staged folder> [version] [output folder]` compiles
+`pvz2.iss` with Inno Setup 7 (7.1.1 while this was written; it also runs on ARM64 Windows,
+through emulation) into `PvZ2Reflourished-<version>-windows-setup.exe`. Both are per user, with
+no administrator prompt, and install to `%LOCALAPPDATA%\Programs\PvZ2 Reflourished`; a fixed
+AppId ties the versions together.
+
+The 1.3.0 setup is 120 MB. The ARM64 files are 65 MB and the x64 files 229 MB, with the game's
+APK and ANGLE in both; a setup for one architecture alone would be about 46 MB (ARM64) or 74 MB
+(x64). One setup is kept because it is one download link and one feed item, at the cost of the
+larger download for each player.
+
+Uninstalling deletes the program folder and `%LOCALAPPDATA%\PvZ2 Reflourished` (the OBB, the CDN
+archive, the x64 translation cache and `pvz2.log`), then asks "Also delete your saves and
+settings?" with No preselected; Yes deletes `%APPDATA%\PvZ2 Reflourished` (saves, settings,
+`config\pvz2-config`, the reminders and Nimble files). A silent uninstall keeps them. An install
+over an older version keeps both folders; Setup offers to close a running game, and a close that
+comes from Setup (or another program) saves and exits without the game's own quit prompt.
+
+## Updates (WinSparkle) and the Windows appcast
+
+The installed build updates itself with WinSparkle 0.9.4 (MIT; `prebuilt/winsparkle`, fetched by
+`runtime/win/fetch-winsparkle.sh`, which checks GitHub's published sha256). The zip build does
+not link it.
+
+### The feed: `sparkle/windows-appcast.xml`
+
+A separate file on the default branch from the Mac's `sparkle/appcast.xml`. The Mac feed is
+written from a DMG by `scripts/update-appcast.py` and carries Mac-only items; the Windows feed
+has the setup program, two `sparkle:os` enclosures and no Mac fields. Two files mean neither
+platform's release can rewrite the other's feed, and a Windows release can be held back without
+touching the Mac app's updates. The app's feed URL is compiled in
+(`runtime/win/build-win.sh`); `SPARKLE_FEED_URL` overrides it for a test build, as
+`SPARKLE_PUBLIC_KEY` does for the key.
+
+One item, with one enclosure per architecture: both point at the same setup program (the one
+installer carries both builds), with `sparkle:version` being ours as a build number
+(`major*10000 + minor*100 + patch`, so 1.3.0 is 10300) and `sparkle:shortVersionString` the
+version. WinSparkle picks the enclosure whose `sparkle:os` matches the running Windows, so an
+ARM64 player and an x64 player each get the setup that installs their build. (Two items with
+one enclosure each work the same way; the `sparkle:os` marker lives on the enclosure either
+way.)
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>PvZ2 Reflourished for Windows</title>
+    <link>https://github.com/oenderg/Reflourished-Darwin/releases</link>
+    <description>Updates of PvZ2 Reflourished for Windows</description>
+    <language>en</language>
+    <item>
+      <title>Reflourished-Darwin 1.3.1 for Windows</title>
+      <pubDate>...</pubDate>
+      <link>https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.3.1</link>
+      <sparkle:version>10301</sparkle:version>
+      <sparkle:shortVersionString>1.3.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<p>What's new...</p>]]></description>
+      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.3.1/PvZ2Reflourished-1.3.1-windows-setup.exe"
+                 length="120182790" type="application/octet-stream"
+                 sparkle:edSignature="..."
+                 sparkle:os="windows-x64"
+                 sparkle:installerArguments="/SILENT /SP- /NOICONS"/>
+      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.3.1/PvZ2Reflourished-1.3.1-windows-setup.exe"
+                 length="120182790" type="application/octet-stream"
+                 sparkle:edSignature="..."
+                 sparkle:os="windows-arm64"
+                 sparkle:installerArguments="/SILENT /SP- /NOICONS"/>
+    </item>
+  </channel>
+</rss>
+```
+
+`sparkle:os` and `sparkle:installerArguments` are **enclosure** attributes in WinSparkle's
+parser, not item attributes (its `src/appcast.cpp` reads them there). WinSparkle picks the
+architecture-specific enclosure of the newest compatible item; `sparkle:minimumSystemVersion`
+is a Windows version, so 10.0 leaves out Windows 7 and 8.
+
+### The key: the Mac app's EdDSA key
+
+One private key signs both platforms. Sparkle and WinSparkle both use Ed25519 over the file's
+bytes, and the same 32-byte public key file (`sparkle/public-key`) is compiled into the Windows
+program, so a second key would only add a second secret to create, back up and lose. The Mac
+key is in the owner's login keychain and in the Actions secret `SPARKLE_PRIVATE_KEY`
+(docs/RELEASING.md).
+
+Signing on a Mac, with the Sparkle build the Mac app already fetches:
+
+```sh
+sig="$(<sparkle>/bin/sign_update --ed-key-file <key file> PvZ2Reflourished-1.3.1-windows-setup.exe)"
+```
+
+Signing on Windows, with `winsparkle-tool` from the release (`bin\winsparkle-tool.exe sign
+--private-key-file key.pem <setup.exe>`). It wants a PEM private key; Sparkle's key file is the
+base64 of the 32-byte seed, which becomes a PKCS#8 Ed25519 key with the prefix `302e0201003005
+06032b657004220420` and PEM armour. Never put either form in the repository or a build log.
+
+### Release steps (for the manager to wire)
+
+1. Build the setup with `runtime/win/installer/build-installer.sh` and `build-installer.cmd`
+   from the release's APK, with `VERSION` as its version.
+2. Sign it (above) and attach it to the GitHub release as
+   `PvZ2Reflourished-<version>-windows-setup.exe`.
+3. Add one item to `sparkle/windows-appcast.xml`, newest first, with the two enclosures (x64 and
+   ARM64), the same URL, its `length` and the signature, `sparkle:version` from `VERSION`, and
+   the release notes in the description; commit the feed (`chore(sparkle-windows): ...`).
+4. Keep the older items: WinSparkle uses the newest compatible one, and older players updating
+   step through them as needed.
+
+This is not wired into `.github/workflows/build.yml` yet; the Mac feed and the Mac release job
+stay as they are.
+
+The app checks once a day at start-up (Settings > About: "Check for updates automatically", on
+by default, `[updates] automaticChecks` in `settings.ini`) and at once from "Check for Updates..."
+or "Check Now". When an update is accepted, WinSparkle runs the setup with
+`/SILENT /SP- /NOICONS`; the game hears the shutdown callback, saves and exits, and the setup's
+silent-update `[Run]` entry starts the new version again. The setup keeps both data folders, so
+the saves are there in the new version. A signature that does not verify refuses the update, as
+does a tampered file.
+
+### Trying it without a release
+
+A test build needs its own feed and a throwaway key: build with
+`SPARKLE_FEED_URL=http://127.0.0.1:8799/windows-appcast.xml SPARKLE_PUBLIC_KEY=<test>`, serve
+the feed and the setup from the Mac (the VM reaches `127.0.0.1` as `http://10.0.2.2:<port>/`),
+and write the appcast with the test key's signature. The VM's WinSparkle state lives in
+`HKCU\Software\oenderg\PvZ2 Reflourished\WinSparkle`; delete it after a test, and never sign a
+test with the real key.
+
 ## ANGLE
 
 Both programs draw through ANGLE over Direct3D 11, and the zips carry our own build of it:

@@ -1,11 +1,18 @@
 #!/bin/sh
 # Build the x86-64 Windows programs, in MSYS2's CLANG64 shell (clang, LLVM 23):
-#   build-x64.sh <runtime folder> <ScarletNX checkout, its library built in build/lib> <zlib folder> <out folder> [starttest|game]
+#   build-x64.sh <runtime folder> <ScarletNX checkout, its library built in build/lib> <zlib folder> <out folder> [starttest|game|game-portable]
 # <zlib folder> holds zlib-1.3.1 and zlib-guest (setup-toolchain.sh makes both) and include/ with their headers.
+#
+# game is the installed build: it links WinSparkle from prebuilt/winsparkle/x64 and carries
+# the feed and key (SPARKLE_FEED_URL, SPARKLE_PUBLIC_KEY override them for a test). game-portable
+# has no updater and writes to <out folder>-portable. APP_VERSION overrides VERSION.
 set -e
 R="$(cd "$1" && pwd)"; SNX="$(cd "$2" && pwd)"; Z="$(cd "$3" && pwd)"; OUT="$4"; target="${5:-starttest}"
 H="$R/win"; N="$R/src/translation-layer-next"; T="$R/src/translation-layer"; X="$H/x64"
-VERSION="$(cat "$R/../VERSION")"
+VERSION="${APP_VERSION:-$(cat "$R/../VERSION")}"
+WS="$R/../prebuilt/winsparkle"
+FEED="${SPARKLE_FEED_URL:-https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/sparkle/windows-appcast.xml}"
+KEY="${SPARKLE_PUBLIC_KEY:-$(cat "$R/../sparkle/public-key" 2>/dev/null || true)}"
 OBJ="$OUT/obj"; mkdir -p "$OBJ" "$OUT"
 CC=clang
 CFLAGS="-std=gnu11 -g -O1 -D_GNU_SOURCE -DTL_WINDOWS=1 -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -Wno-unused-function
@@ -22,23 +29,39 @@ if [ ! -f "$OUT/libz-guest.a" ]; then
 fi
 
 . "$H/sources.sh"
+# Only the host and the updates module differ between the two programs.
+UPD_DEFS="-DPVZ2_UPDATES=0"; UPD_EXTRA=""; UPD_LIBS=""
 case "$target" in
     starttest) SRCS="$WIN_CORE $X/husk-tl-x64.c $X/x64-starttest.c"; EXE="$OUT/rfl-x64-starttest.exe" ;;
-    game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/PvZ2 Reflourished x64.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
+    game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/PvZ2 Reflourished x64.exe"
+        UPD_DEFS="-DPVZ2_UPDATES=1 -DPVZ2_UPDATE_FEED_URL=\"$FEED\" -DPVZ2_UPDATE_PUBLIC_KEY=\"$KEY\""
+        UPD_EXTRA="-I$WS/include"; UPD_LIBS="-L$WS/x64 -lWinSparkle"
+        LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
+    game-portable) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT-portable/PvZ2 Reflourished x64.exe"
+        LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
+UPD_OBJ="$OBJ/portable"
+[ "$target" = game ] && UPD_OBJ="$OBJ/installed"
+mkdir -p "$UPD_OBJ" "$(dirname "$EXE")"
 OBJS=""
 for f in $SRCS; do
-    o="$OBJ/$(basename "$f" | sed 's/\.c$//').o"
-    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$R/../VERSION" -nt "$o" ] || [ "$R/tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ] || [ "$X/sigs-tables.inc" -nt "$o" ]; then
+    case "$f" in
+        */pvz2-windows.c|*/pvz2-windows-updates.c)
+            o="$UPD_OBJ/$(basename "$f" | sed 's/\.c$//').o"
+            flags="-DPVZ2_APP_VERSION=\"$VERSION\" $UPD_DEFS $UPD_EXTRA" ;;
+        *)  o="$OBJ/$(basename "$f" | sed 's/\.c$//').o"
+            flags="-DPVZ2_APP_VERSION=\"$VERSION\"" ;;
+    esac
+    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$R/../VERSION" -nt "$o" ] || [ "$R/tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$R/tools/pvz2-windows-updates.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ] || [ "$X/sigs-tables.inc" -nt "$o" ]; then
         echo "  cc $(basename "$f")"
-        $CC $CFLAGS "-DPVZ2_APP_VERSION=\"$VERSION\"" -c "$f" -o "$o"
+        $CC $CFLAGS $flags -c "$f" -o "$o"
     fi
     OBJS="$OBJS $o"
 done
-if [ "$target" = game ]; then
+if [ "$target" = game ] || [ "$target" = game-portable ]; then
     RC="$OBJ/win-manifest.o"
-    if [ ! -f "$RC" ] || [ "$H/win-manifest.rc" -nt "$RC" ] || [ "$H/win-manifest.xml" -nt "$RC" ]; then
+    if [ ! -f "$RC" ] || [ "$H/win-manifest.rc" -nt "$RC" ] || [ "$H/win-manifest.xml" -nt "$RC" ] || [ "$H/pvz2.ico" -nt "$RC" ]; then
         echo "  windres win-manifest.rc"
         windres -I"$H" -O coff -i "$H/win-manifest.rc" -o "$RC"
     fi
@@ -58,5 +81,5 @@ L="$SNX/build/lib"
 clang++ -o "$EXE" $OBJS -Wl,--start-group "$L/recompiler-library/libscarletnx-recompiler.a" "$L/llvm-backend/libsnx_llvm.a" \
     "$L/src/common/libscarletnx-common.a" "$L/llvm-backend/arm-backend/libsnx_arm_llvm.a" "$L/llvm-backend/arm-backend/libsnx_arm_rt.a" \
     "$L/llvm-backend/arm-backend/libsnx_arm_decode.a" "$L/libsnx_yyjson.a" "$L/libsnx_libdeflate.a" -Wl,--end-group \
-    $LDX -L"$OUT" -lz -lz-guest -lLLVM-23 -lpsapi -lws2_32 -lbcrypt -lsynchronization -lpthread -Wl,--error-limit=0
+    $LDX $UPD_LIBS -L"$OUT" -lz -lz-guest -lLLVM-23 -lpsapi -lws2_32 -lbcrypt -lsynchronization -lpthread -Wl,--error-limit=0
 echo "built $EXE"

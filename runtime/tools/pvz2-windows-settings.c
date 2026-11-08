@@ -19,10 +19,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <wchar.h>
 
 #include "pvz2-windows-settings.h"
 #include "pvz2-windows-darkmode.h"
+#include "pvz2-windows-updates.h"
 
 #pragma comment(lib, "comctl32.lib")
 
@@ -46,6 +48,7 @@ void pvz2_settings_defaults(pvz2_settings *s)
     s->show_level_keys = 1;
     s->show_cursor_plant = 1;
     s->cursor_cross_brightness = 45;
+    s->automatic_updates = 1;
 }
 
 /* A value that is missing from the file is the default; a value that is there
@@ -95,6 +98,7 @@ void pvz2_settings_load(const char *path, pvz2_settings *s)
     for (int i = 0; i < 7; i++) if (!strcmp(valid[i], s->fixed_aspect)) known = 1;
     if (!known) snprintf(s->fixed_aspect, sizeof(s->fixed_aspect), "display");
     s->show_level_keys = ini_int(path, "keys", "showLevelKeys", d.show_level_keys);
+    s->automatic_updates = ini_int(path, "updates", "automaticChecks", d.automatic_updates) != 0;
     s->show_cursor_plant = ini_int(path, "pointer", "showCursorPlant", d.show_cursor_plant) != 0;
     s->cursor_cross_brightness = ini_int(path, "pointer", "crossBrightness", d.cursor_cross_brightness);
     if (s->cursor_cross_brightness < 0) s->cursor_cross_brightness = 0;
@@ -124,6 +128,7 @@ int pvz2_settings_save(const char *path, const pvz2_settings *s)
     WritePrivateProfileStringA("window", "fixedAspect", s->fixed_aspect, path);
     WritePrivateProfileStringA("window", "adaptShape", s->adapt_shape ? "1" : "0", path);
     WritePrivateProfileStringA("keys", "showLevelKeys", s->show_level_keys ? "1" : "0", path);
+    WritePrivateProfileStringA("updates", "automaticChecks", s->automatic_updates ? "1" : "0", path);
     WritePrivateProfileStringA("pointer", "showCursorPlant", s->show_cursor_plant ? "1" : "0", path);
     {
         char pct[16];
@@ -247,9 +252,13 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 #define ID_CONFIRM_QUIT  213
 #define ID_WINDOW_GROUP  214
 #define ID_QUIT_FOOTER   215
+#define ID_AUTOMATIC_UPDATES 216
+#define ID_CHECK_NOW     217
+#define ID_LAST_CHECK    218
 
 #define ID_RESTORE       300
 #define ID_APPLY         301
+#define ID_CHECK_TIMER   302
 
 /* The key fields, in the order the pages lay them out. */
 #define ID_KEY_BASE 1000
@@ -273,6 +282,7 @@ static HFONT g_font;
 static HBRUSH g_page_bg, g_dialog_bg;
 static int g_tab;
 static int g_capture = -1;
+static int g_check_ticks;
 static pvz2_settings g_pending;
 static pvz2_settings *g_live;
 static pvz2_settings_host g_host;
@@ -550,22 +560,60 @@ static void build_general_page(HWND p)
     mode_refresh(p);
 }
 
+static void about_refresh_check_time(HWND page)
+{
+    HWND label = GetDlgItem(page, ID_LAST_CHECK);
+    if (!label) return;
+    long long t = pvz2_updates_last_check();
+    wchar_t text[96];
+    if (t <= 0) {
+        wcscpy(text, L"Last checked: never");
+    } else {
+        static const wchar_t *months[] = { L"Jan", L"Feb", L"Mar", L"Apr", L"May", L"Jun",
+                                           L"Jul", L"Aug", L"Sep", L"Oct", L"Nov", L"Dec" };
+        time_t tt = (time_t)t;
+        struct tm *tmv = localtime(&tt);
+        if (!tmv || tmv->tm_mon < 0 || tmv->tm_mon > 11)
+            wcscpy(text, L"Last checked: never");
+        else
+            swprintf(text, 96, L"Last checked: %d %ls %d at %02d:%02d",
+                     tmv->tm_mday, months[tmv->tm_mon], tmv->tm_year + 1900,
+                     tmv->tm_hour, tmv->tm_min);
+    }
+    SetWindowTextW(label, text);
+}
+
 static void build_about_page(HWND p)
 {
     add(p, L"STATIC", L"PvZ2 Reflourished", 0, 24, 20, 460, 24, 0);
     add(p, L"STATIC", L"Version " L"" PVZ2_APP_VERSION, 0, 24, 50, 460, 20, 0);
     add(p, L"STATIC", L"Plants vs. Zombies 2: Reflourished, running on Windows: the game's own Android code, drawn through Direct3D 11.",
         0, 24, 80, 460, 42, 0);
-    add(p, L"BUTTON", L"Files", BS_GROUPBOX, 10, 138, 500, 246, 0);
-    add(p, L"STATIC", L"Saves and settings", 0, 24, 164, 350, 20, 0);
-    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, 188, 346, 22, 0);
-    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, 174, 112, 26, ID_OPEN_SAVES);
-    add(p, L"STATIC", L"Game data", 0, 24, 232, 350, 20, 0);
-    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, 256, 346, 22, 0);
-    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, 242, 112, 26, ID_OPEN_DATA);
-    add(p, L"STATIC", L"Log", 0, 24, 300, 350, 20, 0);
-    add(p, L"STATIC", L"pvz2.log, for a bug report", 0, 24, 324, 346, 22, 0);
-    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, 310, 112, 26, ID_OPEN_LOG);
+    int y = 138;
+    if (pvz2_updates_configured()) {
+        /* The Mac's Updates section, word for word, with its own last check
+         * time; the portable build has no updater, so nothing here. */
+        add(p, L"BUTTON", L"Updates", BS_GROUPBOX, 10, 132, 500, 120, 0);
+        HWND auto_check = add(p, L"BUTTON", L"Check for updates automatically", BS_AUTOCHECKBOX,
+                              24, 156, 440, 22, ID_AUTOMATIC_UPDATES);
+        SendMessageW(auto_check, BM_SETCHECK, g_pending.automatic_updates ? BST_CHECKED : BST_UNCHECKED, 0);
+        add(p, L"STATIC", L"", 0, 24, 184, 340, 20, ID_LAST_CHECK);
+        add(p, L"BUTTON", L"Check Now", BS_PUSHBUTTON, 382, 180, 112, 26, ID_CHECK_NOW);
+        add(p, L"STATIC", L"Once a day the app looks for a new release on GitHub, and asks before it installs one. Your saves and settings stay as they are.",
+            0, 24, 212, 460, 34, 0);
+        y = 262;
+    }
+    add(p, L"BUTTON", L"Files", BS_GROUPBOX, 10, y, 500, 246, 0);
+    add(p, L"STATIC", L"Saves and settings", 0, 24, y + 26, 350, 20, 0);
+    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, y + 50, 346, 22, 0);
+    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, y + 36, 112, 26, ID_OPEN_SAVES);
+    add(p, L"STATIC", L"Game data", 0, 24, y + 94, 350, 20, 0);
+    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, y + 118, 346, 22, 0);
+    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, y + 104, 112, 26, ID_OPEN_DATA);
+    add(p, L"STATIC", L"Log", 0, 24, y + 162, 350, 20, 0);
+    add(p, L"STATIC", L"pvz2.log, for a bug report", 0, 24, y + 186, 346, 22, 0);
+    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, y + 172, 112, 26, ID_OPEN_LOG);
+    about_refresh_check_time(p);
 }
 
 /* The two path labels are made here and filled by layout, which knows the
@@ -591,6 +639,7 @@ static void fill_paths(HWND page)
 static void show_page(int i)
 {
     for (int j = 0; j < PAGE_COUNT; j++) ShowWindow(g_page[j], j == i ? SW_SHOW : SW_HIDE);
+    if (i == ABOUT && g_page[ABOUT]) about_refresh_check_time(g_page[ABOUT]);
 }
 
 static void layout(HWND h)
@@ -651,6 +700,9 @@ static void build(HWND h)
     build_pointer_page(g_page[GAMEPLAY]);
     build_about_page(g_page[ABOUT]);
     fill_paths(g_page[ABOUT]);
+    /* The pages were sized before their children existed; let them measure
+     * their scroll ranges now. */
+    for (int i = 0; i < PAGE_COUNT; i++) SendMessageW(g_page[i], WM_SIZE, SIZE_RESTORED, 0);
 
     add(h, L"BUTTON", L"OK", BS_DEFPUSHBUTTON, 0, 0, 80, 26, IDOK);
     add(h, L"BUTTON", L"Cancel", BS_PUSHBUTTON, 0, 0, 80, 26, IDCANCEL);
@@ -706,6 +758,16 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             pointer_page_label();
         }
         return 0;
+    case WM_TIMER:
+        if (wp == ID_CHECK_TIMER) {
+            about_refresh_check_time(g_page[ABOUT]);
+            if (--g_check_ticks <= 0) KillTimer(h, ID_CHECK_TIMER);
+            return 0;
+        }
+        break;
+    case PVZ2_WM_UPDATE_CHECK_DONE:
+        about_refresh_check_time(g_page[ABOUT]);
+        return 0;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDOK: apply(); DestroyWindow(h); return 0;
@@ -741,6 +803,16 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_SHOW_CURSOR:
             g_pending.show_cursor_plant = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            return 0;
+        case ID_AUTOMATIC_UPDATES:
+            g_pending.automatic_updates = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            return 0;
+        case ID_CHECK_NOW:
+            /* WinSparkle's own window reports through the callbacks; the page
+             * follows the last check time for a while after the click. */
+            pvz2_updates_check(h);
+            g_check_ticks = 30;
+            SetTimer(h, ID_CHECK_TIMER, 1000, NULL);
             return 0;
         case ID_OPEN_SAVES: ShellExecuteA(h, "open", g_host.saves_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
         case ID_OPEN_DATA: ShellExecuteA(h, "open", g_host.data_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
@@ -810,8 +882,21 @@ static LRESULT CALLBACK page_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             int old = si.nPos;
             si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
             si.nMin = 0;
-            si.nMax = S(axis ? 430 : 510) - 1;
+            /* The range follows the children, so the About page scrolls to
+             * its Files section with and without the Updates section. */
+            int extent = 0;
+            for (HWND c = GetWindow(h, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
+                RECT r;
+                if (!GetWindowRect(c, &r)) continue;
+                MapWindowPoints(NULL, h, (POINT *)&r, 2);
+                int end = axis ? r.bottom : r.right;
+                if (end + old > extent) extent = end + old;
+            }
+            si.nMax = extent + S(12) - 1;
             RECT r; GetClientRect(h, &r);
+            if (axis ? r.bottom : r.right) {
+                if (si.nMax < (axis ? r.bottom : r.right) - 1) si.nMax = (axis ? r.bottom : r.right) - 1;
+            }
             si.nPage = axis ? r.bottom : r.right;
             SetScrollInfo(h, bar, &si, TRUE);
             si.fMask = SIF_POS;

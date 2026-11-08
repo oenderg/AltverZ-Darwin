@@ -43,6 +43,7 @@
 #include "pvz2-keys.h"
 #include "pvz2-windows-settings.h"
 #include "pvz2-windows-darkmode.h"
+#include "pvz2-windows-updates.h"
 #include "../win/pvz2-obb-win.h"
 #if defined(__x86_64__)
 /* A bounded preview proves the first-start UI without translating the game. */
@@ -67,6 +68,9 @@ int tl_win_obb_ensure(const char *data_dir, const char *exe_dir);
 #define MIN_CLIENT_H 450
 #define WINDOW_STYLE (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME | WS_CLIPCHILDREN)
 #define ID_SETTINGS 0x1000
+/* WM_SYSCOMMAND carries menu IDs with the low four bits masked, so a system-menu
+ * item's ID must leave them zero. */
+#define ID_CHECK_UPDATES 0x1010
 
 static int g_sw = DESIGN_W, g_sh = DESIGN_H;
 static HWND g_hwnd;
@@ -412,6 +416,7 @@ static void settings_applied(void *user, const pvz2_settings *s)
     g_show_keys = s->show_level_keys;
     g_show_cursor_plant = s->show_cursor_plant;
     g_cross_brightness = s->cursor_cross_brightness;
+    pvz2_updates_set_automatic(s->automatic_updates);
     view_layout();
     badges_apply_setting();
     pointer_apply_setting();
@@ -1790,7 +1795,18 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_SYSCOMMAND:
         if ((wp & 0xfff0) == ID_SETTINGS) { open_settings(); return 0; }
+        if ((wp & 0xfff0) == ID_CHECK_UPDATES) { pvz2_updates_check(h); return 0; }
         break;
+    case PVZ2_WM_UPDATE_QUIT:
+        /* The updater launched the installer and asked the game to go: the
+         * game hears it is going to the background and saves, as on a close,
+         * without the quit prompt (the player already agreed to update). */
+        tl_log_line("windows: closing for the update; the game goes to the background first");
+        save_geometry();
+        if (atomic_load(&g_ready)) { tl_pvz2_lifecycle_background(); Sleep(1500); }
+        tl_log_line("windows: the game is closed for the update");
+        ExitProcess(0);
+        return 0;
     case WM_LBUTTONDOWN:
         /* A click on a bar: the window takes the focus, the game gets no
          * touch (the picture is the child window). */
@@ -1811,7 +1827,13 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CLOSE: {
         static int asking;
         if (asking) return 0;
-        if (g_settings.confirm_quit) {
+        /* A close that does not come from the player at this window - the setup
+         * program's update closes a running game - must not wait for an answer:
+         * the game saves and goes, as the updater's own close does. */
+        int from_player = GetForegroundWindow() == h;
+        if (g_settings.confirm_quit && !from_player)
+            tl_log_line("windows: closed from another program; no confirmation for this one");
+        if (g_settings.confirm_quit && from_player) {
             asking = 1;
             int quit = tl_win_darkmode_confirm_quit(h);
             asking = 0;
@@ -2104,7 +2126,14 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         join(logp, sizeof(logp), g_data, "pvz2.log");
         tl_win_log_open(logp);
     }
+    /* The guest resolves relative storage paths ("sdcard/Android/...") against
+     * the current folder, as it does on the Mac and iPad, where the process
+     * runs in the data folder. A start from the Start menu would otherwise put
+     * an empty "sdcard" folder beside the program. */
+    if (SetCurrentDirectoryA(g_data)) tl_log_line("windows: the current folder is the data folder");
     tl_log_line("windows: %s mode", mode);
+    tl_log_line("windows: Pvz2 Reflourished %s, %s", PVZ2_APP_VERSION,
+                pvz2_updates_built_in() ? "the installed build (with WinSparkle)" : "the portable build (no updater)");
     tl_log_line("windows: settings file %s", g_settings_path);
     tl_log_line("windows: the game's saves, config, reminders and Nimble data %s", g_saves);
     tl_log_line("windows: the game's data %s (the OBB, the CDN archive, the x64 cache and pvz2.log)", g_data);
@@ -2167,6 +2196,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     g_hwnd = make_window(inst);
     if (!g_hwnd) { tl_log_line("windows: CreateWindow failed (%lu)", GetLastError()); return 1; }
     tl_win_darkmode_title(g_hwnd);
+    /* The updater, in the installed build only, after the settings say whether
+     * it checks by itself. */
+    pvz2_updates_init(g_hwnd, g_settings.automatic_updates);
     make_pointer_window(inst);
     pointer_reposition();
     overlays_above_game();
@@ -2194,12 +2226,13 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     g_stats_time = GetTickCount64();
     SetTimer(g_hwnd, STATS_TIMER, 5000, NULL);
 
-    /* The window menu: Settings..., then a separator, as the player's mock-up
-     * had it. Windows' own items (Move, Size, Close) follow it. */
+    /* The window menu: Settings..., Check for Updates..., then a separator, as
+     * the player's mock-up had it. Windows' own items (Move, Size, Close) follow. */
     HMENU sys = GetSystemMenu(g_hwnd, FALSE);
     if (sys) {
         InsertMenuW(sys, 0, MF_BYPOSITION | MF_STRING, ID_SETTINGS, L"Settings...\tCtrl+,");
-        InsertMenuW(sys, 1, MF_BYPOSITION | MF_SEPARATOR, 0, NULL);
+        InsertMenuW(sys, 1, MF_BYPOSITION | MF_STRING, ID_CHECK_UPDATES, L"Check for Updates...");
+        InsertMenuW(sys, 2, MF_BYPOSITION | MF_SEPARATOR, 0, NULL);
     }
 
     g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = "com.ea.game.pvz2_rfl",
@@ -2241,5 +2274,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         DispatchMessageW(&m);
     }
     tl_log_line("windows: the window is closed");
+    pvz2_updates_shutdown();
     ExitProcess(0);
 }
