@@ -41,6 +41,7 @@ void pvz2_settings_defaults(pvz2_settings *s)
     s->start_fullscreen = 0;
     s->keep_window = 1;
     s->adapt_shape = 0;
+    s->show_level_keys = 1;
 }
 
 /* A value that is missing from the file is the default; a value that is there
@@ -81,6 +82,7 @@ void pvz2_settings_load(const char *path, pvz2_settings *s)
     s->start_fullscreen = ini_int(path, "window", "startFullScreen", d.start_fullscreen);
     s->keep_window = ini_int(path, "window", "keepSizeAndPlace", d.keep_window);
     s->adapt_shape = ini_int(path, "window", "adaptShape", d.adapt_shape);
+    s->show_level_keys = ini_int(path, "keys", "showLevelKeys", d.show_level_keys);
 }
 
 int pvz2_settings_save(const char *path, const pvz2_settings *s)
@@ -103,6 +105,7 @@ int pvz2_settings_save(const char *path, const pvz2_settings *s)
     WritePrivateProfileStringA("window", "startFullScreen", s->start_fullscreen ? "1" : "0", path);
     WritePrivateProfileStringA("window", "keepSizeAndPlace", s->keep_window ? "1" : "0", path);
     WritePrivateProfileStringA("window", "adaptShape", s->adapt_shape ? "1" : "0", path);
+    WritePrivateProfileStringA("keys", "showLevelKeys", s->show_level_keys ? "1" : "0", path);
     WritePrivateProfileStringA(NULL, NULL, NULL, path);          /* flush */
     return 1;
 }
@@ -191,6 +194,7 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 #define ID_OPEN_SAVES    202
 #define ID_OPEN_DATA     203
 #define ID_ADAPT_SHAPE   204
+#define ID_SHOW_KEYS     205
 
 #define ID_RESTORE       300
 #define ID_APPLY         301
@@ -383,6 +387,8 @@ static void build_keyboard_page(HWND p)
     key_row(p, FIELD_POWERUP1, 272, 180, 96, 56);
     key_row(p, FIELD_POWERUP2, 272, 208, 96, 56);
     key_row(p, FIELD_POWERUP3, 272, 236, 96, 56);
+    HWND keys = add(p, L"BUTTON", L"Show keys in levels", BS_AUTOCHECKBOX, 22, 310, 300, 22, ID_SHOW_KEYS);
+    SendMessageW(keys, BM_SETCHECK, g_pending.show_level_keys ? BST_CHECKED : BST_UNCHECKED, 0);
     add(p, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON, 390, 306, 120, 26, ID_RESTORE);
 }
 
@@ -538,6 +544,9 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_ADAPT_SHAPE:
             g_pending.adapt_shape = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            return 0;
+        case ID_SHOW_KEYS:
+            g_pending.show_level_keys = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
             return 0;
         case ID_OPEN_SAVES: ShellExecuteA(h, "open", g_host.saves_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
         case ID_OPEN_DATA: ShellExecuteA(h, "open", g_host.data_dir, NULL, NULL, SW_SHOWNORMAL); return 0;

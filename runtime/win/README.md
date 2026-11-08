@@ -75,6 +75,17 @@ Z X C the level's power-ups. They use the game's own card press and shovel, as o
 There are no in-level key labels yet on Windows, so the Mac's "Show keys in levels" choice is
 not offered.
 
+## The key labels in levels
+
+With "Show keys in levels" on (Settings, Keyboard; the default), the host draws the key
+that works each control on the control: the seed packets, the shovel, fast-forward, plant
+food and the level's power-ups. The driver publishes where the controls are and whether
+the board is live (`tl_pvz2_badges`, the same snapshot the Mac and iPad read); the host
+draws a small dark plaque with the yellow key on a click-through layered window over the
+picture, and hides it unless the board is live. The label comes from the same settings the
+keyboard reads, so a remapped key changes at once, and `level-ui.ttf` (beside the program)
+draws it; without the file a bold italic system face is used.
+
 ## Live content
 
 `husk-tl-cdn-win.c` fetches the live content over WinHTTP from the project's own CDN

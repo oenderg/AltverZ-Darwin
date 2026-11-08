@@ -8,7 +8,8 @@ PvZ2Reflourished-<version>-windows-x64.zip
 ```
 
 Each holds the program, ANGLE (`libEGL.dll`, `libGLESv2.dll` and the D3D/Vulkan
-companions), `Game/pvz2.apk`, `Game/1.4.2.main.tar` and a README. No MSYS2 or
+companions), `Game/pvz2.apk`, `Game/1.4.2.main.tar`, the level key label font
+(`level-ui.ttf`) and a README. No MSYS2 or
 llvm-mingw installation is needed on the player's PC: everything the programs import
 beyond Windows' own DLLs travels in the zip.
 

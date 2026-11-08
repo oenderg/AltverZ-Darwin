@@ -26,6 +26,7 @@ typedef struct {
     int start_fullscreen;
     int keep_window;
     int adapt_shape;      /* 1: the game starts in the window's shape (4:3 to 21:9) */
+    int show_level_keys;  /* 1: draw the key on each control in a live level */
 } pvz2_settings;
 
 typedef struct {

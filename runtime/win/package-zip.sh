@@ -57,6 +57,9 @@ stage_common() {
     rm -rf "$dir"
     mkdir -p "$dir/Game"
     cp "$APK" "$dir/Game/pvz2.apk"
+    # The level key labels: the game's own level UI font (the one file the
+    # project ships from the game's assets, as the Mac and iPad apps do).
+    [ -f "$REPO/runtime/tools/fonts/level-ui.ttf" ] && cp "$REPO/runtime/tools/fonts/level-ui.ttf" "$dir/"
     if [ -n "$TAR" ]; then
         [ -f "$TAR" ] || { echo "package-zip: no CDN archive at $TAR" >&2; exit 2; }
         cp "$TAR" "$dir/Game/1.4.2.main.tar"
@@ -78,6 +81,8 @@ Where the game keeps things
   the translation      %LOCALAPPDATA%\PvZ2 Reflourished
 A file named "portable" beside the program puts everything in "data" beside it.
 The Settings window (window menu, or Ctrl+,) changes the keys and the window.
+"In a level the key that works each control is shown on it" is on by default
+(Settings, Keyboard); level-ui.ttf beside the program draws those labels.
 
 The game data (the OBB) is downloaded by the game on its first start; the
 archive in Game is the offline fallback for the live content.

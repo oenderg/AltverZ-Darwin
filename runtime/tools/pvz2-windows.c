@@ -24,6 +24,7 @@
 #include <shellapi.h>
 #include <stdatomic.h>
 #include <stdio.h>
+#include <wchar.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -61,6 +62,9 @@ static HWND g_hwnd;
  * shape that fits, centred. See "the picture" below. */
 static HWND g_view;
 static int g_adapt;
+static int g_show_keys;
+static void badges_reposition(void);
+static void badges_apply_setting(void);
 static int g_layout_w = DESIGN_W, g_layout_h = DESIGN_H;
 static bool g_down;
 static void view_layout(void);
@@ -322,7 +326,9 @@ static void settings_applied(void *user, const pvz2_settings *s)
     (void)user;
     g_settings = *s;
     g_adapt = s->adapt_shape;
+    g_show_keys = s->show_level_keys;
     view_layout();
+    badges_apply_setting();
     save_geometry();
     toggle_fullscreen(g_settings.start_fullscreen ? 1 : 0);
     tl_log_line("windows: the settings are applied without a restart (%s shape at the next start)",
@@ -385,12 +391,270 @@ static void view_layout(void)
     if (vh < 1) vh = 1;
     int x = (cw - vw) / 2, y = (ch - vh) / 2;
     SetWindowPos(g_view, NULL, x, y, vw, vh, SWP_NOZORDER | SWP_NOACTIVATE);
+    badges_reposition();
     if (vw != g_sw || vh != g_sh) {
         g_sw = vw; g_sh = vh;
         tl_log_line("windows: window %dx%d client, the game draws at %dx%d (%d,%d), bars %d left %d right %d top %d bottom",
                     cw, ch, vw, vh, x, y, x, cw - vw - x, y, ch - vh - y);
         tl_pvz2_set_surface_size(vw, vh);
     }
+}
+
+/* ------------------------------------------------------------- key badges
+ *
+ * The driver publishes where the controls a shortcut works are and whether
+ * the keys do anything (tl_pvz2_badges): the seed packets, the shovel, fast
+ * forward, plant food and the level's power-ups. The host owns the key
+ * settings, so it draws the labels: a small dark plaque with the key at the
+ * control's corner, on a click-through layered window above the game's
+ * picture. It is hidden unless the board is live, so the seed chooser, a
+ * popup and the end of the level clear it.
+ */
+#define BADGE_COUNT (TL_PVZ2_BADGE_SLOTS + 1 + 1 + 1 + TL_PVZ2_BADGE_POWERUPS)
+#define BADGE_TIMER 103
+
+static HWND g_badge_win;
+static int g_badge_visible;
+static unsigned int g_badge_generation;
+static int g_badge_src_w, g_badge_src_h;
+static wchar_t g_badge_face[LF_FACESIZE] = L"Segoe UI";
+static HFONT g_badge_font;
+static int g_badge_font_px;
+static HDC g_badge_dc;
+static HBITMAP g_badge_dib;
+static HGDIOBJ g_badge_old;
+static void *g_badge_bits;
+static int g_badge_w, g_badge_h;
+static HBRUSH g_badge_bg;
+static HPEN g_badge_edge;
+
+static const int *badge_rect(int index, const tl_pvz2_badge_snapshot *s)
+{
+    if (index < TL_PVZ2_BADGE_SLOTS) return index < s->slot_count ? s->packet[index] : NULL;
+    index -= TL_PVZ2_BADGE_SLOTS;
+    if (index == 0) return s->shovel;
+    if (index == 1) return s->fast_forward;
+    if (index == 2) return s->plant_food;
+    index -= 3;
+    return index >= 0 && index < s->powerup_count ? s->powerup[index] : NULL;
+}
+
+/* The key the settings give this control; empty is None, and no badge. */
+static const wchar_t *badge_label(int index, const tl_pvz2_badge_snapshot *s, wchar_t *buf, int n)
+{
+    const char *key = NULL;
+    if (index < TL_PVZ2_BADGE_SLOTS) {
+        if (index >= s->slot_count) return NULL;
+        key = g_settings.slot[index];
+    } else if (index == TL_PVZ2_BADGE_SLOTS) {
+        key = g_settings.shovel;
+    } else if (index == TL_PVZ2_BADGE_SLOTS + 1) {
+        key = g_settings.fast_forward;
+    } else if (index == TL_PVZ2_BADGE_SLOTS + 2) {
+        key = g_settings.plant_food;
+    } else {
+        int p = index - TL_PVZ2_BADGE_SLOTS - 3;
+        if (p < 0 || p >= PVZ2_POWERUP_COUNT || p >= s->powerup_count) return NULL;
+        key = g_settings.powerup[p];
+    }
+    if (!key || !*key) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, key, -1, buf, n) <= 0) return NULL;
+    return buf;
+}
+
+/* The bundled level UI font, as the Mac and iPad use it; a bold italic system
+ * face when the file is not beside the program. */
+static void badge_font_init(void)
+{
+    char path[MAX_PATH + 32];
+    join(path, sizeof(path), g_exe_dir, "level-ui.ttf");
+    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
+        if (AddFontResourceExA(path, FR_PRIVATE, NULL) > 0) {
+            wcscpy(g_badge_face, L"fbUsv8C5eI Black");
+            tl_log_line("windows: the key labels use %s", path);
+            return;
+        }
+        tl_log_line("windows: the font at %s did not load; using the system face", path);
+    } else {
+        tl_log_line("windows: no level-ui.ttf beside the program; the key labels use the system face");
+    }
+}
+
+static void badges_hide(void)
+{
+    if (g_badge_win && g_badge_visible) {
+        ShowWindow(g_badge_win, SW_HIDE);
+        g_badge_visible = 0;
+    }
+}
+
+static void badges_reposition(void)
+{
+    if (!g_badge_win || !g_view || !g_badge_visible) return;
+    RECT vr;
+    if (!GetWindowRect(g_view, &vr)) return;
+    SetWindowPos(g_badge_win, NULL, vr.left, vr.top, vr.right - vr.left, vr.bottom - vr.top,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+/* One redraw: the snapshot's controls, each with its key. The plaque is dark
+ * and the key yellow, the colours the Mac's labels use. GDI draws onto a
+ * 32-bit DIB; the alpha channel is set by hand (the layer is transparent
+ * everywhere else, and click-through). */
+static void badges_draw(const tl_pvz2_badge_snapshot *s)
+{
+    int w = s->surface_w, h = s->surface_h;
+    if (!g_badge_dc) g_badge_dc = CreateCompatibleDC(NULL);
+    if (!g_badge_dc) return;
+    if (!g_badge_dib || w != g_badge_w || h != g_badge_h) {
+        if (g_badge_dib) {
+            SelectObject(g_badge_dc, g_badge_old);
+            DeleteObject(g_badge_dib);
+            g_badge_dib = NULL;
+        }
+        BITMAPINFO bi;
+        memset(&bi, 0, sizeof bi);
+        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth = w;
+        bi.bmiHeader.biHeight = -h;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        g_badge_dib = CreateDIBSection(g_badge_dc, &bi, DIB_RGB_COLORS, &g_badge_bits, NULL, 0);
+        if (!g_badge_dib) return;
+        g_badge_old = SelectObject(g_badge_dc, g_badge_dib);
+        g_badge_w = w;
+        g_badge_h = h;
+    }
+    memset(g_badge_bits, 0, (size_t)w * (size_t)h * 4);
+    if (!g_badge_bg) {
+        g_badge_bg = CreateSolidBrush(RGB(18, 14, 6));
+        g_badge_edge = CreatePen(PS_SOLID, 1, RGB(255, 240, 46));
+    }
+    if (!g_badge_bg || !g_badge_edge) return;
+    SetBkMode(g_badge_dc, TRANSPARENT);
+    SetTextColor(g_badge_dc, RGB(255, 240, 46));
+    for (int i = 0; i < BADGE_COUNT; i++) {
+        const int *r = badge_rect(i, s);
+        if (!r || r[2] < 16 || r[3] < 16) continue;
+        wchar_t text[32];
+        const wchar_t *label = badge_label(i, s, text, 32);
+        if (!label) continue;
+        int px = (int)(r[3] * 0.46);
+        if (px < 10) px = 10;
+        if (px > 160) px = 160;
+        if (!g_badge_font || g_badge_font_px != px) {
+            if (g_badge_font) DeleteObject(g_badge_font);
+            LOGFONTW lf;
+            memset(&lf, 0, sizeof lf);
+            lf.lfHeight = -px;
+            lf.lfWeight = FW_HEAVY;
+            lf.lfItalic = TRUE;
+            lstrcpynW(lf.lfFaceName, g_badge_face, LF_FACESIZE);
+            g_badge_font = CreateFontIndirectW(&lf);
+            g_badge_font_px = px;
+        }
+        HGDIOBJ old_font = SelectObject(g_badge_dc, g_badge_font);
+        SIZE tsz = { 0, 0 };
+        GetTextExtentPoint32W(g_badge_dc, label, (int)wcslen(label), &tsz);
+        int pad = px / 3;
+        if (pad < 3) pad = 3;
+        int bw = tsz.cx + pad * 2, bh = px + pad;
+        int x = r[0] + r[2] - bw - (int)(r[3] * 0.08);
+        int y = r[1];
+        if (i == TL_PVZ2_BADGE_SLOTS || i == TL_PVZ2_BADGE_SLOTS + 2) y += r[3] - bh;
+        if (i == TL_PVZ2_BADGE_SLOTS + 2) x = r[0];
+        if (x + bw > w) x = w - bw;
+        if (y + bh > h) y = h - bh;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        if (bw <= 0 || bh <= 0 || x + bw > w || y + bh > h) {
+            SelectObject(g_badge_dc, old_font);
+            continue;
+        }
+        RECT box = { x, y, x + bw, y + bh };
+        FillRect(g_badge_dc, &box, g_badge_bg);
+        HGDIOBJ old_pen = SelectObject(g_badge_dc, g_badge_edge);
+        HGDIOBJ old_brush = SelectObject(g_badge_dc, GetStockObject(NULL_BRUSH));
+        Rectangle(g_badge_dc, box.left, box.top, box.right, box.bottom);
+        SelectObject(g_badge_dc, old_brush);
+        SelectObject(g_badge_dc, old_pen);
+        int ty = y + (bh - tsz.cy) / 2;
+        TextOutW(g_badge_dc, x + pad, ty, label, (int)wcslen(label));
+        SelectObject(g_badge_dc, old_font);
+        /* GDI leaves the alpha byte alone: the plaque is made opaque here. */
+        unsigned char *bits = g_badge_bits;
+        for (int yy = box.top; yy < box.bottom; yy++) {
+            unsigned char *row = bits + ((size_t)yy * (size_t)w + (size_t)box.left) * 4;
+            for (int xx = box.left; xx < box.right; xx++, row += 4) row[3] = 255;
+        }
+    }
+    RECT vr;
+    if (!GetWindowRect(g_view, &vr)) return;
+    POINT dst = { vr.left, vr.top };
+    SIZE size = { w, h };
+    POINT src = { 0, 0 };
+    BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+    if (!UpdateLayeredWindow(g_badge_win, NULL, &dst, &size, g_badge_dc, &src, 0, &bf, ULW_ALPHA)) return;
+    if (!g_badge_visible) {
+        ShowWindow(g_badge_win, SW_SHOWNOACTIVATE);
+        g_badge_visible = 1;
+    }
+}
+
+static void badges_tick(void)
+{
+    if (!g_show_keys || !atomic_load(&g_ready)) {
+        badges_hide();
+        return;
+    }
+    tl_pvz2_badge_snapshot s;
+    tl_pvz2_badges(&s);
+    if (s.generation == g_badge_generation && s.surface_w == g_badge_src_w && s.surface_h == g_badge_src_h)
+        return;
+    g_badge_generation = s.generation;
+    g_badge_src_w = s.surface_w;
+    g_badge_src_h = s.surface_h;
+    if (!s.live || s.surface_w != g_sw || s.surface_h != g_sh || s.surface_w <= 0 || s.surface_h <= 0) {
+        badges_hide();
+        return;
+    }
+    badges_draw(&s);
+}
+
+static void badges_apply_setting(void)
+{
+    tl_pvz2_set_badges_enabled(g_show_keys);
+    g_badge_generation = 0;
+    if (g_show_keys) SetTimer(g_hwnd, BADGE_TIMER, 40, NULL);
+    else {
+        KillTimer(g_hwnd, BADGE_TIMER);
+        badges_hide();
+    }
+}
+
+static LRESULT CALLBACK badge_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+/* The overlay is a click-through popup owned by the game's window: it stays
+ * above the picture, takes no focus and no mouse, and is hidden when the
+ * window is minimized or the board is not live. */
+static void make_badge_window(HINSTANCE inst)
+{
+    static int registered;
+    if (!registered) {
+        WNDCLASSEXW bc = { sizeof(bc) };
+        bc.lpfnWndProc = badge_proc;
+        bc.hInstance = inst;
+        bc.lpszClassName = L"PvZ2ReflourishedBadges";
+        RegisterClassExW(&bc);
+        registered = 1;
+    }
+    g_badge_win = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                                  L"PvZ2ReflourishedBadges", L"", WS_POPUP,
+                                  0, 0, 1, 1, g_hwnd, NULL, inst, NULL);
 }
 
 static void touch(int phase, LPARAM lp)
@@ -470,11 +734,23 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_CHAR: typed(wp); return 0;
     case WM_SIZE:
-        if (h == g_hwnd && wp != SIZE_MINIMIZED) {
+        if (h == g_hwnd && wp == SIZE_MINIMIZED) {
+            g_badge_generation = 0;
+            badges_hide();
+        } else if (h == g_hwnd) {
             view_layout();
             InvalidateRect(h, NULL, TRUE);
         }
         return 0;
+    case WM_MOVE:
+        badges_reposition();
+        return 0;
+    case WM_TIMER:
+        if (wp == BADGE_TIMER) {
+            badges_tick();
+            return 0;
+        }
+        break;
     case WM_EXITSIZEMOVE:
         if (!g_fullscreen) save_geometry();
         return 0;
@@ -551,7 +827,7 @@ static HWND make_window(HINSTANCE inst)
                                      mi.rcMonitor.right - mi.rcMonitor.left,
                                      mi.rcMonitor.bottom - mi.rcMonitor.top,
                                      NULL, NULL, inst, NULL);
-            if (parent) { g_hwnd = parent; startup_layout_from_window(); make_view(inst); }
+            if (parent) { g_hwnd = parent; startup_layout_from_window(); make_view(inst); make_badge_window(inst); }
             return parent;
         }
     }
@@ -559,7 +835,7 @@ static HWND make_window(HINSTANCE inst)
     parent = CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", WINDOW_STYLE,
                              wr.left, wr.top, wr.right - wr.left, wr.bottom - wr.top,
                              NULL, NULL, inst, NULL);
-    if (parent) { g_hwnd = parent; startup_layout_from_window(); make_view(inst); }
+    if (parent) { g_hwnd = parent; startup_layout_from_window(); make_view(inst); make_badge_window(inst); }
     return parent;
 }
 
@@ -709,6 +985,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     pvz2_settings_load(g_settings_path, &g_settings);
     g_start_fullscreen = g_settings.start_fullscreen;
     g_adapt = g_settings.adapt_shape;
+    g_show_keys = g_settings.show_level_keys;
 
     snprintf(g_apk, sizeof(g_apk), "%s", env_or("TL_PVZ2_APK", "")); 
     if (!g_apk[0]) { char p[MAX_PATH + 32]; join(p, sizeof(p), g_exe_dir, "Game/pvz2.apk"); snprintf(g_apk, sizeof(g_apk), "%s", p); }
@@ -772,6 +1049,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     const char *frames = getenv("TL_PVZ2_FRAMES");
     if (frames && *frames) { tl_win_mkdirs(frames); g_cfg.frame_dir = frames; g_cfg.frame_every = getenv("TL_PVZ2_FRAME_EVERY") ? atoi(getenv("TL_PVZ2_FRAME_EVERY")) : 60; }
 
+    badge_font_init();
+    badges_apply_setting();
     tl_pvz2_set_keyboard_hook(keyboard_shown);
     /* The shortcuts are the Mac's: the game's own card press for a seed packet
      * and its own shovel, so neither needs coordinates at any surface size. */
