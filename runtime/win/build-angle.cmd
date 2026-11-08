@@ -211,7 +211,8 @@ rem and no Vulkan loader, and a DLL that wanted one would fail on a player's PC 
 rem of here. dumpbin comes with Visual Studio; without it the check is skipped, loudly.
 set "DUMPBIN="
 set "VS="
-for /f "delims=" %%i in ('""%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath"') do set "VS=%%i"
+rem One quoted path and no outer quotes: with ""..." the (x86) in the path ends the for.
+for /f "delims=" %%i in ('"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VS=%%i"
 if not defined VS goto :no_dumpbin
 for /d %%d in ("%VS%\VC\Tools\MSVC\*") do set "MSVC=%%~d"
 if exist "%MSVC%\bin\Hostx64\x64\dumpbin.exe" set "DUMPBIN=%MSVC%\bin\Hostx64\x64\dumpbin.exe"
@@ -220,8 +221,8 @@ if not defined DUMPBIN goto :no_dumpbin
 set "BAD="
 for %%f in (libEGL.dll libGLESv2.dll) do (
     echo    %%f imports:
-    dumpbin /nologo /dependents "%STAGE%\%%f" | findstr /r /c:"^    .*[.]dll$"
-    dumpbin /nologo /dependents "%STAGE%\%%f" | findstr /i /c:"VCRUNTIME" /c:"MSVCP140" /c:"vulkan-1.dll" /c:"vk_swiftshader.dll" >nul
+    "%DUMPBIN%" /nologo /dependents "%STAGE%\%%f" | findstr /r /c:"^    .*[.]dll$"
+    "%DUMPBIN%" /nologo /dependents "%STAGE%\%%f" | findstr /i /c:"VCRUNTIME" /c:"MSVCP140" /c:"vulkan-1.dll" /c:"vk_swiftshader.dll" >nul
     if not errorlevel 1 set "BAD=%%f"
 )
 if not defined BAD exit /b 0
