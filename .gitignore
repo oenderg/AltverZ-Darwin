@@ -10,3 +10,9 @@ scripts/dmg/art
 # ANGLE DLLs come from the build-inputs draft (runtime/win/fetch-angle.sh), not git
 prebuilt/win-*/*
 !prebuilt/win-*/README.md
+
+# WinSparkle's DLLs and headers come from its release zip (runtime/win/fetch-winsparkle.sh)
+prebuilt/winsparkle/*
+!prebuilt/winsparkle/README.md
+!prebuilt/winsparkle/COPYING
+!prebuilt/winsparkle/COPYING.expat
