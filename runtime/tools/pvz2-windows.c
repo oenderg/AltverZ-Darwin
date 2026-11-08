@@ -60,9 +60,11 @@ static HWND g_hwnd;
 /* The picture: the game is a child window, the largest rectangle of the game's
  * shape that fits, centred. See "the picture" below. */
 static HWND g_view;
+static int g_adapt;
 static int g_layout_w = DESIGN_W, g_layout_h = DESIGN_H;
 static bool g_down;
 static void view_layout(void);
+static void startup_layout_from_window(void);
 static char g_exe_dir[MAX_PATH], g_data[MAX_PATH], g_saves[MAX_PATH], g_apk[MAX_PATH], g_egl[MAX_PATH], g_gles[MAX_PATH];
 static char g_settings_path[MAX_PATH];
 static pvz2_settings g_settings;
@@ -319,10 +321,12 @@ static void settings_applied(void *user, const pvz2_settings *s)
 {
     (void)user;
     g_settings = *s;
+    g_adapt = s->adapt_shape;
     view_layout();
     save_geometry();
     toggle_fullscreen(g_settings.start_fullscreen ? 1 : 0);
-    tl_log_line("windows: the settings are applied without a restart");
+    tl_log_line("windows: the settings are applied without a restart (%s shape at the next start)",
+                g_adapt ? "the window's, between 4:3 and 21:9" : "the game's own");
 }
 
 static void open_settings(void)
@@ -335,6 +339,28 @@ static void open_settings(void)
         .user = NULL
     };
     pvz2_settings_open(g_hwnd, &g_settings, &host);
+}
+
+/* The shape the game starts in. Fixed: the game's own 1748x804. Adapt: the
+ * window's shape, kept between 4:3 and 2.4:1 (the shapes the game fills). The
+ * guest lays a screen out once, when it opens, so this is chosen at the start;
+ * another window shape afterwards gets bars, exactly as the Mac's Adapt mode
+ * does (it offers a restart for the new shape; the settings say so too). */
+static void startup_layout_from_window(void)
+{
+    g_layout_w = DESIGN_W;
+    g_layout_h = DESIGN_H;
+    if (!g_adapt || !g_hwnd) return;
+    RECT rc;
+    GetClientRect(g_hwnd, &rc);
+    int cw = (int)(rc.right - rc.left), ch = (int)(rc.bottom - rc.top);
+    if (cw <= 0 || ch <= 0) return;
+    double a = (double)cw / (double)ch;
+    if (a < 4.0 / 3.0) a = 4.0 / 3.0;
+    if (a > 2.4) a = 2.4;
+    g_layout_w = cw;
+    g_layout_h = (int)((double)cw / a + 0.5);
+    tl_log_line("windows: the game starts in the window's shape (%.3f:1, kept between 4:3 and 2.4:1)", a);
 }
 
 /* ---------------------------------------------------------------- the picture
@@ -525,7 +551,7 @@ static HWND make_window(HINSTANCE inst)
                                      mi.rcMonitor.right - mi.rcMonitor.left,
                                      mi.rcMonitor.bottom - mi.rcMonitor.top,
                                      NULL, NULL, inst, NULL);
-            if (parent) { g_hwnd = parent; make_view(inst); }
+            if (parent) { g_hwnd = parent; startup_layout_from_window(); make_view(inst); }
             return parent;
         }
     }
@@ -533,7 +559,7 @@ static HWND make_window(HINSTANCE inst)
     parent = CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", WINDOW_STYLE,
                              wr.left, wr.top, wr.right - wr.left, wr.bottom - wr.top,
                              NULL, NULL, inst, NULL);
-    if (parent) { g_hwnd = parent; make_view(inst); }
+    if (parent) { g_hwnd = parent; startup_layout_from_window(); make_view(inst); }
     return parent;
 }
 
@@ -682,6 +708,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 
     pvz2_settings_load(g_settings_path, &g_settings);
     g_start_fullscreen = g_settings.start_fullscreen;
+    g_adapt = g_settings.adapt_shape;
 
     snprintf(g_apk, sizeof(g_apk), "%s", env_or("TL_PVZ2_APK", "")); 
     if (!g_apk[0]) { char p[MAX_PATH + 32]; join(p, sizeof(p), g_exe_dir, "Game/pvz2.apk"); snprintf(g_apk, sizeof(g_apk), "%s", p); }
@@ -723,6 +750,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
      * game never sees a different size while it starts. */
     ShowWindow(g_hwnd, g_fullscreen ? SW_SHOW : (g_windowed_placement.showCmd == SW_SHOWMAXIMIZED ? SW_SHOWMAXIMIZED : show));
     UpdateWindow(g_hwnd);
+    /* The shown window can be a different size than the created one (a
+     * maximized start): the shape the game starts in is chosen from it. */
+    startup_layout_from_window();
     view_layout();
     RECT rc; GetClientRect(g_hwnd, &rc);
     int cw = (int)(rc.right - rc.left), ch = (int)(rc.bottom - rc.top);

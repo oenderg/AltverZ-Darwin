@@ -40,6 +40,7 @@ void pvz2_settings_defaults(pvz2_settings *s)
         snprintf(s->powerup[i], sizeof(s->powerup[i]), "%s", pvz2_default_powerup_keys[i]);
     s->start_fullscreen = 0;
     s->keep_window = 1;
+    s->adapt_shape = 0;
 }
 
 /* A value that is missing from the file is the default; a value that is there
@@ -79,6 +80,7 @@ void pvz2_settings_load(const char *path, pvz2_settings *s)
     }
     s->start_fullscreen = ini_int(path, "window", "startFullScreen", d.start_fullscreen);
     s->keep_window = ini_int(path, "window", "keepSizeAndPlace", d.keep_window);
+    s->adapt_shape = ini_int(path, "window", "adaptShape", d.adapt_shape);
 }
 
 int pvz2_settings_save(const char *path, const pvz2_settings *s)
@@ -100,6 +102,7 @@ int pvz2_settings_save(const char *path, const pvz2_settings *s)
     }
     WritePrivateProfileStringA("window", "startFullScreen", s->start_fullscreen ? "1" : "0", path);
     WritePrivateProfileStringA("window", "keepSizeAndPlace", s->keep_window ? "1" : "0", path);
+    WritePrivateProfileStringA("window", "adaptShape", s->adapt_shape ? "1" : "0", path);
     WritePrivateProfileStringA(NULL, NULL, NULL, path);          /* flush */
     return 1;
 }
@@ -187,6 +190,7 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 #define ID_KEEP_WINDOW   201
 #define ID_OPEN_SAVES    202
 #define ID_OPEN_DATA     203
+#define ID_ADAPT_SHAPE   204
 
 #define ID_RESTORE       300
 #define ID_APPLY         301
@@ -384,19 +388,26 @@ static void build_keyboard_page(HWND p)
 
 static void build_general_page(HWND p)
 {
-    add(p, L"BUTTON", L"Window", BS_GROUPBOX, 10, 8, 500, 96, 0);
+    add(p, L"BUTTON", L"Window", BS_GROUPBOX, 10, 8, 500, 140, 0);
     HWND full = add(p, L"BUTTON", L"Start in full screen", BS_AUTOCHECKBOX, 24, 30, 300, 22, ID_START_FULL);
     SendMessageW(full, BM_SETCHECK, g_pending.start_fullscreen ? BST_CHECKED : BST_UNCHECKED, 0);
     HWND keep = add(p, L"BUTTON", L"Keep the window's size and place", BS_AUTOCHECKBOX, 24, 58, 320, 22, ID_KEEP_WINDOW);
     SendMessageW(keep, BM_SETCHECK, g_pending.keep_window ? BST_CHECKED : BST_UNCHECKED, 0);
+    HWND adapt = add(p, L"BUTTON", L"Let the game adapt to the window's shape (4:3 to 21:9)",
+                     BS_AUTOCHECKBOX, 24, 86, 460, 22, ID_ADAPT_SHAPE);
+    SendMessageW(adapt, BM_SETCHECK, g_pending.adapt_shape ? BST_CHECKED : BST_UNCHECKED, 0);
+    /* The guest lays a screen out once, when it opens (the Mac host says the
+     * same), so the choice is for the next start, not a live resize. */
+    add(p, L"STATIC", L"A new shape takes effect when the game next starts. Until then the", 0, 38, 112, 460, 16, 0);
+    add(p, L"STATIC", L"picture keeps the shape it started in, with bars.", 0, 38, 128, 460, 16, 0);
 
-    add(p, L"BUTTON", L"Saves and game data", BS_GROUPBOX, 10, 112, 500, 178, 0);
-    add(p, L"STATIC", L"Saves and settings:", 0, 24, 134, 200, 20, 0);
-    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, 152, 470, 18, 0);
-    add(p, L"BUTTON", L"Open saves folder", BS_PUSHBUTTON, 24, 176, 130, 26, ID_OPEN_SAVES);
-    add(p, L"STATIC", L"Game data (the OBB and the translation cache):", 0, 24, 210, 300, 20, 0);
-    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, 228, 470, 18, 0);
-    add(p, L"BUTTON", L"Open game data folder", BS_PUSHBUTTON, 24, 252, 140, 26, ID_OPEN_DATA);
+    add(p, L"BUTTON", L"Saves and game data", BS_GROUPBOX, 10, 156, 500, 178, 0);
+    add(p, L"STATIC", L"Saves and settings:", 0, 24, 178, 200, 20, 0);
+    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, 196, 470, 18, 0);
+    add(p, L"BUTTON", L"Open saves folder", BS_PUSHBUTTON, 24, 220, 130, 26, ID_OPEN_SAVES);
+    add(p, L"STATIC", L"Game data (the OBB and the translation cache):", 0, 24, 254, 300, 20, 0);
+    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, 272, 470, 18, 0);
+    add(p, L"BUTTON", L"Open game data folder", BS_PUSHBUTTON, 24, 296, 140, 26, ID_OPEN_DATA);
 }
 
 /* The two path labels are made here and filled by layout, which knows the
@@ -524,6 +535,9 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_KEEP_WINDOW:
             g_pending.keep_window = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            return 0;
+        case ID_ADAPT_SHAPE:
+            g_pending.adapt_shape = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
             return 0;
         case ID_OPEN_SAVES: ShellExecuteA(h, "open", g_host.saves_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
         case ID_OPEN_DATA: ShellExecuteA(h, "open", g_host.data_dir, NULL, NULL, SW_SHOWNORMAL); return 0;

@@ -25,6 +25,7 @@ typedef struct {
     char powerup[PVZ2_POWERUP_COUNT][PVZ2_KEY_NAME_MAX];
     int start_fullscreen;
     int keep_window;
+    int adapt_shape;      /* 1: the game starts in the window's shape (4:3 to 21:9) */
 } pvz2_settings;
 
 typedef struct {
