@@ -1,6 +1,7 @@
 # ScarletNX pull request draft
 
-Not opened yet. Base: ScarletNX `f0873dfbb74c01ef5aa3c401f19b303a952f5f68`. Fix commit: `f26bfd5049f264ef7ac6880e09062641c22a41ec`
+Merged 2026-11-08 as `5b9c0fab` (https://github.com/scarletnx/ScarletNX/pull/1449); kept as the history of the
+change. Base: ScarletNX `f0873dfbb74c01ef5aa3c401f19b303a952f5f68`. Fix commit: `f26bfd5049f264ef7ac6880e09062641c22a41ec`
 on the local branch `fix/invalidate-every-leader` in the Windows VM (`C:\x64\ScarletNX-upstream`), also in
 `upstream-fix.patch` here. It follows ScarletNX's `CONTRIBUTING.md` and `.github/PULL_REQUEST_TEMPLATE.md`: plain prose,
 no semicolons between sentences, no game files or screenshots.
@@ -71,5 +72,5 @@ with the change (counts from the local logging build, not in the commit):
 [ 22.758] egl: swap #1, actual surface 1360x663, guest viewport (0,0) 1360x663
 ```
 
-Before opening: decide whether to run the full `ctest` (needs the lz4 download in the VM), fork ScarletNX, push
+Before opening (now history): decide whether to run the full `ctest` (needs the lz4 download in the VM), fork ScarletNX, push
 `fix/invalidate-every-leader` to the fork, and open the pull request with the title and description above.
