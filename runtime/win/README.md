@@ -75,6 +75,14 @@ Z X C the level's power-ups. They use the game's own card press and shovel, as o
 There are no in-level key labels yet on Windows, so the Mac's "Show keys in levels" choice is
 not offered.
 
+## Live content
+
+`husk-tl-cdn-win.c` fetches the live content over WinHTTP from the project's own CDN
+(`https://reflourished.ducnguyen.org/cdn/1.4.2.main.tar`), with the Mac client's rules:
+only that host on https port 443, no redirects, 30 s without data and 60 s in total, the
+server's `Date` required, and the body must be a complete gzip archive before it replaces
+the saved copy atomically. A failed fetch answers with the saved archive dated now.
+
 ## The first x64 start
 
 The x86-64 build translates the game before its first frame. The host shows a small window

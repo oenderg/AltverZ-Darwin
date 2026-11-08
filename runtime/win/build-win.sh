@@ -14,7 +14,7 @@ N="$H/../src/translation-layer-next"; T="$H/../src/translation-layer"
 target="${1:-starttest}"
 case "$target" in
     starttest) SRCS="$WIN_CORE $H/win-starttest.c"; OUT="$BIN/rfl-starttest.exe" ;;
-    game) SRCS="$WIN_CORE $WIN_GAME"; OUT="$BIN/PvZ2 Reflourished.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32" ;;
+    game) SRCS="$WIN_CORE $WIN_GAME"; OUT="$BIN/PvZ2 Reflourished.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
 OBJS=""
