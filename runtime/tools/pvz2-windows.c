@@ -834,10 +834,21 @@ static void badges_draw(const tl_pvz2_badge_snapshot *s)
             continue;
         }
         /* The Mac's text layer: the typographic advance is centered in the
-         * box, and the baseline sits at the font's ascent from the box top. */
+         * box, and the baseline sits at the font's ascent from the box top.
+         *
+         * The box starts at the control rect, but that is not the drawn
+         * packet: in the fixed 1748x804 layout the game rounds the rect to
+         * whole surface pixels, and at the 1426x656 Windows surface its top
+         * sits about one pixel lower inside the packet than on the Mac's
+         * larger surface. The normalized inset is 0.025 em larger, and the
+         * game's cost number below the digit shows it: without the lift the
+         * yellow ink is 0.50 of the packet pitch above the cost, with it
+         * 0.51, as on the Mac. The adapt layout draws at the window's own
+         * size and does not need the lift. */
         float dx = symbol ? x + (box_w - ink.Width) / 2.0f
                           : x + (box_w - advance) / 2.0f;
-        float dy = symbol ? y + (box_h - ink.Height) / 2.0f : y;
+        float dy = symbol ? y + (box_h - ink.Height) / 2.0f
+                          : y - (g_adapt ? 0.0f : em * 0.025f);
         GpMatrix *m = NULL;
         if (GdipCreateMatrix2(1.0f, 0.0f, 0.0f, 1.0f, dx, dy, &m) == Ok) {
             GdipTransformPath(path, m);
