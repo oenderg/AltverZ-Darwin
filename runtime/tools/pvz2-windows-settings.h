@@ -3,9 +3,9 @@
  * PvZ2: Reflourished on Windows: the settings, and the window that edits them.
  *
  * The settings are the shortcuts (the same ones the Mac host has, named the
- * same way) and two window choices. They live in an INI file in the settings
- * folder, written with the Windows profile functions: a missing or broken file
- * means the defaults, never a crash.
+ * same way), the window choices and the pointer preview. They live in an INI
+ * file in the settings folder, written with the Windows profile functions: a
+ * missing or broken file means the defaults, never a crash.
  */
 #ifndef PVZ2_WINDOWS_SETTINGS_H
 #define PVZ2_WINDOWS_SETTINGS_H
@@ -27,6 +27,8 @@ typedef struct {
     int keep_window;
     int adapt_shape;      /* 1: the game starts in the window's shape (4:3 to 21:9) */
     int show_level_keys;  /* 1: draw the key on each control in a live level */
+    int show_cursor_plant; /* 1: draw the selected plant and its cross at the pointer */
+    int cursor_cross_brightness; /* 0..100, percent of white for the cross bands */
 } pvz2_settings;
 
 typedef struct {

@@ -3,7 +3,7 @@
  * PvZ2: Reflourished on Windows: the settings window.
  *
  * A plain Win32 window with common controls v6, the system's own message font
- * at the window's DPI, and two pages: General and Keyboard. The look follows
+ * at the window's DPI, and three pages: General, Keyboard and Pointer. The look follows
  * the mock-up the player approved; the controls are laid out from the DPI, and
  * the page windows answer WM_CTLCOLORSTATIC themselves so their labels do not
  * sit on grey boxes.
@@ -42,6 +42,8 @@ void pvz2_settings_defaults(pvz2_settings *s)
     s->keep_window = 1;
     s->adapt_shape = 0;
     s->show_level_keys = 1;
+    s->show_cursor_plant = 1;
+    s->cursor_cross_brightness = 45;
 }
 
 /* A value that is missing from the file is the default; a value that is there
@@ -83,6 +85,10 @@ void pvz2_settings_load(const char *path, pvz2_settings *s)
     s->keep_window = ini_int(path, "window", "keepSizeAndPlace", d.keep_window);
     s->adapt_shape = ini_int(path, "window", "adaptShape", d.adapt_shape);
     s->show_level_keys = ini_int(path, "keys", "showLevelKeys", d.show_level_keys);
+    s->show_cursor_plant = ini_int(path, "pointer", "showCursorPlant", d.show_cursor_plant) != 0;
+    s->cursor_cross_brightness = ini_int(path, "pointer", "crossBrightness", d.cursor_cross_brightness);
+    if (s->cursor_cross_brightness < 0) s->cursor_cross_brightness = 0;
+    if (s->cursor_cross_brightness > 100) s->cursor_cross_brightness = 100;
 }
 
 int pvz2_settings_save(const char *path, const pvz2_settings *s)
@@ -106,6 +112,12 @@ int pvz2_settings_save(const char *path, const pvz2_settings *s)
     WritePrivateProfileStringA("window", "keepSizeAndPlace", s->keep_window ? "1" : "0", path);
     WritePrivateProfileStringA("window", "adaptShape", s->adapt_shape ? "1" : "0", path);
     WritePrivateProfileStringA("keys", "showLevelKeys", s->show_level_keys ? "1" : "0", path);
+    WritePrivateProfileStringA("pointer", "showCursorPlant", s->show_cursor_plant ? "1" : "0", path);
+    {
+        char pct[16];
+        snprintf(pct, sizeof(pct), "%d", s->cursor_cross_brightness);
+        WritePrivateProfileStringA("pointer", "crossBrightness", pct, path);
+    }
     WritePrivateProfileStringA(NULL, NULL, NULL, path);          /* flush */
     return 1;
 }
@@ -188,6 +200,7 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 #define ID_TABS          100
 #define ID_PAGE_GENERAL  110
 #define ID_PAGE_KEYBOARD 111
+#define ID_PAGE_POINTER  112
 
 #define ID_START_FULL    200
 #define ID_KEEP_WINDOW   201
@@ -195,9 +208,13 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 #define ID_OPEN_DATA     203
 #define ID_ADAPT_SHAPE   204
 #define ID_SHOW_KEYS     205
+#define ID_SHOW_CURSOR   206
+#define ID_CROSS_BRIGHTNESS 207
+#define ID_CROSS_VALUE   208
 
 #define ID_RESTORE       300
 #define ID_APPLY         301
+#define ID_RESTORE_POINTER 302
 
 /* The key fields, in the order the pages lay them out. */
 #define ID_KEY_BASE 1000
@@ -215,7 +232,7 @@ static const int g_field_ids[FIELD_COUNT] = {
     ID_KEY_BASE + FIELD_POWERUP3
 };
 
-static HWND g_self, g_tabs, g_page[2];
+static HWND g_self, g_tabs, g_page[3];
 static HFONT g_font;
 static HBRUSH g_page_bg, g_dialog_bg;
 static int g_tab;
@@ -392,6 +409,49 @@ static void build_keyboard_page(HWND p)
     add(p, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON, 390, 306, 120, 26, ID_RESTORE);
 }
 
+static void pointer_page_label(void)
+{
+    if (!g_page[2]) return;
+    HWND label = GetDlgItem(g_page[2], ID_CROSS_VALUE);
+    if (!label) return;
+    wchar_t text[16];
+    swprintf(text, sizeof(text) / sizeof(text[0]), L"%d%%", g_pending.cursor_cross_brightness);
+    SetWindowTextW(label, text);
+}
+
+static void pointer_page_refresh(void)
+{
+    if (!g_page[2]) return;
+    HWND show = GetDlgItem(g_page[2], ID_SHOW_CURSOR);
+    if (show) SendMessageW(show, BM_SETCHECK,
+                           g_pending.show_cursor_plant ? BST_CHECKED : BST_UNCHECKED, 0);
+    HWND bar = GetDlgItem(g_page[2], ID_CROSS_BRIGHTNESS);
+    if (bar) SendMessageW(bar, TBM_SETPOS, TRUE, g_pending.cursor_cross_brightness);
+    pointer_page_label();
+}
+
+static void build_pointer_page(HWND p)
+{
+    add(p, L"BUTTON", L"Selected plant", BS_GROUPBOX, 10, 8, 500, 90, 0);
+    HWND show = add(p, L"BUTTON", L"Show the selected plant at the pointer", BS_AUTOCHECKBOX,
+                    24, 34, 440, 22, ID_SHOW_CURSOR);
+    SendMessageW(show, BM_SETCHECK, g_pending.show_cursor_plant ? BST_CHECKED : BST_UNCHECKED, 0);
+    add(p, L"STATIC", L"The plant follows the pointer while a seed packet, the shovel or",
+        0, 24, 60, 460, 16, 0);
+    add(p, L"STATIC", L"plant food is held.", 0, 24, 76, 460, 16, 0);
+
+    add(p, L"BUTTON", L"Cross", BS_GROUPBOX, 10, 108, 500, 116, 0);
+    add(p, L"STATIC", L"Cross brightness", 0, 24, 134, 140, 20, 0);
+    HWND bar = add(p, L"msctls_trackbar32", L"", TBS_HORZ | TBS_NOTICKS,
+                   180, 128, 220, 32, ID_CROSS_BRIGHTNESS);
+    SendMessageW(bar, TBM_SETRANGE, TRUE, MAKELONG(0, 100));
+    SendMessageW(bar, TBM_SETPOS, TRUE, g_pending.cursor_cross_brightness);
+    add(p, L"STATIC", L"", 0, 410, 134, 60, 20, ID_CROSS_VALUE);
+    pointer_page_label();
+
+    add(p, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON, 390, 236, 120, 26, ID_RESTORE_POINTER);
+}
+
 static void build_general_page(HWND p)
 {
     add(p, L"BUTTON", L"Window", BS_GROUPBOX, 10, 8, 500, 140, 0);
@@ -438,7 +498,7 @@ static void fill_paths(HWND page)
 
 static void show_page(int i)
 {
-    for (int j = 0; j < 2; j++) ShowWindow(g_page[j], j == i ? SW_SHOW : SW_HIDE);
+    for (int j = 0; j < 3; j++) ShowWindow(g_page[j], j == i ? SW_SHOW : SW_HIDE);
 }
 
 static void layout(HWND h)
@@ -451,7 +511,7 @@ static void layout(HWND h)
                      SWP_NOZORDER | SWP_NOACTIVATE);
         RECT pr = { 0, 0, rc.right - S(20), rc.bottom - S(60) };
         TabCtrl_AdjustRect(g_tabs, FALSE, &pr);
-        for (int i = 0; i < 2; i++)
+        for (int i = 0; i < 3; i++)
             if (g_page[i])
                 SetWindowPos(g_page[i], NULL, S(10) + pr.left, S(10) + pr.top,
                              pr.right - pr.left, pr.bottom - pr.top,
@@ -474,17 +534,17 @@ static void build(HWND h)
     g_dialog_bg = GetSysColorBrush(COLOR_BTNFACE);
     g_page_bg = GetSysColorBrush(COLOR_WINDOW);
     g_font = make_font((int)GetDpiForWindow(h));
-    for (int i = 0; i < 2; i++) if (g_page[i]) DestroyWindow(g_page[i]);
+    for (int i = 0; i < 3; i++) if (g_page[i]) DestroyWindow(g_page[i]);
     if (g_tabs) DestroyWindow(g_tabs);
     for (int id = IDOK; id <= ID_APPLY; id++) { HWND old = GetDlgItem(h, id); if (old) DestroyWindow(old); }
     g_tabs = NULL;
-    g_page[0] = g_page[1] = NULL;
+    g_page[0] = g_page[1] = g_page[2] = NULL;
 
     RECT rc;
     GetClientRect(h, &rc);
     g_tabs = add(h, WC_TABCONTROLW, L"", WS_CLIPSIBLINGS, 10, 10, 520, 400, ID_TABS);
-    const wchar_t *names[2] = { L"General", L"Keyboard" };
-    for (int i = 0; i < 2; i++) {
+    const wchar_t *names[3] = { L"General", L"Keyboard", L"Pointer" };
+    for (int i = 0; i < 3; i++) {
         TCITEMW t = { .mask = TCIF_TEXT, .pszText = (wchar_t *)names[i] };
         SendMessageW(g_tabs, TCM_INSERTITEMW, i, (LPARAM)&t);
     }
@@ -492,8 +552,10 @@ static void build(HWND h)
     TabCtrl_AdjustRect(g_tabs, FALSE, &pr);
     g_page[0] = add_page(h, 10, 10, 520, 400, ID_PAGE_GENERAL);
     g_page[1] = add_page(h, 10, 10, 520, 400, ID_PAGE_KEYBOARD);
+    g_page[2] = add_page(h, 10, 10, 520, 400, ID_PAGE_POINTER);
     build_general_page(g_page[0]);
     build_keyboard_page(g_page[1]);
+    build_pointer_page(g_page[2]);
     fill_paths(g_page[0]);
 
     add(h, L"BUTTON", L"OK", BS_DEFPUSHBUTTON, 0, 0, 80, 26, IDOK);
@@ -531,6 +593,15 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         SetBkMode(dc, TRANSPARENT);
         return (LRESULT)g_dialog_bg;
     }
+    case WM_HSCROLL:
+        if (g_page[2] && (HWND)lp == GetDlgItem(g_page[2], ID_CROSS_BRIGHTNESS)) {
+            int v = (int)SendMessageW((HWND)lp, TBM_GETPOS, 0, 0);
+            if (v < 0) v = 0;
+            if (v > 100) v = 100;
+            g_pending.cursor_cross_brightness = v;
+            pointer_page_label();
+        }
+        return 0;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDOK: apply(); DestroyWindow(h); return 0;
@@ -548,6 +619,17 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         case ID_SHOW_KEYS:
             g_pending.show_level_keys = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
             return 0;
+        case ID_SHOW_CURSOR:
+            g_pending.show_cursor_plant = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            return 0;
+        case ID_RESTORE_POINTER: {
+            pvz2_settings d;
+            pvz2_settings_defaults(&d);
+            g_pending.show_cursor_plant = d.show_cursor_plant;
+            g_pending.cursor_cross_brightness = d.cursor_cross_brightness;
+            pointer_page_refresh();
+            return 0;
+        }
         case ID_OPEN_SAVES: ShellExecuteA(h, "open", g_host.saves_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
         case ID_OPEN_DATA: ShellExecuteA(h, "open", g_host.data_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
         case ID_RESTORE: {
@@ -558,6 +640,7 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                 HWND f = GetDlgItem(g_page[1], g_field_ids[i]);
                 if (f) field_refresh(f, i);
             }
+            pointer_page_refresh();
             return 0;
         }
         default: break;
@@ -581,7 +664,7 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         g_self = NULL;
         g_tabs = NULL;
-        g_page[0] = g_page[1] = NULL;
+        g_page[0] = g_page[1] = g_page[2] = NULL;
         if (g_font) { DeleteObject(g_font); g_font = NULL; }
         return 0;
     default: break;
@@ -608,6 +691,7 @@ static LRESULT CALLBACK page_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
      * window: pass it on, or Restore defaults and the folder buttons are dead. */
     case WM_COMMAND:
     case WM_NOTIFY:
+    case WM_HSCROLL:
         return SendMessageW(GetParent(h), msg, wp, lp);
     default: break;
     }
