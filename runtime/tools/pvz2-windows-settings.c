@@ -245,6 +245,8 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 #define ID_ASPECT_LABEL  211
 #define ID_MODE_FOOTER   212
 #define ID_CONFIRM_QUIT  213
+#define ID_WINDOW_GROUP  214
+#define ID_QUIT_FOOTER   215
 
 #define ID_RESTORE       300
 #define ID_APPLY         301
@@ -500,11 +502,36 @@ static void mode_refresh(HWND p)
     SetWindowTextW(GetDlgItem(p, ID_MODE_FOOTER), g_pending.adapt_shape ?
         L"The window takes any shape from 4:3 to 2.4:1, and the game starts in the window's shape. The game lays a screen out once, so after you change the shape the picture keeps its old one, with bars. A new shape takes effect when the game next starts. Experimental." :
         L"The window keeps one shape and the game fills it, at any size. A new shape takes effect when the game next starts. “Current display” is the shape of the display the game is on, so full screen has no bars.");
+    /* Measure the actual wrapped text in the message font. Hiding the aspect
+     * row removes its space, and neither mode leaves a fixed-height plaque. */
+    HWND footer = GetDlgItem(p, ID_MODE_FOOTER);
+    wchar_t text[512];
+    GetWindowTextW(footer, text, 512);
+    HDC dc = GetDC(p);
+    HGDIOBJ old = SelectObject(dc, g_font);
+    RECT measured = { 0, 0, S(460), 0 };
+    DrawTextW(dc, text, -1, &measured, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    SelectObject(dc, old);
+    ReleaseDC(p, dc);
+    int y = S(g_pending.adapt_shape ? 72 : 112);
+    int height = measured.bottom - measured.top;
+    int bottom = y + height + S(16);
+    int sx = GetScrollPos(p, SB_HORZ), sy = GetScrollPos(p, SB_VERT);
+    SetWindowPos(footer, NULL, S(24) - sx, y - sy, S(460), height, SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(GetDlgItem(p, ID_WINDOW_GROUP), NULL, S(10) - sx, S(8) - sy,
+                 S(500), bottom - S(8), SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(GetDlgItem(p, ID_START_FULL), NULL, S(24) - sx, bottom + S(20) - sy,
+                 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(GetDlgItem(p, ID_CONFIRM_QUIT), NULL, S(24) - sx, bottom + S(62) - sy,
+                 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(GetDlgItem(p, ID_QUIT_FOOTER), NULL, S(24) - sx, bottom + S(98) - sy,
+                 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    InvalidateRect(p, NULL, TRUE);
 }
 
 static void build_general_page(HWND p)
 {
-    add(p, L"BUTTON", L"Window", BS_GROUPBOX, 10, 8, 500, 242, 0);
+    add(p, L"BUTTON", L"Window", BS_GROUPBOX, 10, 8, 500, 242, ID_WINDOW_GROUP);
     add(p, L"STATIC", L"Mode", 0, 24, 36, 120, 22, 0);
     add(p, L"BUTTON", L"Fixed", BS_AUTORADIOBUTTON | WS_GROUP, 180, 32, 100, 24, ID_FIXED_SHAPE);
     add(p, L"BUTTON", L"Adapt", BS_AUTORADIOBUTTON, 292, 32, 100, 24, ID_ADAPT_SHAPE);
@@ -532,7 +559,7 @@ static void build_general_page(HWND p)
     HWND confirm = add(p, L"BUTTON", L"Ask before quitting", BS_AUTOCHECKBOX, 24, 318, 440, 24, ID_CONFIRM_QUIT);
     SendMessageW(confirm, BM_SETCHECK, g_pending.confirm_quit ? BST_CHECKED : BST_UNCHECKED, 0);
     add(p, L"STATIC", L"Closing the window or pressing Alt+F4 saves and quits. To pause and keep your place instead, minimize. Quitting asks first when this is on.",
-        0, 24, 354, 460, 58, 0);
+        0, 24, 354, 460, 58, ID_QUIT_FOOTER);
     mode_refresh(p);
 }
 
