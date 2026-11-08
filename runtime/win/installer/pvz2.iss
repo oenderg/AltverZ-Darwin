@@ -27,7 +27,7 @@
 ; The icon is runtime/win/pvz2.ico beside the .iss's folder; a compile from a copied
 ; tree passes /DSetupIcon=<absolute path>.
 #ifndef SetupIcon
-  #define SetupIcon "..\..\pvz2.ico"
+  #define SetupIcon "..\pvz2.ico"
 #endif
 
 #define AppName "PvZ2 Reflourished"

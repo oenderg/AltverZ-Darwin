@@ -27,6 +27,6 @@ if not exist "%ISCC%" (
     exit /b 2
 )
 
-"%ISCC%" /Qp /DStageDir="%STAGE%" /DOutDir="%OUT%" /DAppVersion="%VER%" /DSetupIcon="%~dp0pvz2.ico" "%~dp0pvz2.iss"
+"%ISCC%" /Qp /DStageDir="%STAGE%" /DOutDir="%OUT%" /DAppVersion="%VER%" /DSetupIcon="%~dp0..\pvz2.ico" "%~dp0pvz2.iss"
 if errorlevel 1 exit /b 1
 echo built %OUT%\PvZ2Reflourished-%VER%-windows-setup.exe
