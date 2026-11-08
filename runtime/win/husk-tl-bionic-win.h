@@ -18,6 +18,7 @@ void tl_win_log_open(const char *path);
 void tl_win_mkdirs(const char *path);
 const char *tl_data_dir(void);
 const char *tl_path_resolve(const char *path, char *buf, size_t n);
+void tl_win_set_saves_dir(const char *dir);
 void tl_set_data_dir(const char *dir);
 void tl_win_set_errno_from_crt(void);
 void tl_win_set_errno_from_win32(unsigned long err);

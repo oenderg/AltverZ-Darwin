@@ -81,6 +81,7 @@ void tl_hle_set_activity(jobj *a);
 jobj *tl_hle_assets(void);
 void tl_set_data_dir(const char *dir);
 const char *tl_data_dir(void);
+const char *tl_path_resolve(const char *path, char *buf, size_t n);
 void tl_nwindow_configure(int w, int h, void *layer);
 void *tl_nwindow_get(void);
 
@@ -2501,12 +2502,18 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
 
     snprintf(P.files_guest, sizeof(P.files_guest), "/sdcard/Android/data/" PKG "/files");
     snprintf(P.obb_guest, sizeof(P.obb_guest), "/sdcard/Android/obb/" PKG "/" OBB_NAME);
-    snprintf(P.obb_host, sizeof(P.obb_host), "%s/sdcard/Android/obb/%s/%s", P.data, PKG, OBB_NAME);
-    { char d[900];
-      snprintf(d, sizeof(d), "%s/sdcard/Android/data/%s/files", P.data, PKG); mkdirs(d);
+    /* The host's own folders for those guest paths: on the Mac and iPad they
+     * are the data folder itself; the Windows host gives the app's files (the
+     * saves) a folder of their own, beside the player's settings. */
+    { char d[900], obb[900], cache_guest[600];
+      tl_path_resolve(P.obb_guest, obb, sizeof(obb));
+      snprintf(P.obb_host, sizeof(P.obb_host), "%s", obb);
+      tl_path_resolve(P.files_guest, d, sizeof(d)); mkdirs(d);
       tl_pvz2_file_picker_configure(d);
-      snprintf(d, sizeof(d), "%s/sdcard/Android/data/%s/cache", P.data, PKG); mkdirs(d);
-      snprintf(d, sizeof(d), "%s/sdcard/Android/obb/%s", P.data, PKG); mkdirs(d); }
+      snprintf(cache_guest, sizeof(cache_guest), "/sdcard/Android/data/%s/cache", PKG);
+      tl_path_resolve(cache_guest, d, sizeof(d)); mkdirs(d);
+      snprintf(cache_guest, sizeof(cache_guest), "/sdcard/Android/obb/%s", PKG);
+      tl_path_resolve(cache_guest, d, sizeof(d)); mkdirs(d); }
 
     tl_set_data_dir(P.data);
     tl_log_line("pvz2: Info_SysGetProductVersion()I -> %d", PVZ2_ANDROID_VERSION_CODE);

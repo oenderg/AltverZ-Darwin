@@ -150,6 +150,24 @@ void tl_set_data_dir(const char *dir)
 }
 const char *tl_data_dir(void) { return g_data_dir[0] ? g_data_dir : "."; }
 
+/* The game's saves are the one part of Android's storage that belongs with the
+ * player's settings rather than with the installed data: the host names a
+ * folder for /sdcard/Android/data (the app's files folder, where the game keeps
+ * its saves), while the OBB and the large caches stay in the data folder. An
+ * empty or missing folder keeps the old one-folder layout. */
+static char g_saves_dir[1024];
+void tl_win_set_saves_dir(const char *dir)
+{
+    snprintf(g_saves_dir, sizeof(g_saves_dir), "%s", dir ? dir : "");
+    for (char *p = g_saves_dir; *p; p++) if (*p == '\\') *p = '/';
+    size_t n = strlen(g_saves_dir);
+    while (n > 3 && g_saves_dir[n - 1] == '/') g_saves_dir[--n] = 0;
+    if (g_saves_dir[0]) {
+        tl_win_mkdirs(g_saves_dir);
+        tl_log_line("bionic: the saves folder is %s", g_saves_dir);
+    }
+}
+
 void tl_win_mkdirs(const char *path)
 {
     char t[1100];
@@ -181,7 +199,14 @@ const char *tl_path_resolve(const char *path, char *buf, size_t n)
     };
     for (size_t i = 0; i < sizeof(maps) / sizeof(maps[0]); i++) {
         size_t l = strlen(maps[i].prefix);
-        if (!strncmp(p, maps[i].prefix, l) && (p[l] == 0 || p[l] == '/')) { snprintf(buf, n, "%s%s%s", tl_data_dir(), maps[i].to, p + l); return buf; }
+        if (!strncmp(p, maps[i].prefix, l) && (p[l] == 0 || p[l] == '/')) {
+            const char *rest = p + l;
+            const char *base = tl_data_dir();
+            if (g_saves_dir[0] && !strncmp(rest, "/Android/data", 13) && (rest[13] == 0 || rest[13] == '/'))
+                base = g_saves_dir;
+            snprintf(buf, n, "%s%s%s", base, maps[i].to, rest);
+            return buf;
+        }
     }
     static const char *const app_roots[] = { "/data/user/0/", "/data/data/" };
     for (int i = 0; i < 2; i++) {
