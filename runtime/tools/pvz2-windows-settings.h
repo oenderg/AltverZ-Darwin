@@ -24,6 +24,7 @@ typedef struct {
     char collect_sun[PVZ2_KEY_NAME_MAX];
     char powerup[PVZ2_POWERUP_COUNT][PVZ2_KEY_NAME_MAX];
     int start_fullscreen;
+    int confirm_quit;
     int adapt_shape;      /* 1: the game starts in the window's shape (4:3 to 21:9) */
     char fixed_aspect[16]; /* display, game, or one of the named ratios */
     int show_level_keys;  /* 1: draw the key on each control in a live level */

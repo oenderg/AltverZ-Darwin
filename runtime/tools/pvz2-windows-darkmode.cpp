@@ -10,6 +10,7 @@
  * painting is unchanged.
  */
 #include <windows.h>
+#include <commctrl.h>
 
 #include "Darkmodelib.h"
 #include "pvz2-windows-darkmode.h"
@@ -19,6 +20,26 @@ extern "C" {
 void tl_win_darkmode_init(void)
 {
     dmlib::initDarkMode();
+}
+
+int tl_win_darkmode_confirm_quit(HWND owner)
+{
+    const TASKDIALOG_BUTTON buttons[] = { { IDYES, L"Quit" }, { IDCANCEL, L"Cancel" } };
+    TASKDIALOGCONFIG config = {};
+    config.cbSize = sizeof(config);
+    config.hwndParent = owner;
+    config.dwFlags = TDF_POSITION_RELATIVE_TO_WINDOW | TDF_ALLOW_DIALOG_CANCELLATION;
+    config.pszWindowTitle = L"PvZ2 Reflourished";
+    config.pszMainInstruction = L"Quit PvZ2 Reflourished?";
+    config.pszContent = L"The game saves before it quits.";
+    config.cButtons = 2;
+    config.pButtons = buttons;
+    config.nDefaultButton = IDCANCEL;
+    config.pfCallback = dmlib::DarkTaskDlgCallback;
+    int button = IDCANCEL;
+    /* The upstream wrapper themes the task dialog as well as its title bar. */
+    HRESULT result = dmlib::darkTaskDialogIndirect(&config, &button, nullptr, nullptr);
+    return SUCCEEDED(result) && button == IDYES;
 }
 
 int tl_win_darkmode_active(void)

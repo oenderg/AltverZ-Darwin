@@ -19,6 +19,8 @@ extern "C" {
 
 /* Reads Windows' light or dark preference once, before any window is made. */
 void tl_win_darkmode_init(void);
+/* Returns true only when the player explicitly chooses Quit. */
+int tl_win_darkmode_confirm_quit(HWND owner);
 
 /* 1 while the host is in dark mode, 0 in light mode (the library's classic). */
 int tl_win_darkmode_active(void);

@@ -1808,13 +1808,23 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (msg == WM_PAINT) EndPaint(h, &ps);
         return 1;
     }
-    case WM_CLOSE:
+    case WM_CLOSE: {
+        static int asking;
+        if (asking) return 0;
+        if (g_settings.confirm_quit) {
+            asking = 1;
+            int quit = tl_win_darkmode_confirm_quit(h);
+            asking = 0;
+            tl_log_line("windows: quit confirmation %s", quit ? "accepted" : "cancelled");
+            if (!quit) return 0;
+        }
         /* Android's way out: the game hears it is going to the background, and saves. */
         save_geometry();
         tl_log_line("windows: the window is closing; the game goes to the background first");
         if (atomic_load(&g_ready)) { tl_pvz2_lifecycle_background(); Sleep(1500); }
         DestroyWindow(h);
         return 0;
+    }
     case WM_DESTROY: PostQuitMessage(0); return 0;
     default: break;
     }
@@ -1915,8 +1925,8 @@ static LRESULT CALLBACK progress_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_TIMER:
         if (g_progress_preview_until && GetTickCount64() >= g_progress_preview_until) {
-            PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
-            DestroyWindow(h);
+            /* A UI-only preview has no game state to save or confirm. */
+            DestroyWindow(g_hwnd);
             return 0;
         }
         if (tl_pvz2_frames() > 0 || atomic_load(&g_driver_done)) {

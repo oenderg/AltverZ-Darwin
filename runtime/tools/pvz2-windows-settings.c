@@ -40,6 +40,7 @@ void pvz2_settings_defaults(pvz2_settings *s)
     for (int i = 0; i < PVZ2_POWERUP_COUNT; i++)
         snprintf(s->powerup[i], sizeof(s->powerup[i]), "%s", pvz2_default_powerup_keys[i]);
     s->start_fullscreen = 0;
+    s->confirm_quit = 1;
     s->adapt_shape = 0;
     snprintf(s->fixed_aspect, sizeof(s->fixed_aspect), "display");
     s->show_level_keys = 1;
@@ -83,6 +84,7 @@ void pvz2_settings_load(const char *path, pvz2_settings *s)
         ini_string(path, "keys", key, d.powerup[i], s->powerup[i], sizeof(s->powerup[i]));
     }
     s->start_fullscreen = ini_int(path, "window", "startFullScreen", d.start_fullscreen);
+    s->confirm_quit = ini_int(path, "window", "confirmQuit", d.confirm_quit) != 0;
     char mode[16];
     ini_string(path, "window", "resizeMode", "", mode, sizeof(mode));
     s->adapt_shape = *mode ? !_stricmp(mode, "Adapt") :
@@ -117,6 +119,7 @@ int pvz2_settings_save(const char *path, const pvz2_settings *s)
         WritePrivateProfileStringA("keys", key, s->powerup[i], path);
     }
     WritePrivateProfileStringA("window", "startFullScreen", s->start_fullscreen ? "1" : "0", path);
+    WritePrivateProfileStringA("window", "confirmQuit", s->confirm_quit ? "1" : "0", path);
     WritePrivateProfileStringA("window", "resizeMode", s->adapt_shape ? "Adapt" : "Fixed", path);
     WritePrivateProfileStringA("window", "fixedAspect", s->fixed_aspect, path);
     WritePrivateProfileStringA("window", "adaptShape", s->adapt_shape ? "1" : "0", path);
@@ -241,6 +244,7 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 #define ID_ASPECT        210
 #define ID_ASPECT_LABEL  211
 #define ID_MODE_FOOTER   212
+#define ID_CONFIRM_QUIT  213
 
 #define ID_RESTORE       300
 #define ID_APPLY         301
@@ -525,6 +529,10 @@ static void build_general_page(HWND p)
     add(p, L"STATIC", L"", 0, 24, 120, 460, 112, ID_MODE_FOOTER);
     HWND full = add(p, L"BUTTON", L"Start in full screen", BS_AUTOCHECKBOX, 24, 276, 440, 24, ID_START_FULL);
     SendMessageW(full, BM_SETCHECK, g_pending.start_fullscreen ? BST_CHECKED : BST_UNCHECKED, 0);
+    HWND confirm = add(p, L"BUTTON", L"Ask before quitting", BS_AUTOCHECKBOX, 24, 318, 440, 24, ID_CONFIRM_QUIT);
+    SendMessageW(confirm, BM_SETCHECK, g_pending.confirm_quit ? BST_CHECKED : BST_UNCHECKED, 0);
+    add(p, L"STATIC", L"Closing the window or pressing Alt+F4 saves and quits. To pause and keep your place instead, minimize. Quitting asks first when this is on.",
+        0, 24, 354, 460, 58, 0);
     mode_refresh(p);
 }
 
@@ -691,6 +699,9 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         case ID_APPLY: apply(); return 0;
         case ID_START_FULL:
             g_pending.start_fullscreen = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            return 0;
+        case ID_CONFIRM_QUIT:
+            g_pending.confirm_quit = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
             return 0;
         case ID_FIXED_SHAPE:
         case ID_ADAPT_SHAPE:
@@ -891,7 +902,7 @@ void pvz2_settings_open(HWND owner, pvz2_settings *live, const pvz2_settings_hos
 
     int dpi = (int)GetDpiForWindow(owner);
     if (!dpi) dpi = (int)GetDpiForSystem();
-    RECT r = { 0, 0, MulDiv(540, dpi, 96), MulDiv(510, dpi, 96) };
+    RECT r = { 0, 0, MulDiv(560, dpi, 96), MulDiv(530, dpi, 96) };
     AdjustWindowRectExForDpi(&r, WS_CAPTION | WS_SYSMENU, FALSE, 0, (UINT)dpi);
     int w = r.right - r.left, h = r.bottom - r.top;
     RECT o = { 0, 0, 0, 0 };

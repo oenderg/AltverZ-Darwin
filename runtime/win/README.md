@@ -105,6 +105,7 @@ powerup3=C
 [window]
 startFullScreen=0
 resizeMode=Fixed
+confirmQuit=1
 fixedAspect=display
 fullScreenState=0
 x=...
@@ -129,6 +130,8 @@ a differently shaped monitor. Size, place and full-screen state are always saved
 `keepSizeAndPlace` and `keep_window` are ignored; old `adaptShape=1` (or `adapt=1`)
 migrates to Adapt when there is no `resizeMode`. The older keys and pointer
 preferences keep their meanings. Pages scroll when the DPI leaves too little room.
+Ask before quitting is on by default. Close, Alt+F4 and the system menu's Close
+share a Quit/Cancel prompt; only Quit runs the existing background-and-save path.
 
 `runtime/win/build-win.sh settings-test` builds `out/win/rfl-settings-test.exe`,
 a native Windows test of defaults, old INI migration and round-trip persistence.

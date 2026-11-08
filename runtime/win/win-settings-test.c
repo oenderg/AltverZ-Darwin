@@ -15,6 +15,7 @@ int main(void)
     pvz2_settings s;
     pvz2_settings_load(path, &s);
     CHECK(!s.adapt_shape && !strcmp(s.fixed_aspect, "display"));
+    CHECK(s.confirm_quit);
     CHECK(s.show_level_keys && s.show_cursor_plant && s.cursor_cross_brightness == 45);
     WritePrivateProfileStringA("window", "adaptShape", "1", path);
     WritePrivateProfileStringA("window", "keepSizeAndPlace", "0", path);
@@ -28,10 +29,12 @@ int main(void)
     CHECK(s.adapt_shape && !strcmp(s.slot[0], "J") && !*s.shovel);
     CHECK(!strcmp(s.collect_sun, "F9") && !s.show_level_keys && !s.show_cursor_plant && s.cursor_cross_brightness == 71);
     s.adapt_shape = 0;
+    s.confirm_quit = 0;
     strcpy(s.fixed_aspect, "4:3");
     pvz2_settings_save(path, &s);
     pvz2_settings_load(path, &s);
     CHECK(!s.adapt_shape && !strcmp(s.fixed_aspect, "4:3"));
+    CHECK(!s.confirm_quit);
     CHECK(!strcmp(s.slot[0], "J") && !*s.shovel && s.cursor_cross_brightness == 71);
     CHECK(pvz2_settings_aspect(&s, NULL) == 4.0 / 3.0);
     WritePrivateProfileStringA("window", "resizeMode", NULL, path);
