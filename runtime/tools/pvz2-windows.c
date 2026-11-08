@@ -307,6 +307,64 @@ static HMONITOR monitor_for(const RECT *r)
     return mon;
 }
 
+/* The refresh rate of the monitor the window is on: the device name from
+ * GetMonitorInfoW, then its current mode from EnumDisplaySettingsW. A rate of
+ * 0 or 1 means the hardware default, which is 60 here. A variable refresh
+ * display reports the mode it is in now, which is what the game gets. */
+static int display_refresh_rate(void)
+{
+    int fps = 60;
+    HMONITOR mon = MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFOEXW mi;
+    memset(&mi, 0, sizeof mi);
+    mi.cbSize = sizeof mi;
+    if (mon && GetMonitorInfoW(mon, (MONITORINFO *)&mi)) {
+        DEVMODEW dm;
+        memset(&dm, 0, sizeof dm);
+        dm.dmSize = sizeof dm;
+        if (EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm) &&
+            dm.dmDisplayFrequency > 1)
+            fps = (int)dm.dmDisplayFrequency;
+    }
+    const char *test = getenv("TL_WIN_REFRESH");
+    if (test && *test) {
+        int n = atoi(test);
+        if (n > 0) {
+            static int logged;
+            if (!logged) {
+                tl_log_line("windows: TL_WIN_REFRESH=%d is in effect (a test override)", n);
+                logged = 1;
+            }
+            fps = n;
+        }
+    }
+    return fps;
+}
+
+static int g_refresh_fps;
+static HMONITOR g_refresh_monitor;
+
+/* The window moved, or the display changed: ask the monitor again and answer
+ * the game's own setting with the new maximum. WM_MOVE and
+ * WM_WINDOWPOSCHANGED both arrive for a move; comparing the monitor keeps
+ * that to one call, and WM_DISPLAYCHANGE asks again even on the same one. */
+static void refresh_update(bool display_event)
+{
+    /* The window sends move and position messages while it is being created,
+     * before the start below has read the first rate. */
+    if (!g_hwnd || g_refresh_fps <= 0) return;
+    HMONITOR mon = MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST);
+    bool moved = mon != g_refresh_monitor;
+    if (!moved && !display_event) return;
+    int fps = display_refresh_rate();
+    bool changed = fps != g_refresh_fps;
+    g_refresh_monitor = mon;
+    g_refresh_fps = fps;
+    tl_pvz2_set_max_fps(fps);
+    if (moved) tl_log_line("windows: the window is on another display (%d fps)", fps);
+    else if (changed) tl_log_line("windows: the display can do %d fps now", fps);
+}
+
 static void toggle_fullscreen(int on)
 {
     if (!g_hwnd || on == g_fullscreen) return;
@@ -438,6 +496,7 @@ static void view_layout(void)
  */
 #define BADGE_COUNT (TL_PVZ2_BADGE_SLOTS + 1 + 1 + 1 + TL_PVZ2_BADGE_POWERUPS)
 #define BADGE_TIMER 103
+#define STATS_TIMER 105
 
 static HWND g_badge_win;
 static int g_badge_visible;
@@ -1544,6 +1603,22 @@ static void make_view(HINSTANCE inst)
     view_layout();
 }
 
+static ULONGLONG g_stats_time;
+static unsigned long g_stats_frames;
+
+/* The Mac's five-second line, for the same kind of proof on Windows: the
+ * frame count says what the host actually presented, not what it asked for. */
+static void stats_tick(void)
+{
+    unsigned long frames = tl_pvz2_frames();
+    ULONGLONG now = GetTickCount64();
+    double since = g_stats_time ? (now - g_stats_time) / 1000.0 : 0.0;
+    tl_log_line("windows: frames=%lu, last 5s=%.1f fps", frames,
+                since > 0 ? (frames - g_stats_frames) / since : 0.0);
+    g_stats_time = now;
+    g_stats_frames = frames;
+}
+
 static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
@@ -1572,6 +1647,13 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_MOVE:
         badges_reposition();
         pointer_reposition();
+        refresh_update(false);
+        return 0;
+    case WM_WINDOWPOSCHANGED:
+        refresh_update(false);
+        break;
+    case WM_DISPLAYCHANGE:
+        refresh_update(true);
         return 0;
     case WM_TIMER:
         if (wp == BADGE_TIMER) {
@@ -1580,6 +1662,10 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         }
         if (wp == CURSOR_TIMER) {
             pointer_tick();
+            return 0;
+        }
+        if (wp == STATS_TIMER) {
+            stats_tick();
             return 0;
         }
         break;
@@ -1940,6 +2026,17 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     RECT rc; GetClientRect(g_hwnd, &rc);
     int cw = (int)(rc.right - rc.left), ch = (int)(rc.bottom - rc.top);
     tl_log_line("windows: window %dx%d client, the game draws at %dx%d", cw, ch, g_sw, g_sh);
+
+    /* The display's own maximum, before the game asks: the game's "Target 60
+     * FPS" setting means "as fast as this screen goes", as on the Mac and the
+     * iPad. The window is shown now, so it is already on its monitor. */
+    g_refresh_monitor = MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST);
+    g_refresh_fps = display_refresh_rate();
+    tl_pvz2_set_max_fps(g_refresh_fps);
+    tl_log_line("windows: the display can do %d fps, and that is what the game's setting asks for",
+                g_refresh_fps);
+    g_stats_time = GetTickCount64();
+    SetTimer(g_hwnd, STATS_TIMER, 5000, NULL);
 
     /* The window menu: Settings..., then a separator, as the player's mock-up
      * had it. Windows' own items (Move, Size, Close) follow it. */
