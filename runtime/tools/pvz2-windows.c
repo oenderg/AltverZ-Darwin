@@ -19,6 +19,7 @@
  * outside its own folder.
  */
 #include <windows.h>
+#include <gdiplus.h>
 #include <commctrl.h>
 #include <shlobj.h>
 #include <shellapi.h>
@@ -404,13 +405,19 @@ static void view_layout(void)
 
 /* ------------------------------------------------------------- key badges
  *
- * The driver publishes where the controls a shortcut works are and whether
- * the keys do anything (tl_pvz2_badges): the seed packets, the shovel, fast
- * forward, plant food and the level's power-ups. The host owns the key
- * settings, so it draws the labels: a small dark plaque with the key at the
- * control's corner, on a click-through layered window above the game's
- * picture. It is hidden unless the board is live, so the seed chooser, a
- * popup and the end of the level clear it.
+ * The Mac's look, with no plaque: the key in yellow with a thick dark
+ * outline straight over the game, so the game shows between and around the
+ * letters. The bundled level-ui font (italic) draws the letters and digits,
+ * as on the Mac and iPad. That font has no Tab or arrow symbols, and the
+ * system symbol fonts are too thin to survive the Mac's outline, so the host
+ * draws those five as filled paths shaped like the Mac's Lucida Grande Bold
+ * fallback: short fat arrows and an arrow into a bar.
+ *
+ * The driver publishes where the controls are and whether the keys work
+ * (tl_pvz2_badges); the host supplies the labels from its own key settings.
+ * GDI+ draws the glyph path into the layered window's premultiplied DIB,
+ * because GDI text cannot write an alpha channel: the pixels off the letters
+ * stay fully transparent, and the antialiased edges keep their coverage.
  */
 #define BADGE_COUNT (TL_PVZ2_BADGE_SLOTS + 1 + 1 + 1 + TL_PVZ2_BADGE_POWERUPS)
 #define BADGE_TIMER 103
@@ -419,16 +426,22 @@ static HWND g_badge_win;
 static int g_badge_visible;
 static unsigned int g_badge_generation;
 static int g_badge_src_w, g_badge_src_h;
-static wchar_t g_badge_face[LF_FACESIZE] = L"Segoe UI";
-static HFONT g_badge_font;
-static int g_badge_font_px;
+static ULONG_PTR g_gdiplus_token;
+static int g_gdiplus_started;
+static GpFontCollection *g_badge_fonts;
+static GpFontFamily *g_badge_family;
+static int g_badge_level_ui;
 static HDC g_badge_dc;
 static HBITMAP g_badge_dib;
 static HGDIOBJ g_badge_old;
 static void *g_badge_bits;
 static int g_badge_w, g_badge_h;
-static HBRUSH g_badge_bg;
-static HPEN g_badge_edge;
+
+/* The Mac's colours and stroke widths, at its 32 px measuring size: the
+ * yellow is (1.0, 0.94, 0.18), the outline (0.08, 0.06, 0.02); the yellow
+ * stroke is 3/32 of the font size, the dark one 18/32. */
+#define BADGE_YELLOW 0xFFFFF02E
+#define BADGE_DARK   0xFF140F05
 
 static const int *badge_rect(int index, const tl_pvz2_badge_snapshot *s)
 {
@@ -441,7 +454,13 @@ static const int *badge_rect(int index, const tl_pvz2_badge_snapshot *s)
     return index >= 0 && index < s->powerup_count ? s->powerup[index] : NULL;
 }
 
-/* The key the settings give this control; empty is None, and no badge. */
+static int badge_symbol_label(const wchar_t *s)
+{
+    return s[0] == 0x21E5 || (s[0] >= 0x2190 && s[0] <= 0x2193);
+}
+
+/* The key the settings give this control; empty is None, and no badge. The
+ * four symbols are badge_key_text's own mapping on the Mac. */
 static const wchar_t *badge_label(int index, const tl_pvz2_badge_snapshot *s, wchar_t *buf, int n)
 {
     const char *key = NULL;
@@ -460,26 +479,138 @@ static const wchar_t *badge_label(int index, const tl_pvz2_badge_snapshot *s, wc
         key = g_settings.powerup[p];
     }
     if (!key || !*key) return NULL;
+    static const struct { const char *name; wchar_t sym; } symbols[] = {
+        { "Tab", 0x21E5 }, { "Left", 0x2190 }, { "Right", 0x2192 },
+        { "Up", 0x2191 }, { "Down", 0x2193 }
+    };
+    for (int i = 0; i < (int)(sizeof(symbols) / sizeof(symbols[0])); i++) {
+        if (!_stricmp(key, symbols[i].name)) {
+            if (n < 2) return NULL;
+            buf[0] = symbols[i].sym;
+            buf[1] = 0;
+            return buf;
+        }
+    }
     if (MultiByteToWideChar(CP_UTF8, 0, key, -1, buf, n) <= 0) return NULL;
     return buf;
 }
 
-/* The bundled level UI font, as the Mac and iPad use it; a bold italic system
- * face when the file is not beside the program. */
+/* The bundled level UI font through GDI+'s private collection, the same file
+ * the Mac and iPad register with CoreText; Segoe UI when the file is missing.
+ * The symbols do not use it: level-ui.ttf's cmap has no U+21E5 or
+ * U+2190..U+2193, so badge_symbol_path draws those five. */
 static void badge_font_init(void)
 {
+    GdiplusStartupInput in = { 1, NULL, FALSE, FALSE };
+    if (GdiplusStartup(&g_gdiplus_token, &in, NULL) != Ok) {
+        tl_log_line("windows: GDI+ could not start; the key labels are not drawn");
+        return;
+    }
+    g_gdiplus_started = 1;
     char path[MAX_PATH + 32];
     join(path, sizeof(path), g_exe_dir, "level-ui.ttf");
-    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
-        if (AddFontResourceExA(path, FR_PRIVATE, NULL) > 0) {
-            wcscpy(g_badge_face, L"fbUsv8C5eI Black");
-            tl_log_line("windows: the key labels use %s", path);
-            return;
+    wchar_t wpath[MAX_PATH + 32];
+    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES &&
+        MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, MAX_PATH + 32) > 0 &&
+        GdipNewPrivateFontCollection(&g_badge_fonts) == Ok &&
+        GdipPrivateAddFontFile(g_badge_fonts, wpath) == Ok) {
+        int n = 0;
+        GdipGetFontCollectionFamilyCount(g_badge_fonts, &n);
+        if (n > 0) {
+            GpFontFamily *list[8];
+            int got = 0;
+            GdipGetFontCollectionFamilyList(g_badge_fonts, 8, list, &got);
+            if (got > 0) { g_badge_family = list[0]; g_badge_level_ui = 1; }
         }
-        tl_log_line("windows: the font at %s did not load; using the system face", path);
-    } else {
-        tl_log_line("windows: no level-ui.ttf beside the program; the key labels use the system face");
     }
+    if (!g_badge_family) GdipCreateFontFamilyFromName(L"Segoe UI", NULL, &g_badge_family);
+    tl_log_line("windows: the key labels use %s; Tab and the arrows are host paths",
+                g_badge_level_ui ? "level-ui.ttf (fbUsv8C5eI Black)" : "Segoe UI");
+}
+
+/* The Mac's Lucida Grande Bold fallback has no Windows counterpart that stays
+ * bold inside the Mac's 18/32 em outline, so the five symbols are paths. The
+ * measurements are em fractions from the Mac's symbol screenshot: the arrow
+ * is 0.70 em long and 0.54 em tall, the head 0.30 em long and the full height,
+ * and the shaft 0.22 em thick (a little thicker than Lucida's, so the yellow
+ * still reads inside the outline). Tab is the same arrow, shortened, pointing
+ * into a 0.16 by 0.50 em bar. The 0.18 shear matches the Mac's italic slant.
+ * The path is normalized to (0,0), and the ink's size comes back in ink. */
+static GpPath *badge_symbol_path(wchar_t sym, float em, RectF *ink)
+{
+    float H = 0.54f * em, T = 0.22f * em, HL = 0.30f * em, L = 0.70f * em;
+    if (sym == 0x21E5) { L = 0.60f * em; HL = 0.32f * em; } /* Tab's arrow, then the bar */
+    float cy = H / 2.0f, half = T / 2.0f;
+    float u[7] = { 0.0f, L - HL, L - HL, L, L - HL, L - HL, 0.0f };
+    float v[7] = { cy - half, cy - half, 0.0f, cy, H, cy + half, cy + half };
+    GpPointF p[7];
+    for (int i = 0; i < 7; i++) {
+        switch (sym) {
+        case 0x2190: p[i].X = L - u[i]; p[i].Y = v[i]; break;         /* Left */
+        case 0x2192: case 0x21E5: p[i].X = u[i]; p[i].Y = v[i]; break; /* Right, Tab */
+        case 0x2191: p[i].X = v[i]; p[i].Y = L - u[i]; break;         /* Up */
+        default:     p[i].X = v[i]; p[i].Y = u[i]; break;              /* Down */
+        }
+    }
+    GpPath *path = NULL;
+    if (GdipCreatePath(FillModeWinding, &path) != Ok) return NULL;
+    if (GdipAddPathPolygon(path, p, 7) != Ok) {
+        GdipDeletePath(path);
+        return NULL;
+    }
+    if (sym == 0x21E5) {
+        /* The tip overlaps the bar so the fill joins them and only the outer
+         * silhouette gets the dark outline, as in the Mac's reference. */
+        if (GdipAddPathRectangle(path, L - 0.02f * em, (H - 0.50f * em) / 2.0f,
+                                 0.16f * em, 0.50f * em) != Ok) {
+            GdipDeletePath(path);
+            return NULL;
+        }
+    }
+    GdipGetPathWorldBounds(path, ink, NULL, NULL);
+    float mid = ink->Y + ink->Height / 2.0f;
+    GpMatrix *shear = NULL;
+    if (GdipCreateMatrix2(1.0f, 0.0f, -0.18f, 1.0f, 0.18f * mid, 0.0f, &shear) == Ok) {
+        GdipTransformPath(path, shear);
+        GdipDeleteMatrix(shear);
+    }
+    GdipGetPathWorldBounds(path, ink, NULL, NULL);
+    GpMatrix *move = NULL;
+    if (GdipCreateMatrix2(1.0f, 0.0f, 0.0f, 1.0f, -ink->X, -ink->Y, &move) == Ok) {
+        GdipTransformPath(path, move);
+        GdipDeleteMatrix(move);
+    }
+    return path;
+}
+
+/* The glyphs as one path, normalized to (0,0); the ink's size comes back in
+ * ink. GDI+ measures in pixels, so the path is at the size it is drawn. */
+static GpPath *badge_path(const wchar_t *label, int em, RectF *ink)
+{
+    if (badge_symbol_label(label)) return badge_symbol_path(label[0], (float)em, ink);
+    if (!g_badge_family) return NULL;
+    GpPath *path = NULL;
+    if (GdipCreatePath(FillModeWinding, &path) != Ok) return NULL;
+    RectF box = { 0.0f, 0.0f, 4000.0f, 1000.0f };
+    GpStringFormat *fmt = NULL;
+    GdipCreateStringFormat(0, LANG_NEUTRAL, &fmt);
+    if (fmt) {
+        GdipSetStringFormatAlign(fmt, StringAlignmentNear);
+        GdipSetStringFormatLineAlign(fmt, StringAlignmentNear);
+    }
+    GpStatus st = GdipAddPathString(path, label, -1, g_badge_family, FontStyleItalic, (REAL)em, &box, fmt);
+    if (fmt) GdipDeleteStringFormat(fmt);
+    if (st != Ok) {
+        GdipDeletePath(path);
+        return NULL;
+    }
+    GdipGetPathWorldBounds(path, ink, NULL, NULL);
+    GpMatrix *m = NULL;
+    if (GdipCreateMatrix2(1.0f, 0.0f, 0.0f, 1.0f, -ink->X, -ink->Y, &m) == Ok) {
+        GdipTransformPath(path, m);
+        GdipDeleteMatrix(m);
+    }
+    return path;
 }
 
 static void badges_hide(void)
@@ -499,12 +630,15 @@ static void badges_reposition(void)
                  SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-/* One redraw: the snapshot's controls, each with its key. The plaque is dark
- * and the key yellow, the colours the Mac's labels use. GDI draws onto a
- * 32-bit DIB; the alpha channel is set by hand (the layer is transparent
- * everywhere else, and click-through). */
+/* One redraw: the snapshot's controls, each with its key in the Mac's style:
+ * the key's box is 0.46 of the control's height, 30% wider and 1.3 times as
+ * tall as the glyphs, at the control's top right (bottom for the shovel and
+ * plant food, left for plant food), with 8% of the control's height at the
+ * right edge. The dark outline is drawn first, then the yellow edge and fill;
+ * nothing else is painted, so the game shows between and around the letters. */
 static void badges_draw(const tl_pvz2_badge_snapshot *s)
 {
+    if (!g_gdiplus_started) return;
     int w = s->surface_w, h = s->surface_h;
     if (!g_badge_dc) g_badge_dc = CreateCompatibleDC(NULL);
     if (!g_badge_dc) return;
@@ -528,69 +662,74 @@ static void badges_draw(const tl_pvz2_badge_snapshot *s)
         g_badge_w = w;
         g_badge_h = h;
     }
-    memset(g_badge_bits, 0, (size_t)w * (size_t)h * 4);
-    if (!g_badge_bg) {
-        g_badge_bg = CreateSolidBrush(RGB(18, 14, 6));
-        g_badge_edge = CreatePen(PS_SOLID, 1, RGB(255, 240, 46));
+    GpBitmap *bmp = NULL;
+    if (GdipCreateBitmapFromScan0(w, h, w * 4, PixelFormat32bppPARGB, (BYTE *)g_badge_bits, &bmp) != Ok)
+        return;
+    GpGraphics *g = NULL;
+    if (GdipGetImageGraphicsContext((GpImage *)bmp, &g) != Ok) {
+        GdipDisposeImage((GpImage *)bmp);
+        return;
     }
-    if (!g_badge_bg || !g_badge_edge) return;
-    SetBkMode(g_badge_dc, TRANSPARENT);
-    SetTextColor(g_badge_dc, RGB(255, 240, 46));
+    GdipSetSmoothingMode(g, SmoothingModeAntiAlias);
+    GdipGraphicsClear(g, 0x00000000);
     for (int i = 0; i < BADGE_COUNT; i++) {
         const int *r = badge_rect(i, s);
         if (!r || r[2] < 16 || r[3] < 16) continue;
         wchar_t text[32];
         const wchar_t *label = badge_label(i, s, text, 32);
         if (!label) continue;
-        int px = (int)(r[3] * 0.46);
-        if (px < 10) px = 10;
-        if (px > 160) px = 160;
-        if (!g_badge_font || g_badge_font_px != px) {
-            if (g_badge_font) DeleteObject(g_badge_font);
-            LOGFONTW lf;
-            memset(&lf, 0, sizeof lf);
-            lf.lfHeight = -px;
-            lf.lfWeight = FW_HEAVY;
-            lf.lfItalic = TRUE;
-            lstrcpynW(lf.lfFaceName, g_badge_face, LF_FACESIZE);
-            g_badge_font = CreateFontIndirectW(&lf);
-            g_badge_font_px = px;
-        }
-        HGDIOBJ old_font = SelectObject(g_badge_dc, g_badge_font);
-        SIZE tsz = { 0, 0 };
-        GetTextExtentPoint32W(g_badge_dc, label, (int)wcslen(label), &tsz);
-        int pad = px / 3;
-        if (pad < 3) pad = 3;
-        int bw = tsz.cx + pad * 2, bh = px + pad;
-        int x = r[0] + r[2] - bw - (int)(r[3] * 0.08);
-        int y = r[1];
-        if (i == TL_PVZ2_BADGE_SLOTS || i == TL_PVZ2_BADGE_SLOTS + 2) y += r[3] - bh;
-        if (i == TL_PVZ2_BADGE_SLOTS + 2) x = r[0];
-        if (x + bw > w) x = w - bw;
-        if (y + bh > h) y = h - bh;
+        int em = (int)(r[3] * 0.46);
+        if (em < 10) em = 10;
+        if (em > 160) em = 160;
+        RectF ink = { 0, 0, 0, 0 };
+        GpPath *path = badge_path(label, em, &ink);
+        if (!path) continue;
+        float box_w = ink.Width + em * 0.3f;
+        float box_h = em * 1.3f;
+        float x = (float)(r[0] + r[2]) - box_w - r[3] * 0.08f;
+        float y = (float)r[1];
+        if (i == TL_PVZ2_BADGE_SLOTS || i == TL_PVZ2_BADGE_SLOTS + 2) y += r[3] - box_h;
+        if (i == TL_PVZ2_BADGE_SLOTS + 2) x = (float)r[0];
+        if (x + box_w > w) x = (float)w - box_w;
+        if (y + box_h > h) y = (float)h - box_h;
         if (x < 0) x = 0;
         if (y < 0) y = 0;
-        if (bw <= 0 || bh <= 0 || x + bw > w || y + bh > h) {
-            SelectObject(g_badge_dc, old_font);
+        if (x + box_w > w || y + box_h > h) {
+            GdipDeletePath(path);
             continue;
         }
-        RECT box = { x, y, x + bw, y + bh };
-        FillRect(g_badge_dc, &box, g_badge_bg);
-        HGDIOBJ old_pen = SelectObject(g_badge_dc, g_badge_edge);
-        HGDIOBJ old_brush = SelectObject(g_badge_dc, GetStockObject(NULL_BRUSH));
-        Rectangle(g_badge_dc, box.left, box.top, box.right, box.bottom);
-        SelectObject(g_badge_dc, old_brush);
-        SelectObject(g_badge_dc, old_pen);
-        int ty = y + (bh - tsz.cy) / 2;
-        TextOutW(g_badge_dc, x + pad, ty, label, (int)wcslen(label));
-        SelectObject(g_badge_dc, old_font);
-        /* GDI leaves the alpha byte alone: the plaque is made opaque here. */
-        unsigned char *bits = g_badge_bits;
-        for (int yy = box.top; yy < box.bottom; yy++) {
-            unsigned char *row = bits + ((size_t)yy * (size_t)w + (size_t)box.left) * 4;
-            for (int xx = box.left; xx < box.right; xx++, row += 4) row[3] = 255;
+        float dx = x + (box_w - ink.Width) / 2.0f;
+        float dy = y + (box_h - ink.Height) / 2.0f;
+        GpMatrix *m = NULL;
+        if (GdipCreateMatrix2(1.0f, 0.0f, 0.0f, 1.0f, dx, dy, &m) == Ok) {
+            GdipTransformPath(path, m);
+            GdipDeleteMatrix(m);
         }
+        GpPen *dark = NULL;
+        if (GdipCreatePen1(BADGE_DARK, em * 18.0f / 32.0f, UnitPixel, &dark) == Ok) {
+            GdipSetPenLineJoin(dark, LineJoinRound);
+            GdipSetPenStartCap(dark, LineCapRound);
+            GdipSetPenEndCap(dark, LineCapRound);
+            GdipDrawPath(g, dark, path);
+            GdipDeletePen(dark);
+        }
+        GpPen *edge = NULL;
+        if (GdipCreatePen1(BADGE_YELLOW, em * 3.0f / 32.0f, UnitPixel, &edge) == Ok) {
+            GdipSetPenLineJoin(edge, LineJoinRound);
+            GdipSetPenStartCap(edge, LineCapRound);
+            GdipSetPenEndCap(edge, LineCapRound);
+            GdipDrawPath(g, edge, path);
+            GdipDeletePen(edge);
+        }
+        GpSolidFill *fill = NULL;
+        if (GdipCreateSolidFill(BADGE_YELLOW, &fill) == Ok) {
+            GdipFillPath(g, fill, path);
+            GdipDeleteBrush((GpBrush *)fill);
+        }
+        GdipDeletePath(path);
     }
+    GdipDeleteGraphics(g);
+    GdipDisposeImage((GpImage *)bmp);
     RECT vr;
     if (!GetWindowRect(g_view, &vr)) return;
     POINT dst = { vr.left, vr.top };

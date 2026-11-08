@@ -22,7 +22,7 @@ beyond Windows' own DLLs travels in the zip.
 `-static` by llvm-mingw):
 
 ```
-WINMM.dll SHELL32.dll COMCTL32.dll WINHTTP.dll bcrypt.dll GDI32.dll USER32.dll KERNEL32.dll
+WINMM.dll SHELL32.dll COMCTL32.dll WINHTTP.dll bcrypt.dll GDI32.dll GDIPLUS.dll USER32.dll KERNEL32.dll
 api-ms-win-core-synch-l1-2-0.dll
 api-ms-win-crt-{stdio,filesystem,runtime,time,math,heap,environment,string,locale,convert,utility,private}-l1-1-0.dll
 ```
@@ -33,7 +33,7 @@ has no non-system dependency.
 `llvm-objdump -p` on the x86-64 program (`out/win-x64/PvZ2 Reflourished x64.exe`):
 
 ```
-WINMM.dll SHELL32.dll COMCTL32.dll WINHTTP.dll bcrypt.dll GDI32.dll USER32.dll KERNEL32.dll ADVAPI32.dll
+WINMM.dll SHELL32.dll COMCTL32.dll WINHTTP.dll bcrypt.dll GDI32.dll GDIPLUS.dll USER32.dll KERNEL32.dll ADVAPI32.dll
 api-ms-win-core-synch-l1-2-0.dll, api-ms-win-crt-* (as above)
 libwinpthread-1.dll, libLLVM-23.dll
 ```

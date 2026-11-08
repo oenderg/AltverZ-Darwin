@@ -23,7 +23,7 @@ fi
 . "$H/sources.sh"
 case "$target" in
     starttest) SRCS="$WIN_CORE $X/husk-tl-x64.c $X/x64-starttest.c"; EXE="$OUT/rfl-x64-starttest.exe" ;;
-    game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/PvZ2 Reflourished x64.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp" ;;
+    game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/PvZ2 Reflourished x64.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
 OBJS=""
