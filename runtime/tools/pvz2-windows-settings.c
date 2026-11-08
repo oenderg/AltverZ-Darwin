@@ -250,7 +250,6 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 
 #define ID_RESTORE       300
 #define ID_APPLY         301
-#define ID_RESTORE_POINTER 302
 
 /* The key fields, in the order the pages lay them out. */
 #define ID_KEY_BASE 1000
@@ -458,17 +457,6 @@ static void pointer_page_label(void)
     SetWindowTextW(label, text);
 }
 
-static void pointer_page_refresh(void)
-{
-    if (!g_page[GAMEPLAY]) return;
-    HWND show = GetDlgItem(g_page[GAMEPLAY], ID_SHOW_CURSOR);
-    if (show) SendMessageW(show, BM_SETCHECK,
-                           g_pending.show_cursor_plant ? BST_CHECKED : BST_UNCHECKED, 0);
-    HWND bar = GetDlgItem(g_page[GAMEPLAY], ID_CROSS_BRIGHTNESS);
-    if (bar) SendMessageW(bar, TBM_SETPOS, TRUE, g_pending.cursor_cross_brightness);
-    pointer_page_label();
-}
-
 static void build_pointer_page(HWND p)
 {
     add(p, L"BUTTON", L"Playing", BS_GROUPBOX, 10, 8, 500, 116, 0);
@@ -490,7 +478,6 @@ static void build_pointer_page(HWND p)
     add(p, L"STATIC", L"", 0, 410, 250, 60, 20, ID_CROSS_VALUE);
     pointer_page_label();
 
-    add(p, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON, 390, 334, 120, 26, ID_RESTORE_POINTER);
 }
 
 static void mode_refresh(HWND p)
@@ -755,16 +742,6 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         case ID_SHOW_CURSOR:
             g_pending.show_cursor_plant = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
             return 0;
-        case ID_RESTORE_POINTER: {
-            pvz2_settings d;
-            pvz2_settings_defaults(&d);
-            g_pending.show_cursor_plant = d.show_cursor_plant;
-            g_pending.show_level_keys = d.show_level_keys;
-            SendMessageW(GetDlgItem(g_page[GAMEPLAY], ID_SHOW_KEYS), BM_SETCHECK, BST_CHECKED, 0);
-            g_pending.cursor_cross_brightness = d.cursor_cross_brightness;
-            pointer_page_refresh();
-            return 0;
-        }
         case ID_OPEN_SAVES: ShellExecuteA(h, "open", g_host.saves_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
         case ID_OPEN_DATA: ShellExecuteA(h, "open", g_host.data_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
         case ID_OPEN_LOG: ShellExecuteA(h, "open", g_host.data_dir, NULL, NULL, SW_SHOWNORMAL); return 0;
@@ -782,7 +759,6 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                 HWND f = GetDlgItem(g_page[KEYBOARD], g_field_ids[i]);
                 if (f) field_refresh(f, i);
             }
-            pointer_page_refresh();
             return 0;
         }
         default: break;
