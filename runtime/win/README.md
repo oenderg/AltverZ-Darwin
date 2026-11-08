@@ -165,6 +165,10 @@ The x86-64 build translates the game before its first frame. The host shows a sm
 translation already in `<data>/translated` does not show it. ScarletNX has no progress
 callback, so the bar is a marquee, not a percentage.
 
+For a bounded UI test without translation, set `TL_PVZ2_PREVIEW_PREPARE=60`
+in the x64 build's environment. It shows the same preparing window for 60
+seconds, skips the game thread, then exits (maximum 120 seconds).
+
 ## Zips
 
 `runtime/win/package-zip.sh --arch all --apk <apk> [--tar <1.4.2.main.tar>]` makes

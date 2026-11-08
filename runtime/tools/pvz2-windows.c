@@ -45,6 +45,8 @@
 #include "pvz2-windows-darkmode.h"
 #include "../win/pvz2-obb-win.h"
 #if defined(__x86_64__)
+/* A bounded preview proves the first-start UI without translating the game. */
+static ULONGLONG g_progress_preview_until;
 #include "husk-tl-x64.h"
 #endif
 
@@ -1824,6 +1826,11 @@ static LRESULT CALLBACK progress_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         SetTimer(h, 1, 100, NULL);
         return 0;
     case WM_TIMER:
+        if (g_progress_preview_until && GetTickCount64() >= g_progress_preview_until) {
+            PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
+            DestroyWindow(h);
+            return 0;
+        }
         if (tl_pvz2_frames() > 0 || atomic_load(&g_driver_done)) {
             KillTimer(h, 1);
             DestroyWindow(h);
@@ -1864,7 +1871,7 @@ static void show_progress_window(HINSTANCE inst)
     int x = game.left + ((game.right - game.left) - w) / 2;
     int y = game.top + ((game.bottom - game.top) - h) / 2;
     HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, L"PvZ2ReflourishedPrepare", L"PvZ2 Reflourished",
-                                WS_CAPTION | WS_SYSMENU | WS_VISIBLE, x, y, w, h, g_hwnd, NULL, inst, NULL);
+                                WS_CAPTION | WS_SYSMENU, x, y, w, h, g_hwnd, NULL, inst, NULL);
     if (!hwnd) return;
     NONCLIENTMETRICSW ncm = { .cbSize = sizeof(ncm) };
     if (!SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0, dpi))
@@ -1885,6 +1892,11 @@ static void show_progress_window(HINSTANCE inst)
     SendMessageW(note, WM_SETFONT, (WPARAM)font, TRUE);
     SendMessageW(bar, PBM_SETMARQUEE, TRUE, 30);
     tl_win_darkmode_window(hwnd);
+    /* Theme before the first paint, including the labels' parent colours. A
+     * visible creation paints the light class brush before subclassing. */
+    tl_win_darkmode_page(hwnd);
+    ShowWindow(hwnd, SW_SHOWNORMAL);
+    tl_win_darkmode_redraw(hwnd);
     g_progress = hwnd;
     tl_log_line("windows: the first start translates the game; the preparing window is up");
 }
@@ -2107,8 +2119,19 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     tl_pvz2_set_seed_pick(1);
     tl_pvz2_set_native_shovel(2);
 #if defined(__x86_64__)
+    const char *preview = getenv("TL_PVZ2_PREVIEW_PREPARE");
+    if (preview && atoi(preview) > 0) {
+        int seconds = atoi(preview);
+        if (seconds > 120) seconds = 120;
+        g_progress_preview_until = GetTickCount64() + seconds * 1000;
+        show_progress_window(inst);
+    } else {
     if (translation_needed()) show_progress_window(inst);
     else tl_log_line("windows: the x64 translation cache is there; no preparing window");
+    }
+#endif
+#if defined(__x86_64__)
+    if (!g_progress_preview_until)
 #endif
     CloseHandle(CreateThread(NULL, 8 << 20, launch_game, NULL, 0, NULL));
 
