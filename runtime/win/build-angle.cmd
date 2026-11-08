@@ -137,13 +137,17 @@ rem Chromium's build names the SDK it compiles against and hands that version to
 rem vcvarsall, so an older SDK fails later with a message about the version. Say it
 rem here, before gn, and say how to add it.
 set "WANT="
-for /f "tokens=3 delims= '" %%v in ('findstr /b /c:"SDK_VERSION = " build\toolchain\win\setup_toolchain.py') do set "WANT=%%v"
+for /f "usebackq delims=" %%v in (`vpython3 -c "import re; m = re.search(r'SDK_VERSION = .([0-9.]+).', open(r'build/toolchain/win/setup_toolchain.py').read()); print(m.group(1) if m else '')"`) do set "WANT=%%v"
+if not defined WANT (
+    echo Could not read SDK_VERSION from build\toolchain\win\setup_toolchain.py
+    popd & exit /b 1
+)
+if not exist "%ProgramFiles(x86)%\Windows Kits\10\Include\!WANT!\um\windows.h" (
+    echo ANGLE builds with Windows SDK !WANT!, which is not installed
+    echo Add it in the Visual Studio Installer, Individual components, and run again
+    popd & exit /b 1
+)
 if defined WANT (
-    if not exist "%ProgramFiles(x86)%\Windows Kits\10\Include\!WANT!" (
-        echo ANGLE builds with Windows SDK !WANT!, which is not installed
-        echo Add it in the Visual Studio Installer, Individual components, and run again
-        popd & exit /b 1
-    )
     echo    Windows SDK !WANT!
 )
 

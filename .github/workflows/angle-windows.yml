@@ -84,21 +84,31 @@ jobs:
           # against and hand that exact version to vcvarsall; with a machine that has an
           # older one only, gn gen stops with "Windows SDK version ... was not found".
           # The image ships 10.0.26100, so add the one this ANGLE commit names.
-          $sdk = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include\10.0.28000.0'
-          if (Test-Path $sdk) { Write-Host 'Windows SDK 10.0.28000.0 is already installed'; exit 0 }
+          # Ready means the headers and the import libraries both landed: the installer's
+          # folder appears long before the files in it do.
+          $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
+          $need = @(
+            "$kits\Include\10.0.28000.0\um\windows.h",
+            "$kits\Lib\10.0.28000.0\um\x64\kernel32.lib",
+            "$kits\Lib\10.0.28000.0\um\arm64\kernel32.lib"
+          )
+          function Ready { -not ($need | Where-Object { -not (Test-Path $_) }) }
+          if (Ready) { Write-Host 'Windows SDK 10.0.28000.0 is already installed'; exit 0 }
           $setup = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
           $vs = & (Join-Path $setup 'vswhere.exe') -latest -products * `
             -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $vs) { throw 'no Visual Studio with the C++ tools on this runner' }
           Write-Host "Visual Studio: $vs"
-          & (Join-Path $setup 'vs_installer.exe') modify --installPath "$vs" --quiet --force `
-            --norestart --add Microsoft.VisualStudio.Component.Windows11SDK.28000
-          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) {
-            throw "vs_installer exited with $LASTEXITCODE"
-          }
-          # The installer can return before the last file lands: wait for the folder.
-          for ($i = 0; $i -lt 60 -and -not (Test-Path $sdk); $i++) { Start-Sleep -Seconds 10 }
-          if (-not (Test-Path $sdk)) { throw "the Visual Studio Installer did not install $sdk" }
+          # Start-Process -Wait waits for the installer itself; called directly it can hand
+          # off to a child process and return while the SDK is still being installed.
+          $p = Start-Process -FilePath (Join-Path $setup 'vs_installer.exe') -Wait -PassThru -ArgumentList @(
+            'modify', '--installPath', "`"$vs`"", '--quiet', '--force', '--norestart',
+            '--add', 'Microsoft.VisualStudio.Component.Windows11SDK.28000')
+          Write-Host "vs_installer exit code $($p.ExitCode)"
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "vs_installer exited with $($p.ExitCode)" }
+          for ($i = 0; $i -lt 90 -and -not (Ready); $i++) { Start-Sleep -Seconds 10 }
+          $missing = $need | Where-Object { -not (Test-Path $_) }
+          if ($missing) { throw "the Windows SDK is incomplete, missing: $($missing -join ', ')" }
           Write-Host 'Windows SDK 10.0.28000.0 is installed'
 
       - name: Build
