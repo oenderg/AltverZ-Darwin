@@ -40,8 +40,8 @@ void pvz2_settings_defaults(pvz2_settings *s)
     for (int i = 0; i < PVZ2_POWERUP_COUNT; i++)
         snprintf(s->powerup[i], sizeof(s->powerup[i]), "%s", pvz2_default_powerup_keys[i]);
     s->start_fullscreen = 0;
-    s->keep_window = 1;
     s->adapt_shape = 0;
+    snprintf(s->fixed_aspect, sizeof(s->fixed_aspect), "display");
     s->show_level_keys = 1;
     s->show_cursor_plant = 1;
     s->cursor_cross_brightness = 45;
@@ -83,8 +83,15 @@ void pvz2_settings_load(const char *path, pvz2_settings *s)
         ini_string(path, "keys", key, d.powerup[i], s->powerup[i], sizeof(s->powerup[i]));
     }
     s->start_fullscreen = ini_int(path, "window", "startFullScreen", d.start_fullscreen);
-    s->keep_window = ini_int(path, "window", "keepSizeAndPlace", d.keep_window);
-    s->adapt_shape = ini_int(path, "window", "adaptShape", d.adapt_shape);
+    char mode[16];
+    ini_string(path, "window", "resizeMode", "", mode, sizeof(mode));
+    s->adapt_shape = *mode ? !_stricmp(mode, "Adapt") :
+        ini_int(path, "window", "adaptShape", ini_int(path, "window", "adapt", 0)) != 0;
+    ini_string(path, "window", "fixedAspect", d.fixed_aspect, s->fixed_aspect, sizeof(s->fixed_aspect));
+    const char *valid[] = { "display", "game", "16:9", "16:10", "3:2", "4:3", "21:9" };
+    int known = 0;
+    for (int i = 0; i < 7; i++) if (!strcmp(valid[i], s->fixed_aspect)) known = 1;
+    if (!known) snprintf(s->fixed_aspect, sizeof(s->fixed_aspect), "display");
     s->show_level_keys = ini_int(path, "keys", "showLevelKeys", d.show_level_keys);
     s->show_cursor_plant = ini_int(path, "pointer", "showCursorPlant", d.show_cursor_plant) != 0;
     s->cursor_cross_brightness = ini_int(path, "pointer", "crossBrightness", d.cursor_cross_brightness);
@@ -110,7 +117,8 @@ int pvz2_settings_save(const char *path, const pvz2_settings *s)
         WritePrivateProfileStringA("keys", key, s->powerup[i], path);
     }
     WritePrivateProfileStringA("window", "startFullScreen", s->start_fullscreen ? "1" : "0", path);
-    WritePrivateProfileStringA("window", "keepSizeAndPlace", s->keep_window ? "1" : "0", path);
+    WritePrivateProfileStringA("window", "resizeMode", s->adapt_shape ? "Adapt" : "Fixed", path);
+    WritePrivateProfileStringA("window", "fixedAspect", s->fixed_aspect, path);
     WritePrivateProfileStringA("window", "adaptShape", s->adapt_shape ? "1" : "0", path);
     WritePrivateProfileStringA("keys", "showLevelKeys", s->show_level_keys ? "1" : "0", path);
     WritePrivateProfileStringA("pointer", "showCursorPlant", s->show_cursor_plant ? "1" : "0", path);
@@ -121,6 +129,22 @@ int pvz2_settings_save(const char *path, const pvz2_settings *s)
     }
     WritePrivateProfileStringA(NULL, NULL, NULL, path);          /* flush */
     return 1;
+}
+
+double pvz2_settings_aspect(const pvz2_settings *s, HMONITOR monitor)
+{
+    if (!strcmp(s->fixed_aspect, "game")) return 1748.0 / 804.0;
+    int w, h;
+    if (sscanf(s->fixed_aspect, "%d:%d", &w, &h) == 2 && w > 0 && h > 0)
+        return (double)w / h;
+    MONITORINFO mi = { .cbSize = sizeof(mi) };
+    double a = 16.0 / 9.0;
+    if (GetMonitorInfoW(monitor, &mi))
+        a = (double)(mi.rcMonitor.right - mi.rcMonitor.left) / (mi.rcMonitor.bottom - mi.rcMonitor.top);
+    /* These are the limits the game's layout supports, as on the Mac. */
+    if (a < 4.0 / 3.0) a = 4.0 / 3.0;
+    if (a > 2.4) a = 2.4;
+    return a;
 }
 
 /* ---------------------------------------------------------------- the keys */
@@ -205,7 +229,7 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 #define ID_PAGE_ABOUT    113
 
 #define ID_START_FULL    200
-#define ID_KEEP_WINDOW   201
+#define ID_FIXED_SHAPE   201
 #define ID_OPEN_SAVES    202
 #define ID_OPEN_DATA     203
 #define ID_ADAPT_SHAPE   204
@@ -214,6 +238,9 @@ const char *pvz2_settings_key_owner(const pvz2_settings *s, const char *name)
 #define ID_CROSS_BRIGHTNESS 207
 #define ID_CROSS_VALUE   208
 #define ID_OPEN_LOG      209
+#define ID_ASPECT        210
+#define ID_ASPECT_LABEL  211
+#define ID_MODE_FOOTER   212
 
 #define ID_RESTORE       300
 #define ID_APPLY         301
@@ -244,6 +271,8 @@ static int g_capture = -1;
 static pvz2_settings g_pending;
 static pvz2_settings *g_live;
 static pvz2_settings_host g_host;
+static HWND g_owner;
+static const char *g_aspect_tags[] = { "display", "game", "", "16:9", "16:10", "3:2", "4:3", "21:9" };
 
 static int S(int v) { return MulDiv(v, (int)GetDpiForWindow(g_self), 96); }
 
@@ -258,6 +287,8 @@ static HFONT make_font(int dpi)
 static HWND add(HWND parent, const wchar_t *cls, const wchar_t *text, DWORD style,
                 int x, int y, int w, int h, int id)
 {
+    if ((!wcscmp(cls, L"BUTTON") && (style & BS_TYPEMASK) != BS_GROUPBOX) ||
+        !wcscmp(cls, L"EDIT") || !wcscmp(cls, L"msctls_trackbar32")) style |= WS_TABSTOP;
     HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, S(x), S(y), S(w), S(h),
                              parent, (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
     SendMessageW(c, WM_SETFONT, (WPARAM)g_font, TRUE);
@@ -266,7 +297,7 @@ static HWND add(HWND parent, const wchar_t *cls, const wchar_t *text, DWORD styl
 
 static HWND add_page(HWND parent, int x, int y, int w, int h, int id)
 {
-    HWND p = CreateWindowExW(WS_EX_CONTROLPARENT, L"PvZ2SettingsPage", L"", WS_CHILD,
+    HWND p = CreateWindowExW(WS_EX_CONTROLPARENT, L"PvZ2SettingsPage", L"", WS_CHILD | WS_VSCROLL | WS_HSCROLL,
                              S(x), S(y), S(w), S(h), parent, (HMENU)(INT_PTR)id,
                              GetModuleHandleW(NULL), NULL);
     SendMessageW(p, WM_SETFONT, (WPARAM)g_font, TRUE);
@@ -456,21 +487,45 @@ static void build_pointer_page(HWND p)
     add(p, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON, 390, 334, 120, 26, ID_RESTORE_POINTER);
 }
 
+static void mode_refresh(HWND p)
+{
+    CheckRadioButton(p, ID_FIXED_SHAPE, ID_ADAPT_SHAPE,
+                     g_pending.adapt_shape ? ID_ADAPT_SHAPE : ID_FIXED_SHAPE);
+    ShowWindow(GetDlgItem(p, ID_ASPECT), g_pending.adapt_shape ? SW_HIDE : SW_SHOW);
+    ShowWindow(GetDlgItem(p, ID_ASPECT_LABEL), g_pending.adapt_shape ? SW_HIDE : SW_SHOW);
+    SetWindowTextW(GetDlgItem(p, ID_MODE_FOOTER), g_pending.adapt_shape ?
+        L"The window takes any shape from 4:3 to 2.4:1, and the game starts in the window's shape. The game lays a screen out once, so after you change the shape the picture keeps its old one, with bars. A new shape takes effect when the game next starts. Experimental." :
+        L"The window keeps one shape and the game fills it, at any size. A new shape takes effect when the game next starts. “Current display” is the shape of the display the game is on, so full screen has no bars.");
+}
+
 static void build_general_page(HWND p)
 {
-    add(p, L"BUTTON", L"Window", BS_GROUPBOX, 10, 8, 500, 140, 0);
-    HWND full = add(p, L"BUTTON", L"Start in full screen", BS_AUTOCHECKBOX, 24, 30, 300, 22, ID_START_FULL);
+    add(p, L"BUTTON", L"Window", BS_GROUPBOX, 10, 8, 500, 242, 0);
+    add(p, L"STATIC", L"Mode", 0, 24, 36, 120, 22, 0);
+    add(p, L"BUTTON", L"Fixed", BS_AUTORADIOBUTTON | WS_GROUP, 180, 32, 100, 24, ID_FIXED_SHAPE);
+    add(p, L"BUTTON", L"Adapt", BS_AUTORADIOBUTTON, 292, 32, 100, 24, ID_ADAPT_SHAPE);
+    add(p, L"STATIC", L"Aspect ratio", 0, 24, 78, 140, 22, ID_ASPECT_LABEL);
+    HWND combo = add(p, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP,
+                     180, 72, 302, 240, ID_ASPECT);
+    MONITORINFO mi = { .cbSize = sizeof(mi) };
+    GetMonitorInfoW(MonitorFromWindow(g_owner, MONITOR_DEFAULTTONEAREST), &mi);
+    double a = (double)(mi.rcMonitor.right - mi.rcMonitor.left) / (mi.rcMonitor.bottom - mi.rcMonitor.top);
+    const double ratios[] = { 16.0/9, 1.6, 1.5, 4.0/3, 21.0/9 };
+    const wchar_t *ratio_names[] = { L"16:9", L"16:10", L"3:2", L"4:3", L"21:9" };
+    wchar_t shape[32], display[80];
+    swprintf(shape, 32, L"%.2f:1", a);
+    for (int i = 0; i < 5; i++)
+        if (a / ratios[i] > .985 && a / ratios[i] < 1.015) swprintf(shape, 32, L"%ls", ratio_names[i]);
+    swprintf(display, 80, L"Current display (%ls)", shape);
+    const wchar_t *names[] = { display, L"The game's own (2.17:1)", L"────────────────", L"16:9", L"16:10", L"3:2", L"4:3", L"21:9" };
+    for (int i = 0; i < 8; i++) {
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)names[i]);
+        if (!strcmp(g_aspect_tags[i], g_pending.fixed_aspect)) SendMessageW(combo, CB_SETCURSEL, i, 0);
+    }
+    add(p, L"STATIC", L"", 0, 24, 120, 460, 112, ID_MODE_FOOTER);
+    HWND full = add(p, L"BUTTON", L"Start in full screen", BS_AUTOCHECKBOX, 24, 276, 440, 24, ID_START_FULL);
     SendMessageW(full, BM_SETCHECK, g_pending.start_fullscreen ? BST_CHECKED : BST_UNCHECKED, 0);
-    HWND keep = add(p, L"BUTTON", L"Keep the window's size and place", BS_AUTOCHECKBOX, 24, 58, 320, 22, ID_KEEP_WINDOW);
-    SendMessageW(keep, BM_SETCHECK, g_pending.keep_window ? BST_CHECKED : BST_UNCHECKED, 0);
-    HWND adapt = add(p, L"BUTTON", L"Let the game adapt to the window's shape (4:3 to 21:9)",
-                     BS_AUTOCHECKBOX, 24, 86, 460, 22, ID_ADAPT_SHAPE);
-    SendMessageW(adapt, BM_SETCHECK, g_pending.adapt_shape ? BST_CHECKED : BST_UNCHECKED, 0);
-    /* The guest lays a screen out once, when it opens (the Mac host says the
-     * same), so the choice is for the next start, not a live resize. */
-    add(p, L"STATIC", L"A new shape takes effect when the game next starts. Until then the", 0, 38, 112, 460, 16, 0);
-    add(p, L"STATIC", L"picture keeps the shape it started in, with bars.", 0, 38, 128, 460, 16, 0);
-
+    mode_refresh(p);
 }
 
 static void build_about_page(HWND p)
@@ -637,11 +692,24 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         case ID_START_FULL:
             g_pending.start_fullscreen = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
             return 0;
-        case ID_KEEP_WINDOW:
-            g_pending.keep_window = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
-            return 0;
+        case ID_FIXED_SHAPE:
         case ID_ADAPT_SHAPE:
-            g_pending.adapt_shape = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            g_pending.adapt_shape = LOWORD(wp) == ID_ADAPT_SHAPE;
+            mode_refresh(g_page[GENERAL]);
+            return 0;
+        case ID_ASPECT:
+            if (HIWORD(wp) == CBN_SELCHANGE) {
+                int i = (int)SendMessageW((HWND)lp, CB_GETCURSEL, 0, 0);
+                if (i == 2) {
+                    /* Skip the separator in either keyboard direction. */
+                    i = !strcmp(g_pending.fixed_aspect, "game") ? 3 : 1;
+                    SendMessageW((HWND)lp, CB_SETCURSEL, i, 0);
+                }
+                if (i >= 0 && i < 8 && *g_aspect_tags[i])
+                    snprintf(g_pending.fixed_aspect, sizeof(g_pending.fixed_aspect), "%s", g_aspect_tags[i]);
+                else for (int j = 0; j < 8; j++) if (!strcmp(g_aspect_tags[j], g_pending.fixed_aspect))
+                    SendMessageW((HWND)lp, CB_SETCURSEL, j, 0);
+            }
             return 0;
         case ID_SHOW_KEYS:
             g_pending.show_level_keys = (int)SendMessageW((HWND)lp, BM_GETCHECK, 0, 0) == BST_CHECKED;
@@ -720,6 +788,49 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 static LRESULT CALLBACK page_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
+    case WM_SIZE:
+        for (int axis = 0; axis < 2; axis++) {
+            int bar = axis ? SB_VERT : SB_HORZ;
+            SCROLLINFO si = { .cbSize = sizeof(si), .fMask = SIF_POS };
+            GetScrollInfo(h, bar, &si);
+            int old = si.nPos;
+            si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+            si.nMin = 0;
+            si.nMax = S(axis ? 430 : 510) - 1;
+            RECT r; GetClientRect(h, &r);
+            si.nPage = axis ? r.bottom : r.right;
+            SetScrollInfo(h, bar, &si, TRUE);
+            si.fMask = SIF_POS;
+            GetScrollInfo(h, bar, &si);
+            if (old != si.nPos) ScrollWindowEx(h, axis ? 0 : old - si.nPos,
+                axis ? old - si.nPos : 0, NULL, NULL, NULL, NULL, SW_SCROLLCHILDREN | SW_INVALIDATE | SW_ERASE);
+        }
+        return 0;
+    case WM_MOUSEWHEEL:
+        return SendMessageW(h, WM_VSCROLL, GET_WHEEL_DELTA_WPARAM(wp) > 0 ? SB_LINEUP : SB_LINEDOWN, 0);
+    case WM_VSCROLL:
+    case WM_HSCROLL: {
+        /* A trackbar still forwards its own scroll message to Settings. */
+        if (lp) return SendMessageW(GetParent(h), msg, wp, lp);
+        int bar = msg == WM_VSCROLL ? SB_VERT : SB_HORZ;
+        SCROLLINFO si = { .cbSize = sizeof(si), .fMask = SIF_ALL };
+        GetScrollInfo(h, bar, &si);
+        int old = si.nPos;
+        switch (LOWORD(wp)) {
+        case SB_LINEUP: si.nPos -= S(32); break;
+        case SB_LINEDOWN: si.nPos += S(32); break;
+        case SB_PAGEUP: si.nPos -= si.nPage; break;
+        case SB_PAGEDOWN: si.nPos += si.nPage; break;
+        case SB_THUMBTRACK: si.nPos = si.nTrackPos; break;
+        default: return 0;
+        }
+        si.fMask = SIF_POS;
+        SetScrollInfo(h, bar, &si, TRUE);
+        GetScrollInfo(h, bar, &si);
+        ScrollWindowEx(h, bar == SB_HORZ ? old - si.nPos : 0, bar == SB_VERT ? old - si.nPos : 0,
+                       NULL, NULL, NULL, NULL, SW_SCROLLCHILDREN | SW_INVALIDATE | SW_ERASE);
+        return 0;
+    }
     case WM_ERASEBKGND: {
         RECT r;
         GetClientRect(h, &r);
@@ -736,7 +847,6 @@ static LRESULT CALLBACK page_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
      * window: pass it on, or Restore defaults and the folder buttons are dead. */
     case WM_COMMAND:
     case WM_NOTIFY:
-    case WM_HSCROLL:
         return SendMessageW(GetParent(h), msg, wp, lp);
     default: break;
     }
@@ -775,6 +885,7 @@ void pvz2_settings_open(HWND owner, pvz2_settings *live, const pvz2_settings_hos
     g_live = live;
     g_pending = *live;
     g_host = *host;
+    g_owner = owner;
     g_tab = 0;
     g_capture = -1;
 
@@ -788,6 +899,8 @@ void pvz2_settings_open(HWND owner, pvz2_settings *live, const pvz2_settings_hos
     HMONITOR mon = MonitorFromWindow(owner ? owner : GetDesktopWindow(), MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi = { .cbSize = sizeof(mi) };
     GetMonitorInfoW(mon, &mi);
+    if (w > mi.rcWork.right - mi.rcWork.left) w = mi.rcWork.right - mi.rcWork.left;
+    if (h > mi.rcWork.bottom - mi.rcWork.top) h = mi.rcWork.bottom - mi.rcWork.top;
     int x = o.left + ((o.right - o.left) - w) / 2;
     int y = o.top + ((o.bottom - o.top) - h) / 2;
     if (x < mi.rcWork.left) x = mi.rcWork.left;

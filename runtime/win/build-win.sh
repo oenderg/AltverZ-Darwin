@@ -18,6 +18,7 @@ target="${1:-starttest}"
 case "$target" in
     starttest) SRCS="$WIN_CORE $H/win-starttest.c"; OUT="$BIN/rfl-starttest.exe" ;;
     game) SRCS="$WIN_CORE $WIN_GAME"; OUT="$BIN/PvZ2 Reflourished.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
+    settings-test) SRCS="$H/win-settings-test.c $H/../tools/pvz2-windows-settings.c"; OUT="$BIN/rfl-settings-test.exe"; LDX="-lshell32 -lcomctl32 -lgdi32 -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
 OBJS=""
@@ -28,13 +29,15 @@ for f in $SRCS; do
     fi
     OBJS="$OBJS $o"
 done
-if [ "$target" = game ]; then
+if [ "$target" = game ] || [ "$target" = settings-test ]; then
     RC="$OBJ/win-manifest.o"
     if [ ! -f "$RC" ] || [ "$H/win-manifest.rc" -nt "$RC" ] || [ "$H/win-manifest.xml" -nt "$RC" ]; then
         "$TC/llvm-mingw-20261020-ucrt-macos-universal/bin/llvm-windres" -I"$H" -O coff \
             -i "$H/win-manifest.rc" -o "$RC"
     fi
     OBJS="$OBJS $RC"
+fi
+if [ "$target" = game ] || [ "$target" = settings-test ]; then
     # The dark mode library is C++ and has its own flags (runtime/win/build-darkmode.sh);
     # the shim is its only C++ file in our code.
     "$H/build-darkmode.sh" "$CXX" "$AR" "$OBJ"

@@ -104,7 +104,9 @@ powerup2=X
 powerup3=C
 [window]
 startFullScreen=0
-keepSizeAndPlace=1
+resizeMode=Fixed
+fixedAspect=display
+fullScreenState=0
 x=...
 y=...
 width=...
@@ -117,11 +119,25 @@ defaults. The Keyboard page of the settings window (window menu: Settings..., or
 records a key by clicking its field and pressing the key; Escape cancels, Delete clears,
 and a key another shortcut already uses is refused with that shortcut's name.
 
+Settings has four tabs: General, Gameplay, Keyboard and About. General selects Fixed
+or Adapt mode and, in Fixed, the startup aspect (`display`, `game`, `16:9`, `16:10`,
+`3:2`, `4:3`, `21:9`). Fixed constrains interactive resizing to the startup aspect;
+Adapt starts in the window's shape, between 4:3 and 2.4:1. Changing mode or aspect
+takes effect next start. Current display uses that monitor's shape, without bars
+in full screen on supported display shapes. The game's own aspect keeps bars on
+a differently shaped monitor. Size, place and full-screen state are always saved.
+`keepSizeAndPlace` and `keep_window` are ignored; old `adaptShape=1` (or `adapt=1`)
+migrates to Adapt when there is no `resizeMode`. The older keys and pointer
+preferences keep their meanings. Pages scroll when the DPI leaves too little room.
+
+`runtime/win/build-win.sh settings-test` builds `out/win/rfl-settings-test.exe`,
+a native Windows test of defaults, old INI migration and round-trip persistence.
+It uses and deletes its own temporary INI, never the player's settings.
+
 The shortcuts are the Mac host's, from `runtime/tools/pvz2-keys.h`: 1-4 and Q W E R pick seed
 packets 1-8, S the shovel, F plant food, Tab fast-forward, Space collects suns and coins, and
 Z X C the level's power-ups. They use the game's own card press and shovel, as on the Mac.
-There are no in-level key labels yet on Windows, so the Mac's "Show keys in levels" choice is
-not offered.
+Gameplay offers the in-level key labels, pointer preview and cross brightness.
 
 ## The game's data (the OBB)
 
@@ -137,7 +153,7 @@ and messages are the Mac client's.
 
 ## The key labels in levels
 
-With "Show keys in levels" on (Settings, Keyboard; the default), the host draws the key
+With "Show keys in levels" on (Settings, Gameplay; the default), the host draws the key
 that works each control on the control: the seed packets, the shovel, fast-forward, plant
 food and the level's power-ups. The driver publishes where the controls are and whether
 the board is live (`tl_pvz2_badges`, the same snapshot the Mac and iPad read); the host

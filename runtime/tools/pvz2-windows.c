@@ -211,7 +211,7 @@ static void typed(WPARAM ch)
 
 static void save_geometry(void)
 {
-    if (!g_hwnd || !g_settings.keep_window) return;
+    if (!g_hwnd) return;
     WINDOWPLACEMENT wp = { .length = sizeof(wp) };
     if (g_fullscreen) wp = g_windowed_placement;
     else if (!GetWindowPlacement(g_hwnd, &wp)) return;
@@ -222,6 +222,7 @@ static void save_geometry(void)
     snprintf(tmp, sizeof(tmp), "%ld", (long)(r.right - r.left)); WritePrivateProfileStringA("window", "width", tmp, g_settings_path);
     snprintf(tmp, sizeof(tmp), "%ld", (long)(r.bottom - r.top)); WritePrivateProfileStringA("window", "height", tmp, g_settings_path);
     WritePrivateProfileStringA("window", "maximized", wp.showCmd == SW_SHOWMAXIMIZED ? "1" : "0", g_settings_path);
+    WritePrivateProfileStringA("window", "fullScreenState", g_fullscreen ? "1" : "0", g_settings_path);
     WritePrivateProfileStringA(NULL, NULL, NULL, g_settings_path);
 }
 
@@ -278,7 +279,7 @@ static void default_client(int *w, int *h, int *x, int *y)
 static void initial_placement(RECT *out, int *maximized)
 {
     *maximized = 0;
-    if (g_settings.keep_window) {
+    {
         int x = (int)GetPrivateProfileIntA("window", "x", -100000, g_settings_path);
         int y = (int)GetPrivateProfileIntA("window", "y", -100000, g_settings_path);
         int w = (int)GetPrivateProfileIntA("window", "width", 0, g_settings_path);
@@ -403,8 +404,11 @@ static void toggle_fullscreen(int on)
 static void settings_applied(void *user, const pvz2_settings *s)
 {
     (void)user;
+    /* The startup preference only changes the current full-screen state when
+     * that checkbox itself changes, not when an unrelated setting is applied. */
+    int full_changed = g_start_fullscreen != s->start_fullscreen;
+    g_start_fullscreen = s->start_fullscreen;
     g_settings = *s;
-    g_adapt = s->adapt_shape;
     g_show_keys = s->show_level_keys;
     g_show_cursor_plant = s->show_cursor_plant;
     g_cross_brightness = s->cursor_cross_brightness;
@@ -412,9 +416,8 @@ static void settings_applied(void *user, const pvz2_settings *s)
     badges_apply_setting();
     pointer_apply_setting();
     save_geometry();
-    toggle_fullscreen(g_settings.start_fullscreen ? 1 : 0);
-    tl_log_line("windows: the settings are applied without a restart (%s shape at the next start)",
-                g_adapt ? "the window's, between 4:3 and 21:9" : "the game's own");
+    if (full_changed) toggle_fullscreen(g_settings.start_fullscreen ? 1 : 0);
+    tl_log_line("windows: the settings are applied; mode and aspect take effect at the next start");
 }
 
 static void open_settings(void)
@@ -429,7 +432,7 @@ static void open_settings(void)
     pvz2_settings_open(g_hwnd, &g_settings, &host);
 }
 
-/* The shape the game starts in. Fixed: the game's own 1748x804. Adapt: the
+/* The shape the game starts in. Fixed: the selected aspect. Adapt: the
  * window's shape, kept between 4:3 and 2.4:1 (the shapes the game fills). The
  * guest lays a screen out once, when it opens, so this is chosen at the start;
  * another window shape afterwards gets bars, exactly as the Mac's Adapt mode
@@ -438,17 +441,59 @@ static void startup_layout_from_window(void)
 {
     g_layout_w = DESIGN_W;
     g_layout_h = DESIGN_H;
-    if (!g_adapt || !g_hwnd) return;
+    if (!g_hwnd) return;
     RECT rc;
     GetClientRect(g_hwnd, &rc);
     int cw = (int)(rc.right - rc.left), ch = (int)(rc.bottom - rc.top);
     if (cw <= 0 || ch <= 0) return;
-    double a = (double)cw / (double)ch;
+    double a = g_adapt ? (double)cw / (double)ch :
+        pvz2_settings_aspect(&g_settings, MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST));
     if (a < 4.0 / 3.0) a = 4.0 / 3.0;
     if (a > 2.4) a = 2.4;
     g_layout_w = cw;
     g_layout_h = (int)((double)cw / a + 0.5);
-    tl_log_line("windows: the game starts in the window's shape (%.3f:1, kept between 4:3 and 2.4:1)", a);
+    if (!g_adapt) {
+        int numerator, denominator;
+        if (sscanf(g_settings.fixed_aspect, "%d:%d", &numerator, &denominator) == 2) {
+            g_layout_w = numerator; g_layout_h = denominator;
+        } else if (!strcmp(g_settings.fixed_aspect, "game")) {
+            g_layout_w = DESIGN_W; g_layout_h = DESIGN_H;
+        } else {
+            MONITORINFO mi = { .cbSize = sizeof(mi) };
+            if (GetMonitorInfoW(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &mi)) {
+                int mw = mi.rcMonitor.right - mi.rcMonitor.left;
+                int mh = mi.rcMonitor.bottom - mi.rcMonitor.top;
+                double actual = (double)mw / mh;
+                if (actual >= 4.0 / 3.0 && actual <= 2.4) {
+                    g_layout_w = mw; g_layout_h = mh;
+                }
+            }
+        }
+    }
+    tl_log_line("windows: the game starts in %s mode, aspect %s (%.3f:1)",
+                g_adapt ? "Adapt" : "Fixed", g_settings.fixed_aspect, a);
+}
+
+/* Keep the startup shape, never a newly selected setting: the game lays out
+ * only once and must not be resized into a different shape during startup. */
+static void constrain_sizing(RECT *r, WPARAM edge)
+{
+    RECT frame = { 0 };
+    AdjustWindowRectExForDpi(&frame, WINDOW_STYLE, FALSE, 0, GetDpiForWindow(g_hwnd));
+    int fw = frame.right - frame.left, fh = frame.bottom - frame.top;
+    double a = (double)g_layout_w / g_layout_h;
+    int w = r->right - r->left - fw, h = r->bottom - r->top - fh;
+    if (edge == WMSZ_TOP || edge == WMSZ_BOTTOM) w = (int)(h * a + .5);
+    int min_w = (int)(MIN_CLIENT_H * a + .5);
+    if (min_w < MIN_CLIENT_W) min_w = MIN_CLIENT_W;
+    if (w < min_w) w = min_w;
+    h = (int)(w / a + .5);
+    if (edge == WMSZ_LEFT || edge == WMSZ_TOPLEFT || edge == WMSZ_BOTTOMLEFT)
+        r->left = r->right - w - fw;
+    else r->right = r->left + w + fw;
+    if (edge == WMSZ_TOP || edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT)
+        r->top = r->bottom - h - fh;
+    else r->bottom = r->top + h + fh;
 }
 
 /* ---------------------------------------------------------------- the picture
@@ -1713,6 +1758,12 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_EXITSIZEMOVE:
         if (!g_fullscreen) save_geometry();
         return 0;
+    case WM_SIZING:
+        if (!g_fullscreen && !g_adapt) {
+            constrain_sizing((RECT *)lp, wp);
+            return TRUE;
+        }
+        break;
     case WM_GETMINMAXINFO:
         if (!g_fullscreen) {
             MINMAXINFO *mm = (MINMAXINFO *)lp;
@@ -1720,6 +1771,20 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             AdjustWindowRectExForDpi(&r, WINDOW_STYLE, FALSE, 0, GetDpiForSystem());
             mm->ptMinTrackSize.x = r.right - r.left;
             mm->ptMinTrackSize.y = r.bottom - r.top;
+            if (!g_adapt) {
+                MONITORINFO mi = { .cbSize = sizeof(mi) };
+                GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mi);
+                int fw = (r.right - r.left) - MIN_CLIENT_W;
+                int fh = (r.bottom - r.top) - MIN_CLIENT_H;
+                double a = (double)g_layout_w / g_layout_h;
+                int w = mi.rcWork.right - mi.rcWork.left - fw;
+                int ch = (int)(w / a + .5);
+                int room = mi.rcWork.bottom - mi.rcWork.top - fh;
+                if (ch > room) { ch = room; w = (int)(ch * a + .5); }
+                mm->ptMaxSize = (POINT){ w + fw, ch + fh };
+                mm->ptMaxPosition = (POINT){ mi.rcWork.left - mi.rcMonitor.left,
+                                             mi.rcWork.top - mi.rcMonitor.top };
+            }
             return 0;
         }
         break;
@@ -1770,13 +1835,36 @@ static HWND make_window(HINSTANCE inst)
     int maximized = 0;
     RECT wr;
     initial_placement(&wr, &maximized);
+    if (!g_adapt) {
+        /* Preserve the saved width and place, but honour a new aspect at this
+         * start. Fit within the monitor's work area before the game opens. */
+        MONITORINFO mi = { .cbSize = sizeof(mi) };
+        HMONITOR mon = monitor_for(&wr);
+        GetMonitorInfoW(mon, &mi);
+        RECT frame = { 0 };
+        AdjustWindowRectExForDpi(&frame, WINDOW_STYLE, FALSE, 0, GetDpiForSystem());
+        int fw = frame.right - frame.left, fh = frame.bottom - frame.top;
+        double a = pvz2_settings_aspect(&g_settings, mon);
+        int w = wr.right - wr.left - fw;
+        int h = (int)(w / a + .5);
+        int room_h = mi.rcWork.bottom - mi.rcWork.top - fh;
+        int room_w = mi.rcWork.right - mi.rcWork.left - fw;
+        if (h > room_h) { h = room_h; w = (int)(h * a + .5); }
+        if (w > room_w) { w = room_w; h = (int)(w / a + .5); }
+        wr.right = wr.left + w + fw;
+        wr.bottom = wr.top + h + fh;
+        if (wr.right > mi.rcWork.right) OffsetRect(&wr, mi.rcWork.right - wr.right, 0);
+        if (wr.bottom > mi.rcWork.bottom) OffsetRect(&wr, 0, mi.rcWork.bottom - wr.bottom);
+        /* A maximized rectangle cannot retain an arbitrary client aspect. */
+        maximized = 0;
+    }
     g_windowed_placement = (WINDOWPLACEMENT){ .length = sizeof(WINDOWPLACEMENT) };
     g_windowed_placement.showCmd = maximized ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL;
     g_windowed_placement.rcNormalPosition = wr;
     g_windowed_style = WINDOW_STYLE;
 
     HWND parent;
-    if (g_start_fullscreen) {
+    if (GetPrivateProfileIntA("window", "fullScreenState", g_start_fullscreen, g_settings_path)) {
         HMONITOR mon = monitor_for(&wr);
         MONITORINFO mi = { .cbSize = sizeof(mi) };
         if (GetMonitorInfoW(mon, &mi)) {
