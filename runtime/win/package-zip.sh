@@ -8,9 +8,9 @@
 #   --arch arm64|x64|all   which zips (default all)
 #   --apk FILE             the game's APK, put in Game/ (required)
 #   --tar FILE             the CDN archive, put in Game/1.4.2.main.tar (optional)
-#   --angle DIR            libEGL.dll and libGLESv2.dll (and the D3D/Vulkan
-#                          companions) to ship; arm64 defaults to
-#                          out/win/angle-arm64, x64 to out/win/angle-x64
+#   --angle DIR            libEGL.dll and libGLESv2.dll (and d3dcompiler_47.dll)
+#                          to ship; arm64 defaults to prebuilt/win-arm64, x64 to
+#                          prebuilt/win-x64 (runtime/win/build-angle.cmd makes them)
 #   --x64-exe FILE         default out/win-x64/PvZ2 Reflourished x64.exe
 #   --x64-runtime DIR      extra DLLs the x64 program imports (libLLVM-23.dll,
 #                          libc++.dll, ...); every .dll in it is copied
@@ -26,8 +26,9 @@ REPO="$(cd "$H/../.." && pwd)"
 VERSION="$(cat "$REPO/VERSION" 2>/dev/null || echo dev)"
 ARCH=all
 APK=""; TAR=""; OUT="$REPO/out/zips"
-ANGLE_ARM="$REPO/out/win/angle-arm64"
-ANGLE_X64="$REPO/out/win/angle-x64"
+ANGLE_ARM="$REPO/prebuilt/win-arm64"
+ANGLE_X64="$REPO/prebuilt/win-x64"
+ANGLE_GIVEN=""
 X64_EXE="$REPO/out/win-x64/PvZ2 Reflourished x64.exe"
 X64_RUNTIME=""
 
@@ -36,7 +37,7 @@ while [ $# -gt 0 ]; do
     --arch) ARCH="$2"; shift 2 ;;
     --apk) APK="$2"; shift 2 ;;
     --tar) TAR="$2"; shift 2 ;;
-    --angle) ANGLE_ARM="$2"; ANGLE_X64="$2"; shift 2 ;;
+    --angle) ANGLE_ARM="$2"; ANGLE_X64="$2"; ANGLE_GIVEN=1; shift 2 ;;
     --x64-exe) X64_EXE="$2"; shift 2 ;;
     --x64-runtime) X64_RUNTIME="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
@@ -44,6 +45,9 @@ while [ $# -gt 0 ]; do
     *) echo "unknown option $1" >&2; exit 2 ;;
     esac
 done
+
+# Our ANGLE build is not in git: fetch-angle.sh downloads and checks it (runtime/win/ANGLE_ZIPS).
+if [ -z "$ANGLE_GIVEN" ]; then "$H/fetch-angle.sh" "$ARCH" || exit 1; fi
 
 [ -n "$APK" ] || { echo "package-zip: --apk is required" >&2; exit 2; }
 [ -f "$APK" ] || { echo "package-zip: no APK at $APK" >&2; exit 2; }
@@ -83,6 +87,7 @@ A file named "portable" beside the program puts everything in "data" beside it.
 The Settings window (window menu, or Ctrl+,) changes the keys and the window.
 "In a level the key that works each control is shown on it" is on by default
 (Settings, Keyboard); level-ui.ttf beside the program draws those labels.
+ANGLE, which draws the game through Direct3D 11, is licensed as LICENSE-ANGLE.txt says.
 
 The first start downloads the game's data (the OBB, about 1.3 GB) once,
 with a small progress window and a Cancel button; it is checked before the
@@ -102,8 +107,9 @@ if [ "$ARCH" = arm64 ] || [ "$ARCH" = all ]; then
     stage_common "$dir"
     cp "$REPO/out/win/PvZ2 Reflourished.exe" "$dir/PvZ2 Reflourished.exe"
     [ -f "$ANGLE_ARM/libEGL.dll" ] && [ -f "$ANGLE_ARM/libGLESv2.dll" ] || {
-        echo "package-zip: put libEGL.dll and libGLESv2.dll in $ANGLE_ARM or pass --angle" >&2; exit 2; }
+        echo "package-zip: no libEGL.dll and libGLESv2.dll in $ANGLE_ARM (runtime/win/build-angle.cmd makes them, or pass --angle)" >&2; exit 2; }
     cp "$ANGLE_ARM"/*.dll "$dir/" 2>/dev/null || true
+    [ -f "$ANGLE_ARM/LICENSE" ] && cp "$ANGLE_ARM/LICENSE" "$dir/LICENSE-ANGLE.txt" || true
     make_zip "$dir" "$stamp-windows-arm64"
 fi
 
@@ -113,8 +119,9 @@ if [ "$ARCH" = x64 ] || [ "$ARCH" = all ]; then
     [ -f "$X64_EXE" ] || { echo "package-zip: no x64 program at $X64_EXE" >&2; exit 2; }
     cp "$X64_EXE" "$dir/PvZ2 Reflourished x64.exe"
     [ -f "$ANGLE_X64/libEGL.dll" ] && [ -f "$ANGLE_X64/libGLESv2.dll" ] || {
-        echo "package-zip: put libEGL.dll and libGLESv2.dll in $ANGLE_X64 or pass --angle" >&2; exit 2; }
+        echo "package-zip: no libEGL.dll and libGLESv2.dll in $ANGLE_X64 (runtime/win/build-angle.cmd makes them, or pass --angle)" >&2; exit 2; }
     cp "$ANGLE_X64"/*.dll "$dir/" 2>/dev/null || true
+    [ -f "$ANGLE_X64/LICENSE" ] && cp "$ANGLE_X64/LICENSE" "$dir/LICENSE-ANGLE.txt" || true
     if [ -n "$X64_RUNTIME" ]; then cp "$X64_RUNTIME"/*.dll "$dir/" 2>/dev/null || true; fi
     make_zip "$dir" "$stamp-windows-x64"
 fi
