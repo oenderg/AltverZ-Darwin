@@ -7,6 +7,8 @@ H="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$H/../.." && pwd)"
 TC="${TL_WIN_TOOLCHAIN:?set TL_WIN_TOOLCHAIN to the folder holding llvm-mingw-* and win-arm64 (see runtime/win/README.md)}"
 CC="$TC/llvm-mingw-20261020-ucrt-macos-universal/bin/aarch64-w64-mingw32-clang"
+CXX="$TC/llvm-mingw-20261020-ucrt-macos-universal/bin/aarch64-w64-mingw32-clang++"
+AR="$TC/llvm-mingw-20261020-ucrt-macos-universal/bin/llvm-ar"
 OBJ="$REPO/out/win-obj"; BIN="$REPO/out/win"
 mkdir -p "$OBJ" "$BIN"
 N="$H/../src/translation-layer-next"; T="$H/../src/translation-layer"
@@ -14,7 +16,7 @@ N="$H/../src/translation-layer-next"; T="$H/../src/translation-layer"
 target="${1:-starttest}"
 case "$target" in
     starttest) SRCS="$WIN_CORE $H/win-starttest.c"; OUT="$BIN/rfl-starttest.exe" ;;
-    game) SRCS="$WIN_CORE $WIN_GAME"; OUT="$BIN/PvZ2 Reflourished.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus" ;;
+    game) SRCS="$WIN_CORE $WIN_GAME"; OUT="$BIN/PvZ2 Reflourished.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
 OBJS=""
@@ -32,6 +34,16 @@ if [ "$target" = game ]; then
             -i "$H/win-manifest.rc" -o "$RC"
     fi
     OBJS="$OBJS $RC"
+    # The dark mode library is C++ and has its own flags (runtime/win/build-darkmode.sh);
+    # the shim is its only C++ file in our code.
+    "$H/build-darkmode.sh" "$CXX" "$AR" "$OBJ"
+    DM="$OBJ/pvz2-windows-darkmode.o"
+    DMSRC="$H/../tools/pvz2-windows-darkmode.cpp"
+    if [ ! -f "$DM" ] || [ "$DMSRC" -nt "$DM" ] || [ "$H/../tools/pvz2-windows-darkmode.h" -nt "$DM" ]; then
+        "$CXX" -std=c++20 -O2 -g -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 \
+            -I"$H/../third_party/darkmodelib/include" -I"$H/../tools" -c "$DMSRC" -o "$DM"
+    fi
+    OBJS="$OBJS $DM $OBJ/libdarkmode.a"
 fi
-"$CC" -static -o "$OUT" $OBJS $LDX -L"$TC/win-arm64/lib" -lz -lz-guest -lpsapi -lws2_32 -lbcrypt -lsynchronization -lpthread -Wl,--error-limit=0
+"$CXX" -static -o "$OUT" $OBJS $LDX -L"$TC/win-arm64/lib" -lz -lz-guest -lpsapi -lws2_32 -lbcrypt -lsynchronization -lpthread -Wl,--error-limit=0
 echo "built $OUT"

@@ -23,7 +23,7 @@ fi
 . "$H/sources.sh"
 case "$target" in
     starttest) SRCS="$WIN_CORE $X/husk-tl-x64.c $X/x64-starttest.c"; EXE="$OUT/rfl-x64-starttest.exe" ;;
-    game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/PvZ2 Reflourished x64.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus" ;;
+    game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/PvZ2 Reflourished x64.exe"; LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
 OBJS=""
@@ -42,6 +42,16 @@ if [ "$target" = game ]; then
         windres -I"$H" -O coff -i "$H/win-manifest.rc" -o "$RC"
     fi
     OBJS="$OBJS $RC"
+    # The dark mode library and its one C++ shim (runtime/win/build-darkmode.sh).
+    "$H/build-darkmode.sh" clang++ llvm-ar "$OUT"
+    DM="$OBJ/pvz2-windows-darkmode.o"
+    DMSRC="$R/tools/pvz2-windows-darkmode.cpp"
+    if [ ! -f "$DM" ] || [ "$DMSRC" -nt "$DM" ] || [ "$R/tools/pvz2-windows-darkmode.h" -nt "$DM" ]; then
+        echo "  c++ pvz2-windows-darkmode.cpp"
+        clang++ -std=c++20 -O1 -g -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 \
+            -I"$R/third_party/darkmodelib/include" -I"$R/tools" -c "$DMSRC" -o "$DM"
+    fi
+    OBJS="$OBJS $DM $OUT/libdarkmode.a"
 fi
 L="$SNX/build/lib"
 clang++ -o "$EXE" $OBJS -Wl,--start-group "$L/recompiler-library/libscarletnx-recompiler.a" "$L/llvm-backend/libsnx_llvm.a" \

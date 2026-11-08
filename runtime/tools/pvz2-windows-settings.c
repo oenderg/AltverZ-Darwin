@@ -22,6 +22,7 @@
 #include <wchar.h>
 
 #include "pvz2-windows-settings.h"
+#include "pvz2-windows-darkmode.h"
 
 #pragma comment(lib, "comctl32.lib")
 
@@ -566,6 +567,15 @@ static void build(HWND h)
     layout(h);
 }
 
+/* The library themes the window and the controls; the pages need their own
+ * colour subclass because WM_CTLCOLORSTATIC goes to a control's parent. */
+static void darkmode_apply(HWND h)
+{
+    tl_win_darkmode_window(h);
+    for (int i = 0; i < 3; i++)
+        if (g_page[i]) tl_win_darkmode_page(g_page[i]);
+}
+
 static void apply(void)
 {
     if (g_live) *g_live = g_pending;
@@ -579,6 +589,7 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CREATE:
         g_self = h;
         build(h);
+        darkmode_apply(h);
         return 0;
     case WM_NOTIFY: {
         NMHDR *n = (NMHDR *)lp;
@@ -653,8 +664,17 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         DeleteObject(g_font);
         g_font = NULL;
         build(h);
+        darkmode_apply(h);
         return 0;
     }
+    case WM_SETTINGCHANGE:
+        /* Windows' light or dark mode may have changed while this window is
+         * open: the library re-reads it and the window redraws in place. */
+        if (tl_win_darkmode_system_changed(lp)) {
+            darkmode_apply(h);
+            tl_win_darkmode_redraw(h);
+        }
+        return 0;
     case WM_SIZE:
         layout(h);
         return 0;

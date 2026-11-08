@@ -42,6 +42,7 @@
 #include "pvz2-cursor-images.h"
 #include "pvz2-keys.h"
 #include "pvz2-windows-settings.h"
+#include "pvz2-windows-darkmode.h"
 #include "../win/pvz2-obb-win.h"
 #if defined(__x86_64__)
 #include "husk-tl-x64.h"
@@ -1682,6 +1683,11 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_WINDOWPOSCHANGED:
         refresh_update(false);
         break;
+    case WM_SETTINGCHANGE:
+        /* The title bar follows Windows' light or dark mode without a restart;
+         * the game's picture is never themed. */
+        if (tl_win_darkmode_system_changed(lp)) tl_win_darkmode_title(h);
+        return 0;
     case WM_DISPLAYCHANGE:
         refresh_update(true);
         return 0;
@@ -1812,7 +1818,7 @@ static int translation_needed(void)
 
 static LRESULT CALLBACK progress_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
-    (void)wp; (void)lp;
+    (void)wp;
     switch (msg) {
     case WM_CREATE:
         SetTimer(h, 1, 100, NULL);
@@ -1822,6 +1828,9 @@ static LRESULT CALLBACK progress_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             KillTimer(h, 1);
             DestroyWindow(h);
         }
+        return 0;
+    case WM_SETTINGCHANGE:
+        if (tl_win_darkmode_system_changed(lp)) tl_win_darkmode_redraw(h);
         return 0;
     case WM_CLOSE:
         /* The translation is not something to leave half done. */
@@ -1875,6 +1884,7 @@ static void show_progress_window(HINSTANCE inst)
     SendMessageW(bar, WM_SETFONT, (WPARAM)font, TRUE);
     SendMessageW(note, WM_SETFONT, (WPARAM)font, TRUE);
     SendMessageW(bar, PBM_SETMARQUEE, TRUE, 30);
+    tl_win_darkmode_window(hwnd);
     g_progress = hwnd;
     tl_log_line("windows: the first start translates the game; the preparing window is up");
 }
@@ -1992,6 +2002,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     if (strcmp(g_saves, g_data) != 0) migrate_old_state(g_data, g_saves);
     tl_win_set_saves_dir(g_saves);
 
+    /* Windows' own light or dark preference, before any host window: the
+     * download window, the preparing window and the game window follow it. */
+    tl_win_darkmode_init();
+
     /* The game's data before the game: a slim copy carries no OBB and fetches
      * it on the first start, as the Mac and iPad do. */
     if (!tl_win_obb_ensure(g_data, g_exe_dir)) {
@@ -2042,6 +2056,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 
     g_hwnd = make_window(inst);
     if (!g_hwnd) { tl_log_line("windows: CreateWindow failed (%lu)", GetLastError()); return 1; }
+    tl_win_darkmode_title(g_hwnd);
     make_pointer_window(inst);
     pointer_reposition();
     overlays_above_game();

@@ -26,6 +26,7 @@
 
 #include "husk-obb-win.h"
 #include "pvz2-obb-win.h"
+#include "pvz2-windows-darkmode.h"
 
 void tl_log_line(const char *fmt, ...);
 void tl_win_mkdirs(const char *path);
@@ -361,6 +362,9 @@ static LRESULT CALLBACK obb_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         atomic_store(&D.cancel_flag, 1);
         if (atomic_load(&D.state) != 0) { D.result = 0; DestroyWindow(h); }
         return 0;
+    case WM_SETTINGCHANGE:
+        if (tl_win_darkmode_system_changed(lp)) tl_win_darkmode_redraw(h);
+        return 0;
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -420,6 +424,7 @@ static void build_window(void)
     D.cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                scaled(366), scaled(158), scaled(74), scaled(28), D.win, (HMENU)ID_CANCEL, inst, NULL);
     SendMessageW(D.cancel, WM_SETFONT, (WPARAM)font, TRUE);
+    tl_win_darkmode_window(D.win);
     ShowWindow(D.win, SW_SHOW);
     SetForegroundWindow(D.win);
 }

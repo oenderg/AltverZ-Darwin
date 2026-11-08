@@ -53,6 +53,26 @@ draft release `build-inputs`, not in git; `runtime/win/fetch-angle.sh` downloads
 into `prebuilt/win-*`, and the READMEs there name the run. docs/windows-shipping.md has the pinned commit,
 the build arguments and how to refresh them.
 
+## Dark mode
+
+The host's own windows follow Windows' light or dark mode: the Settings window, the game data
+download window, the x64 preparing window, and the game window's title bar. The game's picture
+is never themed. Light mode stays Windows' own light appearance.
+
+The theming is [win32-darkmodelib](https://github.com/ozone10/win32-darkmodelib) commit
+`e8ec95ba631462f01e238e63f7d06c1e6829a7a1` (2026-10-10; upstream has no releases or tags).
+Its sources are not in git: `runtime/win/fetch-darkmodelib.sh` puts that commit in
+`runtime/third_party/darkmodelib` (a nested repository, ignored like the other third-party
+folders), and `runtime/win/build-darkmode.sh` calls the fetch and builds `src/*.cpp` as a static
+C++ library with the llvm-mingw toolchain, linked into the .exe for ARM64 and x64. Our C host
+calls it through `runtime/tools/pvz2-windows-darkmode.cpp`, because the library's functions are
+`extern "C"` inside `namespace dmlib` and C cannot name them. The vendored files are never
+edited.
+
+It is MPL 2.0 with some MIT-covered files; the license texts arrive with the fetch
+(`LICENSE.md`, `LICENSE-MIT.md`). To update it, change `PIN` in `fetch-darkmodelib.sh`, delete
+`runtime/third_party/darkmodelib`, and build again.
+
 ## Folders
 
 | What | Normal | Portable (`portable` beside the .exe) |
