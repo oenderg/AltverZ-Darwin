@@ -128,7 +128,7 @@ jobs:
             "Commit: ${{ steps.commit.outputs.commit }}"
             "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             "Ref: ${{ github.ref_name }} at ${{ github.sha }}"
-            "Started: ${{ github.run_started_at }}"
+            "Built: $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))"
           ) | Set-Content -Path (Join-Path $dir 'run.txt') -Encoding ascii
 
       - name: Upload
