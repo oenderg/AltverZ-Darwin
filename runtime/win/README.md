@@ -63,15 +63,18 @@ The theming is [win32-darkmodelib](https://github.com/ozone10/win32-darkmodelib)
 `e8ec95ba631462f01e238e63f7d06c1e6829a7a1` (2026-10-10; upstream has no releases or tags).
 Its sources are not in git: `runtime/win/fetch-darkmodelib.sh` puts that commit in
 `runtime/third_party/darkmodelib` (a nested repository, ignored like the other third-party
-folders), and `runtime/win/build-darkmode.sh` calls the fetch and builds `src/*.cpp` as a static
-C++ library with the llvm-mingw toolchain, linked into the .exe for ARM64 and x64. Our C host
-calls it through `runtime/tools/pvz2-windows-darkmode.cpp`, because the library's functions are
-`extern "C"` inside `namespace dmlib` and C cannot name them. The vendored files are never
-edited.
+folders), then applies `runtime/win/darkmodelib-delayload.patch`. The patch is ours: a
+delay-loaded import's slot holds the loader's thunk until the import is first called, and saving
+that thunk as the hook's true function made the hook call itself; the patch saves the target DLL's
+real export instead. `runtime/win/build-darkmode.sh` calls the fetch and builds `src/*.cpp` as a
+static C++ library with the llvm-mingw toolchain, linked into the .exe for ARM64 and x64. Our C
+host calls it through `runtime/tools/pvz2-windows-darkmode.cpp`, because the library's functions
+are `extern "C"` inside `namespace dmlib` and C cannot name them. The fetched files are changed
+only by that patch.
 
 It is MPL 2.0 with some MIT-covered files; the license texts arrive with the fetch
 (`LICENSE.md`, `LICENSE-MIT.md`). To update it, change `PIN` in `fetch-darkmodelib.sh`, delete
-`runtime/third_party/darkmodelib`, and build again.
+`runtime/third_party/darkmodelib`, and build again; redo the patch against the new commit.
 
 ## Folders
 
