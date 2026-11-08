@@ -75,6 +75,29 @@ Z X C the level's power-ups. They use the game's own card press and shovel, as o
 There are no in-level key labels yet on Windows, so the Mac's "Show keys in levels" choice is
 not offered.
 
+## The first x64 start
+
+The x86-64 build translates the game before its first frame. The host shows a small window
+("Preparing the game for this PC. This happens once.") with a marquee bar while
+`tl_x64_translate` runs, and closes it when the first frame is drawn. A start with the
+translation already in `<data>/translated` does not show it. ScarletNX has no progress
+callback, so the bar is a marquee, not a percentage.
+
+## Zips
+
+`runtime/win/package-zip.sh --arch all --apk <apk> [--tar <1.4.2.main.tar>]` makes
+`out/zips/PvZ2Reflourished-<version>-windows-{arm64,x64}.zip`: the program, ANGLE, `Game/`
+(the APK and the CDN archive) and a README. It takes ANGLE from `out/win/angle-arm64` and
+`out/win/angle-x64` (or `--angle`), and the x64 program's compiler DLLs from
+`out/win/x64-runtime` (`--x64-runtime`).
+
+The ARM64 program is linked statically and imports only Windows DLLs. The x64 program
+imports `libLLVM-23.dll`, `libwinpthread-1.dll`, `libc++.dll`, `libffi-8.dll`, `zlib1.dll`,
+`libzstd.dll`, `libxml2-16.dll` and `libiconv-2.dll` from MSYS2's clang64 (LLVM 23); they go
+in the zip beside the program, and Windows' own DLLs come from the system. See
+`docs/windows-shipping.md` for where the ANGLE copies come from and the options for
+building it later.
+
 ## Build
 
 ```sh
