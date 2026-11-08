@@ -1,0 +1,148 @@
+name: ANGLE for Windows
+
+# Builds the ANGLE the Windows zips ship: libEGL.dll and libGLESv2.dll over Direct3D 11,
+# for x64 and ARM64, from the commit in runtime/win/ANGLE_COMMIT. It runs
+# runtime/win/build-angle.cmd, the script a Windows PC with Visual Studio uses too, and
+# uploads one artifact per architecture with the DLLs, d3dcompiler_47.dll, commit.txt,
+# gn-args.txt, run.txt and ANGLE's LICENSE.
+#
+# The manager runs it from the branch ci/angle-windows before the change reaches main,
+# then copies the two artifacts into prebuilt/win-x64 and prebuilt/win-arm64
+# (docs/windows-shipping.md, "Refreshing ANGLE", says exactly what to copy).
+
+on:
+  workflow_dispatch:
+    inputs:
+      angle_commit:
+        description: "ANGLE commit (40 hex digits; empty means the pin in runtime/win/ANGLE_COMMIT)"
+        required: false
+        default: ""
+  push:
+    branches: [ci/angle-windows]
+
+# Two runs would sync and build the same tree on two runners, and the cache key would
+# have them race each other.
+concurrency:
+  group: angle-windows
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  angle:
+    name: ${{ matrix.arch }}
+    # windows-2025 is an x64 runner: ARM64 is cross built with the ARM64 MSVC tools and
+    # libraries the image carries, the way Chrome's own ANGLE builds do it.
+    runs-on: windows-2025
+    # A run took 18 (ARM64) and 30 (x64) minutes in mmozeiko/build-angle, whose workflow
+    # builds the same thing weekly on the same image; the cap leaves room for a slow
+    # runner and a first time depot_tools download.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: The ANGLE commit
+        id: commit
+        shell: pwsh
+        run: |
+          $commit = "${{ github.event.inputs.angle_commit }}".Trim()
+          if (-not $commit) {
+            $pin = @(Get-Content runtime/win/ANGLE_COMMIT |
+              Where-Object { $_ -match '^\s*[0-9a-fA-F]{40}\s*$' })
+            if (-not $pin.Count) { throw 'no commit in runtime/win/ANGLE_COMMIT' }
+            $commit = $pin[0].Trim()
+          }
+          if ($commit -notmatch '^[0-9a-fA-F]{40}$') { throw "not an ANGLE commit: '$commit'" }
+          Write-Host "ANGLE $commit"
+          "commit=$commit" >> $env:GITHUB_OUTPUT
+          # depot_tools is a rolling checkout: a fresh cache key once a month keeps the
+          # restored copy from ageing without making every run miss.
+          "month=$((Get-Date -Format 'yyyy-MM'))" >> $env:GITHUB_OUTPUT
+
+      - name: depot_tools
+        # The ANGLE checkout is not cached: its key would change with every ANGLE commit, the
+        # tree with its build output runs to several gigabytes against the repository's 10 GB
+        # of cache, and the workflow runs once per ANGLE update rather than often enough to
+        # pay for the upload. depot_tools is small and its clone is the slowest single
+        # download here.
+        uses: actions/cache@v6
+        with:
+          path: out/win/angle-build/depot_tools
+          key: depot-tools-windows-${{ matrix.arch }}-${{ steps.commit.outputs.month }}
+          restore-keys: depot-tools-windows-
+
+      - name: Windows SDK 10.0.28000
+        shell: pwsh
+        run: |
+          # Chromium's build files, which ANGLE's DEPS brings in, name the SDK they compile
+          # against and hand that exact version to vcvarsall; with a machine that has an
+          # older one only, gn gen stops with "Windows SDK version ... was not found".
+          # The image ships 10.0.26100, so add the one this ANGLE commit names.
+          $sdk = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include\10.0.28000.0'
+          if (Test-Path $sdk) { Write-Host 'Windows SDK 10.0.28000.0 is already installed'; exit 0 }
+          $setup = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
+          $vs = & (Join-Path $setup 'vswhere.exe') -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'no Visual Studio with the C++ tools on this runner' }
+          Write-Host "Visual Studio: $vs"
+          & (Join-Path $setup 'vs_installer.exe') modify --installPath "$vs" --quiet --force `
+            --norestart --add Microsoft.VisualStudio.Component.Windows11SDK.28000
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) {
+            throw "vs_installer exited with $LASTEXITCODE"
+          }
+          # The installer can return before the last file lands: wait for the folder.
+          for ($i = 0; $i -lt 60 -and -not (Test-Path $sdk); $i++) { Start-Sleep -Seconds 10 }
+          if (-not (Test-Path $sdk)) { throw "the Visual Studio Installer did not install $sdk" }
+          Write-Host 'Windows SDK 10.0.28000.0 is installed'
+
+      - name: Build
+        shell: cmd
+        timeout-minutes: 90
+        env:
+          ANGLE_COMMIT: ${{ steps.commit.outputs.commit }}
+        run: runtime\win\build-angle.cmd ${{ matrix.arch }}
+
+      - name: What the run made
+        shell: pwsh
+        run: |
+          # The commit and the run travel with the DLLs: prebuilt/win-<arch> names both
+          # after the files are copied there, and commit.txt names the commit alone.
+          $dir = "prebuilt/win-${{ matrix.arch }}"
+          @(
+            "Commit: ${{ steps.commit.outputs.commit }}"
+            "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            "Ref: ${{ github.ref_name }} at ${{ github.sha }}"
+            "Started: ${{ github.run_started_at }}"
+          ) | Set-Content -Path (Join-Path $dir 'run.txt') -Encoding ascii
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: angle-windows-${{ matrix.arch }}
+          path: prebuilt/win-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Summary
+        shell: pwsh
+        run: |
+          $dir = "prebuilt/win-${{ matrix.arch }}"
+          $text = @(
+            "## ANGLE for windows-${{ matrix.arch }}"
+            ""
+            "Commit: ``${{ steps.commit.outputs.commit }}``"
+            ""
+          )
+          Get-ChildItem $dir | Sort-Object Name | ForEach-Object {
+            $text += ('- {0} ({1} KB)' -f $_.Name, [int]($_.Length / 1KB))
+          }
+          $text += @('', 'The gn arguments:', '', '```')
+          $text += Get-Content (Join-Path $dir 'gn-args.txt')
+          $text += '```'
+          $text | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
