@@ -840,11 +840,13 @@ static void badges_draw(const tl_pvz2_badge_snapshot *s)
          * packet: in the fixed 1748x804 layout the game rounds the rect to
          * whole surface pixels, and at the 1426x656 Windows surface its top
          * sits about one pixel lower inside the packet than on the Mac's
-         * larger surface. The normalized inset is 0.025 em larger, and the
-         * game's cost number below the digit shows it: without the lift the
-         * yellow ink is 0.50 of the packet pitch above the cost, with it
-         * 0.51, as on the Mac. The adapt layout draws at the window's own
-         * size and does not need the lift. */
+         * larger surface. The normalized inset is about 0.025 em larger.
+         * This lift is an empirical correction for the fixed layout,
+         * measured at 65 and 93 px pitch; the rounding explanation fits the
+         * numbers but is not proven. The game's cost number below the digit
+         * shows the result: without the lift the yellow ink is 0.50 of the
+         * packet pitch above the cost, with it 0.51, as on the Mac. The adapt
+         * layout draws at the window's own size and does not need the lift. */
         float dx = symbol ? x + (box_w - ink.Width) / 2.0f
                           : x + (box_w - advance) / 2.0f;
         float dy = symbol ? y + (box_h - ink.Height) / 2.0f
