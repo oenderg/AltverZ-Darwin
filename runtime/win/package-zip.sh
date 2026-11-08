@@ -1,6 +1,7 @@
 #!/bin/sh
-# Make the Windows zips that run without MSYS2: the program, ANGLE, the game's
-# APK and CDN archive, and (for x86-64) the compiler's runtime DLLs.
+# Make the portable Windows zips: the program, ANGLE, the game's APK and CDN archive,
+# a "portable" file (everything the game writes stays in data\ beside the .exe) and (for
+# x86-64) the compiler's runtime DLLs. No updater: the zip's program has no WinSparkle.
 #
 #   runtime/win/package-zip.sh --arch all --apk "PvZ2 Reflourished 1.4.2.apk"
 #
@@ -11,10 +12,15 @@
 #   --angle DIR            libEGL.dll and libGLESv2.dll (and d3dcompiler_47.dll)
 #                          to ship; arm64 defaults to prebuilt/win-arm64, x64 to
 #                          prebuilt/win-x64 (runtime/win/build-angle.cmd makes them)
-#   --x64-exe FILE         default out/win-x64/PvZ2 Reflourished x64.exe
+#   --exe-arm64 FILE       default out/win-portable/PvZ2 Reflourished.exe
+#   --exe-x64 FILE         default out/win-x64-portable/PvZ2 Reflourished x64.exe
 #   --x64-runtime DIR      extra DLLs the x64 program imports (libLLVM-23.dll,
 #                          libc++.dll, ...); every .dll in it is copied
 #   --out DIR              where the zips land (default out/zips)
+#
+# The zip programs come from the game-portable targets (build-win.sh game-portable,
+# x64/build-x64.sh game-portable): the same game with no updater. The installed build,
+# with WinSparkle, is what runtime/win/installer/build-installer.sh stages.
 #
 # The ARM64 program is linked statically (no runtime DLLs); the x64 program
 # needs libLLVM-23.dll and libwinpthread-1.dll unless it was linked with a
@@ -29,7 +35,8 @@ APK=""; TAR=""; OUT="$REPO/out/zips"
 ANGLE_ARM="$REPO/prebuilt/win-arm64"
 ANGLE_X64="$REPO/prebuilt/win-x64"
 ANGLE_GIVEN=""
-X64_EXE="$REPO/out/win-x64/PvZ2 Reflourished x64.exe"
+EXE_ARM="$REPO/out/win-portable/PvZ2 Reflourished.exe"
+EXE_X64="$REPO/out/win-x64-portable/PvZ2 Reflourished x64.exe"
 X64_RUNTIME=""
 
 while [ $# -gt 0 ]; do
@@ -38,10 +45,11 @@ while [ $# -gt 0 ]; do
     --apk) APK="$2"; shift 2 ;;
     --tar) TAR="$2"; shift 2 ;;
     --angle) ANGLE_ARM="$2"; ANGLE_X64="$2"; ANGLE_GIVEN=1; shift 2 ;;
-    --x64-exe) X64_EXE="$2"; shift 2 ;;
+    --exe-arm64) EXE_ARM="$2"; shift 2 ;;
+    --exe-x64) EXE_X64="$2"; shift 2 ;;
     --x64-runtime) X64_RUNTIME="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
     esac
 done
@@ -61,6 +69,9 @@ stage_common() {
     rm -rf "$dir"
     mkdir -p "$dir/Game"
     cp "$APK" "$dir/Game/pvz2.apk"
+    # The portable build: the program keeps the saves, the settings, the game data and
+    # the cache in data\ beside itself, and deleting the folder removes all of it.
+    : > "$dir/portable"
     # The level key labels: the game's own level UI font (the one file the
     # project ships from the game's assets, as the Mac and iPad apps do).
     [ -f "$REPO/runtime/tools/fonts/level-ui.ttf" ] && cp "$REPO/runtime/tools/fonts/level-ui.ttf" "$dir/"
@@ -69,21 +80,26 @@ stage_common() {
         cp "$TAR" "$dir/Game/1.4.2.main.tar"
     fi
     cat > "$dir/README.txt" <<'EOF'
-PvZ2: Reflourished for Windows
-==============================
+PvZ2: Reflourished for Windows (portable)
+==========================================
 
 Run "PvZ2 Reflourished.exe". It needs libEGL.dll and libGLESv2.dll beside it
 (ANGLE) and the game in the Game folder.
 
+This is the portable build: the file named "portable" beside the program makes
+the game keep everything in the folder "data" that it makes here - the saves,
+the settings and the keys, the OBB, the translation cache and the log. Nothing
+is written to %APPDATA% or %LOCALAPPDATA%. To remove the game completely,
+delete this whole folder, data and all.
+
+This build has no automatic updater. "Check for Updates..." in the window menu
+opens the releases page on GitHub in your browser. Installing a newer zip over
+this folder keeps data, so the saves stay.
+
 The first start on a 64-bit Intel/AMD PC translates the game, which takes a few
 minutes; a small window shows how far it is. Later starts use the translation
-that is kept in %LOCALAPPDATA%\PvZ2 Reflourished.
+that is kept in data; another PC translates once for itself.
 
-Where the game keeps things
-  saves and settings   %APPDATA%\PvZ2 Reflourished
-  game data, the OBB,
-  the translation      %LOCALAPPDATA%\PvZ2 Reflourished
-A file named "portable" beside the program puts everything in "data" beside it.
 The Settings window (window menu, or Ctrl+,) changes the keys and the window.
 "In a level the key that works each control is shown on it" is on by default
 (Settings, Keyboard); level-ui.ttf beside the program draws those labels.
@@ -108,7 +124,8 @@ make_zip() {
 if [ "$ARCH" = arm64 ] || [ "$ARCH" = all ]; then
     dir="$work/arm64"
     stage_common "$dir"
-    cp "$REPO/out/win/PvZ2 Reflourished.exe" "$dir/PvZ2 Reflourished.exe"
+    [ -f "$EXE_ARM" ] || { echo "package-zip: no portable ARM64 program at $EXE_ARM (runtime/win/build-win.sh game-portable)" >&2; exit 2; }
+    cp "$EXE_ARM" "$dir/PvZ2 Reflourished.exe"
     [ -f "$ANGLE_ARM/libEGL.dll" ] && [ -f "$ANGLE_ARM/libGLESv2.dll" ] || {
         echo "package-zip: no libEGL.dll and libGLESv2.dll in $ANGLE_ARM (runtime/win/build-angle.cmd makes them, or pass --angle)" >&2; exit 2; }
     cp "$ANGLE_ARM"/*.dll "$dir/" 2>/dev/null || true
@@ -119,8 +136,8 @@ fi
 if [ "$ARCH" = x64 ] || [ "$ARCH" = all ]; then
     dir="$work/x64"
     stage_common "$dir"
-    [ -f "$X64_EXE" ] || { echo "package-zip: no x64 program at $X64_EXE" >&2; exit 2; }
-    cp "$X64_EXE" "$dir/PvZ2 Reflourished x64.exe"
+    [ -f "$EXE_X64" ] || { echo "package-zip: no portable x64 program at $EXE_X64 (runtime/win/x64/build-x64.sh game-portable)" >&2; exit 2; }
+    cp "$EXE_X64" "$dir/PvZ2 Reflourished x64.exe"
     [ -f "$ANGLE_X64/libEGL.dll" ] && [ -f "$ANGLE_X64/libGLESv2.dll" ] || {
         echo "package-zip: no libEGL.dll and libGLESv2.dll in $ANGLE_X64 (runtime/win/build-angle.cmd makes them, or pass --angle)" >&2; exit 2; }
     cp "$ANGLE_X64"/*.dll "$dir/" 2>/dev/null || true

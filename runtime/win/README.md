@@ -21,10 +21,18 @@ time by the runtime's ELF loader (`husk-tl-ld.c`), with no conversion step. Work
 
 ## The game program (`PvZ2 Reflourished.exe`)
 
-`runtime/win/build-win.sh game` builds it from the shared driver, the Windows host
-(`runtime/tools/pvz2-windows.c`) and the settings window
-(`runtime/tools/pvz2-windows-settings.c`). It needs `libEGL.dll` and `libGLESv2.dll` (ANGLE)
-beside it, and `Game/pvz2.apk` (with `Game/1.4.2.main.tar` when the APK is the slim one).
+`runtime/win/build-win.sh game` builds the installed program from the shared driver, the Windows
+host (`runtime/tools/pvz2-windows.c`), the settings window
+(`runtime/tools/pvz2-windows-settings.c`) and the updater glue
+(`runtime/tools/pvz2-windows-updates.c`). `runtime/win/build-win.sh game-portable` builds the
+zip's program: the same sources with no updater at all. The installed one links WinSparkle
+(`prebuilt/winsparkle/arm64`, fetched by `runtime/win/fetch-winsparkle.sh`) and needs
+`WinSparkle.dll` beside it; the portable one neither links nor ships it. Both need `libEGL.dll`
+and `libGLESv2.dll` (ANGLE) beside them, and `Game/pvz2.apk` (with `Game/1.4.2.main.tar` when
+the APK is the slim one).
+
+The x64 program (`runtime/win/x64/build-x64.sh`) takes the same `game`/`game-portable` targets
+and links `prebuilt/winsparkle/x64` for the installed one.
 
 ## ANGLE
 
@@ -145,6 +153,23 @@ packets 1-8, S the shovel, F plant food, Tab fast-forward, Space collects suns a
 Z X C the level's power-ups. They use the game's own card press and shovel, as on the Mac.
 Gameplay offers the in-level key labels, pointer preview and cross brightness.
 
+## Updates
+
+The installed build updates itself with [WinSparkle](https://winsparkle.org) 0.9.4. Once a day
+it reads the Windows appcast (`sparkle/windows-appcast.xml` on the default branch); "Check for
+Updates..." in the window menu, and "Check Now" on Settings' About page, check at once. The
+About page's Updates section (absent from the portable build) has "Check for updates
+automatically", on by default (`[updates] automaticChecks` in `settings.ini`), the last check
+time, and the check button. Every setup program the feed offers is signed with the project's
+EdDSA key, the key that also signs the Mac's DMG; an update is installed only when its
+signature verifies. Before the setup runs, WinSparkle calls the host back: the game hears
+Android's background event, saves, and exits, and the silent setup starts the new version
+again. The feed, the key and the release side: docs/windows-shipping.md.
+
+The portable build carries no updater and no `WinSparkle.dll`; its "Check for Updates..."
+opens the releases page in the browser instead. `TL_PVZ2_OPEN_URL=log` makes the host log
+that link without opening it, as on the Mac, for tests.
+
 ## The game's data (the OBB)
 
 A Windows zip carries no OBB (the game's 1.3 GB of assets), so the first start downloads it
@@ -191,13 +216,42 @@ For a bounded UI test without translation, set `TL_PVZ2_PREVIEW_PREPARE=60`
 in the x64 build's environment. It shows the same preparing window for 60
 seconds, skips the game thread, then exits (maximum 120 seconds).
 
+## The installer
+
+`out/win-installer/PvZ2Reflourished-<version>-windows-setup.exe` is the setup program: one
+file for both architectures. On ARM64 Windows it installs the ARM64 program, everywhere else
+the x64 one. It is made with Inno Setup 7 on a Windows PC: `runtime/win/installer/build-installer.sh`
+stages both trees and (with `--zip`) writes the file to carry them there, and
+`runtime/win/installer/build-installer.cmd` runs `pvz2.iss` on it. It installs for the current
+user without an administrator prompt into `%LOCALAPPDATA%\Programs\PvZ2 Reflourished`, makes the
+Start menu entry (a desktop shortcut is a task that starts unchecked), and Windows' Installed
+apps lists it with the game's icon. Neither staged tree carries a `portable` file.
+
+What the download costs: the 1.3.0 setup is 120 MB. Its ARM64 tree is 65 MB and its x64 tree
+229 MB, which share the APK and ANGLE. A separate ARM64 setup would be about 46 MB and a
+separate x64 one about 74 MB, so one setup gives an ARM64 player 120 MB instead of 46 and an
+x64 player 120 instead of 74. The project keeps one setup: one download link, one feed item
+shape, and one file to sign.
+
+Uninstalling deletes the program folder and `%LOCALAPPDATA%\PvZ2 Reflourished` (the OBB, the
+CDN archive, the x64 translation cache and the log), then asks "Also delete your saves and
+settings?" with No selected, about `%APPDATA%\PvZ2 Reflourished`; a silent uninstall keeps them.
+An install over an older version (the same AppId) keeps both data folders. If the game is
+running, Setup offers to close it, and a close from another program skips the game's own
+"Ask before quitting" prompt (that prompt is for the player at the window) and still saves.
+
 ## Zips
 
 `runtime/win/package-zip.sh --arch all --apk <apk> [--tar <1.4.2.main.tar>]` makes
-`out/zips/PvZ2Reflourished-<version>-windows-{arm64,x64}.zip`: the program, ANGLE and its
-license, `Game/` (the APK and the CDN archive) and a README. It takes ANGLE from
-`prebuilt/win-arm64` and `prebuilt/win-x64`, which it fills with `fetch-angle.sh` first (or `--angle`), and the x64 program's compiler
-DLLs from `out/win/x64-runtime` (`--x64-runtime`).
+`out/zips/PvZ2Reflourished-<version>-windows-{arm64,x64}.zip`: the portable program, ANGLE and
+its license, `Game/` (the APK and the CDN archive), a `portable` file and a README. The
+`portable` file is what makes the program keep everything in `data\` beside the .exe (saves,
+settings, the OBB, the x64 translation cache and the log), so deleting the folder removes all
+of it, and the zip has no updater: its "Check for Updates..." opens the releases page. The
+script takes the portable programs from `out/win-portable` and `out/win-x64-portable`
+(`build-win.sh game-portable`, `build-x64.sh game-portable`), takes ANGLE from
+`prebuilt/win-arm64` and `prebuilt/win-x64`, which `fetch-angle.sh` fills first (or pass
+`--angle`), and the x64 program's compiler DLLs from `out/win/x64-runtime` (`--x64-runtime`).
 
 The ARM64 program is linked statically and imports only Windows DLLs. The x64 program
 imports `libLLVM-23.dll`, `libwinpthread-1.dll`, `libc++.dll`, `libffi-8.dll`, `zlib1.dll`,
