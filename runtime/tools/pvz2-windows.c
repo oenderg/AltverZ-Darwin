@@ -601,11 +601,47 @@ static GpPath *badge_symbol_path(wchar_t sym, float em, RectF *ink)
     return path;
 }
 
-/* The glyphs as one path, normalized to (0,0); the ink's size comes back in
- * ink. GDI+ measures in pixels, so the path is at the size it is drawn. */
-static GpPath *badge_path(const wchar_t *label, int em, RectF *ink)
+/* The typographic advance, the width CoreText's CTLineGetTypographicBounds
+ * would give. GDI+ has no glyph-metric call, and GdipMeasureString adds a
+ * third of an em of padding, so the advance is the difference between the
+ * bounds of the label twice and once: the second copy starts one advance
+ * after the first, and both copies share the same side bearings. */
+static float badge_text_advance(const wchar_t *label, float em, GpStringFormat *fmt,
+                                const RectF *box, float one_width)
 {
-    if (badge_symbol_label(label)) return badge_symbol_path(label[0], (float)em, ink);
+    size_t n = wcslen(label);
+    if (!g_badge_family || n == 0 || n >= 31) return one_width;
+    wchar_t twice[64];
+    memcpy(twice, label, n * sizeof(wchar_t));
+    memcpy(twice + n, label, n * sizeof(wchar_t));
+    twice[n * 2] = 0;
+    GpPath *path = NULL;
+    RectF bounds = { 0, 0, 0, 0 };
+    float advance = one_width;
+    if (GdipCreatePath(FillModeWinding, &path) == Ok) {
+        if (GdipAddPathString(path, twice, -1, g_badge_family, FontStyleRegular,
+                              (REAL)em, box, fmt) == Ok) {
+            GdipGetPathWorldBounds(path, &bounds, NULL, NULL);
+            advance = bounds.Width - one_width;
+        }
+        GdipDeletePath(path);
+    }
+    return advance;
+}
+
+/* The glyphs as one path, at their natural pen origin (the text is not
+ * normalized, so the caller can place the typographic origin); the ink's size
+ * comes back in ink, and the advance in advance. The symbols are normalized to
+ * (0,0) and their ink is their advance. */
+static GpPath *badge_path(const wchar_t *label, float em, RectF *ink,
+                          float *advance)
+{
+    *advance = 0;
+    if (badge_symbol_label(label)) {
+        GpPath *path = badge_symbol_path(label[0], em, ink);
+        if (path) *advance = ink->Width;
+        return path;
+    }
     if (!g_badge_family) return NULL;
     GpPath *path = NULL;
     if (GdipCreatePath(FillModeWinding, &path) != Ok) return NULL;
@@ -616,18 +652,35 @@ static GpPath *badge_path(const wchar_t *label, int em, RectF *ink)
         GdipSetStringFormatAlign(fmt, StringAlignmentNear);
         GdipSetStringFormatLineAlign(fmt, StringAlignmentNear);
     }
-    GpStatus st = GdipAddPathString(path, label, -1, g_badge_family, FontStyleItalic, (REAL)em, &box, fmt);
-    if (fmt) GdipDeleteStringFormat(fmt);
+    GpStatus st = GdipAddPathString(path, label, -1, g_badge_family, FontStyleRegular,
+                                    (REAL)em, &box, fmt);
     if (st != Ok) {
+        if (fmt) GdipDeleteStringFormat(fmt);
         GdipDeletePath(path);
         return NULL;
     }
-    GdipGetPathWorldBounds(path, ink, NULL, NULL);
-    GpMatrix *m = NULL;
-    if (GdipCreateMatrix2(1.0f, 0.0f, 0.0f, 1.0f, -ink->X, -ink->Y, &m) == Ok) {
-        GdipTransformPath(path, m);
-        GdipDeleteMatrix(m);
+    RectF raw = { 0, 0, 0, 0 };
+    GdipGetPathWorldBounds(path, &raw, NULL, NULL);
+    *advance = badge_text_advance(label, em, fmt, &box, raw.Width);
+    if (fmt) GdipDeleteStringFormat(fmt);
+    /* The font is already drawn leaning; FontStyleItalic would add a second
+     * synthetic oblique. One shear about the baseline is the Mac's font
+     * matrix (CGAffineTransformMake(1,0,0.18,1,0,0)). GDI+ lays the path out
+     * with a sixth of an em of padding on each side, so the left one is
+     * removed to put the pen origin at (0,0); the baseline is already at the
+     * ascent, as CATextLayer puts it. */
+    float baseline = 0.0f;
+    UINT16 ascent = 0, design = 0;
+    if (GdipGetEmHeight(g_badge_family, FontStyleRegular, &design) == Ok && design &&
+        GdipGetCellAscent(g_badge_family, FontStyleRegular, &ascent) == Ok)
+        baseline = em * ascent / design;
+    GpMatrix *shear = NULL;
+    if (GdipCreateMatrix2(1.0f, 0.0f, -0.18f, 1.0f, 0.18f * baseline - em / 6.0f,
+                          0.0f, &shear) == Ok) {
+        GdipTransformPath(path, shear);
+        GdipDeleteMatrix(shear);
     }
+    GdipGetPathWorldBounds(path, ink, NULL, NULL);
     return path;
 }
 
@@ -697,16 +750,17 @@ static void badges_draw(const tl_pvz2_badge_snapshot *s)
         wchar_t text[32];
         const wchar_t *label = badge_label(i, s, text, 32);
         if (!label) continue;
-        /* CoreText's 0.46 em is the Mac's layer size; its rendered digit is
-         * about 13% larger than GDI+'s path at that factor, and 0.52 matches
-         * the reference crop's digit against the packet. */
-        int em = (int)(r[3] * 0.52);
+        /* CoreText's font size is 0.46 of the control height; GDI+ uses the
+         * same em for the same outlines, so the size needs no correction. */
+        float em = (float)r[3] * 0.46f;
         if (em < 10) em = 10;
         if (em > 160) em = 160;
         RectF ink = { 0, 0, 0, 0 };
-        GpPath *path = badge_path(label, em, &ink);
+        float advance = 0;
+        GpPath *path = badge_path(label, em, &ink, &advance);
         if (!path) continue;
-        float box_w = ink.Width + em * 0.3f;
+        bool symbol = badge_symbol_label(label);
+        float box_w = advance + em * 0.3f;
         float box_h = em * 1.3f;
         float x = (float)(r[0] + r[2]) - box_w - r[3] * 0.08f;
         float y = (float)r[1];
@@ -720,10 +774,11 @@ static void badges_draw(const tl_pvz2_badge_snapshot *s)
             GdipDeletePath(path);
             continue;
         }
-        float dx = x + (box_w - ink.Width) / 2.0f;
-        /* CoreText centers the font's line box, not the ink; the level-ui
-         * digits sit about 0.08 em above the ink box's centre. */
-        float dy = y + (box_h - ink.Height) / 2.0f - em * 0.08f;
+        /* The Mac's text layer: the typographic advance is centered in the
+         * box, and the baseline sits at the font's ascent from the box top. */
+        float dx = symbol ? x + (box_w - ink.Width) / 2.0f
+                          : x + (box_w - advance) / 2.0f;
+        float dy = symbol ? y + (box_h - ink.Height) / 2.0f : y;
         GpMatrix *m = NULL;
         if (GdipCreateMatrix2(1.0f, 0.0f, 0.0f, 1.0f, dx, dy, &m) == Ok) {
             GdipTransformPath(path, m);
