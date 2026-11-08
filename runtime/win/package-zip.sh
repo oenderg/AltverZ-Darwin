@@ -84,8 +84,10 @@ The Settings window (window menu, or Ctrl+,) changes the keys and the window.
 "In a level the key that works each control is shown on it" is on by default
 (Settings, Keyboard); level-ui.ttf beside the program draws those labels.
 
-The game data (the OBB) is downloaded by the game on its first start; the
-archive in Game is the offline fallback for the live content.
+The first start downloads the game's data (the OBB, about 1.3 GB) once,
+with a small progress window and a Cancel button; it is checked before the
+game starts. The archive in Game is the offline fallback for the live
+content.
 EOF
 }
 

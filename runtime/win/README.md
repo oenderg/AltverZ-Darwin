@@ -75,6 +75,18 @@ Z X C the level's power-ups. They use the game's own card press and shovel, as o
 There are no in-level key labels yet on Windows, so the Mac's "Show keys in levels" choice is
 not offered.
 
+## The game's data (the OBB)
+
+A Windows zip carries no OBB (the game's 1.3 GB of assets), so the first start downloads it
+before the game runs, as the Mac and iPad slim apps do: from the link in
+`runtime/win/pvz2-obb-win.h` (the first `obb_urls` entry in `data/game-1.4.2.json`, which the
+Mac build writes into its Info.plist), checked against the same size and sha256, and put in
+`<data>/sdcard/Android/obb/com.ea.game.pvz2_rfl/` through a `.part` file and an atomic move.
+A small window shows the progress and a Cancel button; a failure explains itself and offers
+Try Again, which resumes a stopped download with a Range request. The window needs about
+256 MB more than the OBB free; an old copy is removed first when space is short. The checks
+and messages are the Mac client's.
+
 ## The key labels in levels
 
 With "Show keys in levels" on (Settings, Keyboard; the default), the host draws the key

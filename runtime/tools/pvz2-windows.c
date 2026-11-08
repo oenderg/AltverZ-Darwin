@@ -45,6 +45,8 @@ void tl_win_log_open(const char *path);
 void tl_win_mkdirs(const char *path);
 void tl_win_install_crash_handler(void);
 void tl_win_set_saves_dir(const char *dir);
+/* runtime/win/husk-obb-win.c: the game's OBB before the first start. */
+int tl_win_obb_ensure(const char *data_dir, const char *exe_dir);
 
 /* The size the game draws at. It lays out for 1748x804 and picks its HD art from 804 up. The window gets as
  * much of that as the screen has room for, never less than the minimum; the game's surface is the window's
@@ -981,6 +983,13 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     tl_log_line("windows: the game's saves %s", g_saves);
     tl_log_line("windows: the game's data %s (the OBB, the CDN archive and the x64 cache)", g_data);
     tl_win_set_saves_dir(g_saves);
+
+    /* The game's data before the game: a slim copy carries no OBB and fetches
+     * it on the first start, as the Mac and iPad do. */
+    if (!tl_win_obb_ensure(g_data, g_exe_dir)) {
+        tl_log_line("windows: the game is not started: its data was not downloaded");
+        return 1;
+    }
 
     pvz2_settings_load(g_settings_path, &g_settings);
     g_start_fullscreen = g_settings.start_fullscreen;
