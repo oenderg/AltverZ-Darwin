@@ -10,9 +10,11 @@
  *   the APK          Game/pvz2.apk next to the program        (TL_PVZ2_APK)
  *   the CDN archive  Game/1.4.2.main.tar next to the program  (TL_PVZ2_MAIN_TAR)
  *   ANGLE            libEGL.dll and libGLESv2.dll next to it  (TL_ANGLE_EGL, TL_ANGLE_GLES)
- *   the data folder  %LOCALAPPDATA%/PvZ2 Reflourished          (TL_DATA), with pvz2.log
+ *   the data folder  %LOCALAPPDATA%/PvZ2 Reflourished          (TL_DATA): the OBB,
+ *                    the CDN archive, the x64 cache and pvz2.log
  *   the saves        %APPDATA%/PvZ2 Reflourished (its own sdcard layout; TL_DATA)
- *   the settings     settings.ini beside the saves
+ *   the game's state %APPDATA%/PvZ2 Reflourished: settings.ini, config\pvz2-config,
+ *                    pvz2-reminders.tsv and nimble-persistence.tsv (TL_DATA)
  *
  * A file named "portable" next to the program puts all three folders in "data"
  * beside it. TL_DATA overrides all three, so a scripted test touches nothing
@@ -1709,6 +1711,63 @@ static void show_progress_window(HINSTANCE inst)
 
 /* ------------------------------------------------------------------- start */
 
+static bool state_file_present(const char *path)
+{
+    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+}
+
+static bool state_file_newer(const char *a, const char *b)
+{
+    WIN32_FILE_ATTRIBUTE_DATA fa, fb;
+    if (!GetFileAttributesExA(a, GetFileExInfoStandard, &fa)) return false;
+    if (!GetFileAttributesExA(b, GetFileExInfoStandard, &fb)) return true;
+    return CompareFileTime(&fa.ftLastWriteTime, &fb.ftLastWriteTime) > 0;
+}
+
+static void move_state_file(const char *from, const char *to, const char *what)
+{
+    if (MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        tl_log_line("windows: moved the %s from %s to %s", what, from, to);
+    } else {
+        tl_log_line("windows: the %s could not be moved from %s (error %lu)",
+                    what, from, GetLastError());
+    }
+}
+
+/* One start with the old layout: the config (or its newer .tmp), the reminders
+ * and Nimble persistence beside the big data, before the game reads them. */
+static void migrate_old_state(const char *old_data, const char *new_state)
+{
+    char old_config_dir[MAX_PATH * 2], new_config_dir[MAX_PATH * 2];
+    char old_config[MAX_PATH * 2], old_tmp[MAX_PATH * 2], new_config[MAX_PATH * 2];
+    join(old_config_dir, sizeof(old_config_dir), old_data, "config");
+    join(new_config_dir, sizeof(new_config_dir), new_state, "config");
+    join(old_config, sizeof(old_config), old_config_dir, "pvz2-config");
+    join(old_tmp, sizeof(old_tmp), old_config_dir, "pvz2-config.tmp");
+    join(new_config, sizeof(new_config), new_config_dir, "pvz2-config");
+    if (!state_file_present(new_config)) {
+        const char *from = NULL;
+        bool have_config = state_file_present(old_config);
+        bool have_tmp = state_file_present(old_tmp);
+        if (have_config && have_tmp) from = state_file_newer(old_tmp, old_config) ? old_tmp : old_config;
+        else if (have_config) from = old_config;
+        else if (have_tmp) from = old_tmp;
+        if (from) {
+            tl_win_mkdirs(new_config_dir);
+            move_state_file(from, new_config, "game's config");
+        }
+    }
+    static const char *names[] = { "pvz2-reminders.tsv", "nimble-persistence.tsv" };
+    static const char *what[] = { "reminders file", "Nimble persistence file" };
+    for (int i = 0; i < 2; i++) {
+        char from[MAX_PATH * 2], to[MAX_PATH * 2];
+        join(from, sizeof(from), old_data, names[i]);
+        join(to, sizeof(to), new_state, names[i]);
+        if (!state_file_present(to) && state_file_present(from))
+            move_state_file(from, to, what[i]);
+    }
+}
+
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 {
     (void)prev; (void)cmd;
@@ -1756,8 +1815,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     }
     tl_log_line("windows: %s mode", mode);
     tl_log_line("windows: settings file %s", g_settings_path);
-    tl_log_line("windows: the game's saves %s", g_saves);
-    tl_log_line("windows: the game's data %s (the OBB, the CDN archive and the x64 cache)", g_data);
+    tl_log_line("windows: the game's saves, config, reminders and Nimble data %s", g_saves);
+    tl_log_line("windows: the game's data %s (the OBB, the CDN archive, the x64 cache and pvz2.log)", g_data);
+    tl_pvz2_set_state_dir(g_saves);
+    if (strcmp(g_saves, g_data) != 0) migrate_old_state(g_data, g_saves);
     tl_win_set_saves_dir(g_saves);
 
     /* The game's data before the game: a slim copy carries no OBB and fetches

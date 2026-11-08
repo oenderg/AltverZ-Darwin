@@ -184,16 +184,35 @@ static void cfg_put(const char *k, setting s)
     pthread_mutex_unlock(&CFG.mu);
 }
 
+/* The Windows host keeps the small state files beside the saves; the Mac and
+ * iPad leave this empty and use the data folder, as they always have. */
+static char g_state_dir[1100];
+static unsigned g_state_epoch;
+
+void tl_pvz2_set_state_dir(const char *path)
+{
+    if (path && *path) snprintf(g_state_dir, sizeof(g_state_dir), "%s", path);
+    else g_state_dir[0] = 0;
+    ++g_state_epoch;
+}
+
+static const char *state_dir(void)
+{
+    return g_state_dir[0] ? g_state_dir : tl_data_dir();
+}
+
 /* The engine reads and writes these through Config_* only, so a small
- * tab-separated file in the app's data directory stands in for the phone's
+ * tab-separated file in the state directory stands in for the phone's
  * SharedPreferences.  Without it every launch looks like a fresh install and
  * the option screen, tutorial flags and volume all reset. */
 static const char *cfg_file_path(void)
 {
     static char path[1200];
-    if (!path[0]) {
+    static unsigned epoch;
+    if (!path[0] || epoch != g_state_epoch) {
+        epoch = g_state_epoch;
         char dir[1100];
-        snprintf(dir, sizeof(dir), "%s/config", tl_data_dir());
+        snprintf(dir, sizeof(dir), "%s/config", state_dir());
         mkdir(dir, 0755);
         snprintf(path, sizeof(path), "%s/pvz2-config", dir);
     }
@@ -1114,8 +1133,10 @@ static char *hex_decode(const char *s)
 static const char *reminder_file_path(void)
 {
     static char path[1200];
-    if (!path[0]) {
-        const char *dir = tl_data_dir();
+    static unsigned epoch;
+    if (!path[0] || epoch != g_state_epoch) {
+        epoch = g_state_epoch;
+        const char *dir = state_dir();
         if (!dir || !*dir) return NULL;
         snprintf(path, sizeof(path), "%s/pvz2-reminders.tsv", dir);
     }
@@ -1661,8 +1682,10 @@ static struct { pthread_mutex_t mu; ps_entry v[PS_CAPACITY]; int n; bool loaded;
 static const char *ps_file_path(void)
 {
     static char path[1200];
-    if (!path[0]) {
-        const char *dir = tl_data_dir();
+    static unsigned epoch;
+    if (!path[0] || epoch != g_state_epoch) {
+        epoch = g_state_epoch;
+        const char *dir = state_dir();
         if (!dir || !*dir) return NULL;
         snprintf(path, sizeof(path), "%s/nimble-persistence.tsv", dir);
     }
@@ -1751,7 +1774,7 @@ static void ps_load_locked(void)
     }
     free(line);
     fclose(f);
-    tl_log_line("pvz2: Nimble persistence restored %d typed value(s) from the game data folder", loaded);
+    tl_log_line("pvz2: Nimble persistence restored %d typed value(s) from %s", loaded, path);
 }
 
 static void ps_save_locked(void)

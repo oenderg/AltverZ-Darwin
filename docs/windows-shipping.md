@@ -16,6 +16,27 @@ progress window and a Try Again after a failure. No MSYS2 or
 llvm-mingw installation is needed on the player's PC: everything the programs import
 beyond Windows' own DLLs travels in the zip.
 
+## Where the player's files go
+
+`%APPDATA%\PvZ2 Reflourished` is the small, personal folder:
+
+- `settings.ini`;
+- `config\pvz2-config`, the game's own options and tutorial state;
+- `pvz2-reminders.tsv` and `nimble-persistence.tsv`;
+- the saves, under `sdcard\Android\data\com.ea.game.pvz2_rfl\files\...`, including
+  `No_Backup\CDN.1.4.2`.
+
+`%LOCALAPPDATA%\PvZ2 Reflourished` is the big folder that can be made again on this PC:
+
+- the OBB under `sdcard\Android\obb\...`;
+- `No_Backup\1.4.2.main.tar`;
+- the x64 translation cache and `cache\`;
+- `pvz2.log`.
+
+Portable mode and `TL_DATA` keep everything in one folder, as before. A start with the
+old layout moves `config\pvz2-config` (or its newer `.tmp`), the reminders and Nimble
+persistence from the big folder to the small one once, and logs each move.
+
 ## What each program imports
 
 `llvm-objdump -p` on the ARM64 program (`out/win/PvZ2 Reflourished.exe`, linked with

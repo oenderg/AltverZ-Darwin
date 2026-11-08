@@ -31,8 +31,9 @@ beside it, and `Game/pvz2.apk` (with `Game/1.4.2.main.tar` when the APK is the s
 | What | Normal | Portable (`portable` beside the .exe) |
 |---|---|---|
 | Settings file | `%APPDATA%\PvZ2 Reflourished\settings.ini` | `<exe>\data\settings.ini` |
+| The game's state: config, reminders, Nimble | `%APPDATA%\PvZ2 Reflourished` (`config\pvz2-config`, `pvz2-reminders.tsv`, `nimble-persistence.tsv`) | `<exe>\data` |
 | The game's saves (`/sdcard/Android/data/<pkg>`) | `%APPDATA%\PvZ2 Reflourished\sdcard\Android\data\<pkg>` | `<exe>\data\sdcard\Android\data\<pkg>` |
-| Game data: the OBB, the CDN archive, the x64 translation cache | `%LOCALAPPDATA%\PvZ2 Reflourished` | `<exe>\data` |
+| Game data: the OBB, the CDN archive, the x64 translation cache, `pvz2.log`, `cache\` | `%LOCALAPPDATA%\PvZ2 Reflourished` | `<exe>\data` |
 
 `TL_DATA` overrides all of it for tests: everything (settings, saves, game data) goes in that
 one folder, so a scripted run touches nothing else. The log, `pvz2.log`, is in the game data

@@ -44,6 +44,11 @@ void tl_pvz2_key(int keycode, int down);
  * register a hook. */
 void tl_pvz2_set_keyboard_hook(void (*fn)(int show));
 int tl_pvz2_keyboard_showing(void);
+
+/* Windows: the folder for the game's config, reminders and Nimble
+ * persistence. The default is the data folder, so the Mac and iPad are
+ * unchanged; call it before the game starts. */
+void tl_pvz2_set_state_dir(const char *path);
 /* Report a host dismissal so the guest can end its edit on the game thread. */
 void tl_pvz2_keyboard_dismissed(void);
 
