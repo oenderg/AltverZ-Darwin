@@ -581,6 +581,11 @@ static LRESULT CALLBACK page_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         SetBkColor(dc, GetSysColor(COLOR_WINDOW));
         return (LRESULT)(g_page_bg ? g_page_bg : GetSysColorBrush(COLOR_WINDOW));
     }
+    /* The page's buttons send their command to the page, not the settings
+     * window: pass it on, or Restore defaults and the folder buttons are dead. */
+    case WM_COMMAND:
+    case WM_NOTIFY:
+        return SendMessageW(GetParent(h), msg, wp, lp);
     default: break;
     }
     return DefWindowProcW(h, msg, wp, lp);

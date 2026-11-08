@@ -549,18 +549,19 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     /* The three folders. TL_DATA wins over everything, and then the saves and
      * the settings live in it too, so a test leaves nothing behind. */
     const char *tl = getenv("TL_DATA");
+    const char *mode = "normal";
     char portable[MAX_PATH + 16];
     join(portable, sizeof(portable), g_exe_dir, "portable");
     if (tl && *tl) {
         snprintf(g_data, sizeof(g_data), "%s", tl); slashes(g_data);
         snprintf(g_saves, sizeof(g_saves), "%s", g_data);
         join(g_settings_path, sizeof(g_settings_path), g_data, "settings.ini");
-        tl_log_line("windows: TL_DATA names the folders: everything in %s", g_data);
+        mode = "TL_DATA (everything in one folder)";
     } else if (GetFileAttributesA(portable) != INVALID_FILE_ATTRIBUTES) {
         join(g_data, sizeof(g_data), g_exe_dir, "data"); slashes(g_data);
         snprintf(g_saves, sizeof(g_saves), "%s", g_data);
         join(g_settings_path, sizeof(g_settings_path), g_data, "settings.ini");
-        tl_log_line("windows: portable mode (a \"portable\" file is beside the program): everything in %s", g_data);
+        mode = "portable (a \"portable\" file is beside the program)";
     } else {
         char roaming[MAX_PATH] = ".", local[MAX_PATH] = ".";
         if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, roaming))) slashes(roaming);
@@ -568,7 +569,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         join(g_saves, sizeof(g_saves), roaming, "PvZ2 Reflourished");
         join(g_data, sizeof(g_data), local, "PvZ2 Reflourished");
         join(g_settings_path, sizeof(g_settings_path), g_saves, "settings.ini");
-        tl_log_line("windows: saves and settings in %s, game data in %s", g_saves, g_data);
     }
     slashes(g_saves);
     slashes(g_settings_path);
@@ -579,6 +579,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         join(logp, sizeof(logp), g_data, "pvz2.log");
         tl_win_log_open(logp);
     }
+    tl_log_line("windows: %s mode", mode);
     tl_log_line("windows: settings file %s", g_settings_path);
     tl_log_line("windows: the game's saves %s", g_saves);
     tl_log_line("windows: the game's data %s (the OBB, the CDN archive and the x64 cache)", g_data);
