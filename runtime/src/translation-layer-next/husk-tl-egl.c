@@ -31,6 +31,7 @@ EGLBoolean tl_egl_swap_buffers_pooled(EGLBoolean (*swap)(EGLDisplay, EGLSurface)
 #define EGL_NONE 0x3038
 #define EGL_WIDTH 0x3057
 #define EGL_HEIGHT 0x3056
+#define EGL_FIXED_SIZE_ANGLE 0x3201
 #define EGL_PLATFORM_ANGLE_ANGLE 0x3202
 #define EGL_PLATFORM_ANGLE_TYPE_ANGLE 0x3203
 #define EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE 0x3489
@@ -368,6 +369,40 @@ static EGLSurface w_eglCreateWindowSurface(EGLDisplay d, EGLConfig cfg, void *wi
         return s;
     }
     void *layer = tl_nwindow_native(win);
+#ifdef _WIN32
+    /* ANGLE's fixed-size window surface keeps the guest's backbuffer at the
+     * size the host asks for, and DXGI stretches it into the child window.
+     * The Windows host uses that for its launch boost: the game starts at 804
+     * lines so that it picks its HD art, while a small window stays small.
+     * Without the extension the surface follows the window, as before. */
+    int fw = tl_nwindow_width(win), fh = tl_nwindow_height(win);
+    const char *ext = a_eglQueryString ? a_eglQueryString(d, 0x3055) : NULL;
+    if (fw > 0 && fh > 0 && ext && strstr(ext, "EGL_ANGLE_window_fixed_size")) {
+        EGLint fixed[24];
+        int n = 0;
+        if (at) {
+            for (; at[n] != EGL_NONE && n < 16; n += 2) {
+                fixed[n] = at[n];
+                fixed[n + 1] = at[n + 1];
+            }
+        }
+        fixed[n++] = EGL_FIXED_SIZE_ANGLE;
+        fixed[n++] = EGL_TRUE;
+        fixed[n++] = EGL_WIDTH;
+        fixed[n++] = fw;
+        fixed[n++] = EGL_HEIGHT;
+        fixed[n++] = fh;
+        fixed[n++] = EGL_NONE;
+        EGLSurface fixed_s = a_eglCreateWindowSurface(d, cfg, layer, fixed);
+        if (fixed_s) {
+            tl_log_line("egl: fixed window surface %p on layer %p (%dx%d, the window may be smaller)",
+                        fixed_s, layer, fw, fh);
+            return fixed_s;
+        }
+        tl_log_line("egl: fixed window surface failed (%#x); the surface follows the window",
+                    a_eglGetError());
+    }
+#endif
     EGLSurface s = a_eglCreateWindowSurface(d, cfg, layer, at);
     tl_log_line("egl: window surface %p on layer %p (%dx%d), eglGetError %#x", s, layer, tl_nwindow_width(win), tl_nwindow_height(win), a_eglGetError());
     return s;

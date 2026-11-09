@@ -103,6 +103,7 @@ void tl_set_data_dir(const char *dir);
 const char *tl_data_dir(void);
 const char *tl_path_resolve(const char *path, char *buf, size_t n);
 void tl_nwindow_configure(int w, int h, void *layer);
+void tl_nwindow_resize(int w, int h);
 void *tl_nwindow_get(void);
 
 #define PKG "com.ea.game.pvz2_rfl"
@@ -2786,6 +2787,8 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
 typedef void *EGLDisplay, *EGLSurface, *EGLContext, *EGLConfig;
 typedef int32_t EGLint;
 #define EGL_NONE 0x3038
+#define EGL_WIDTH 0x3057
+#define EGL_HEIGHT 0x3056
 
 /* The lifecycle requests, performed on the GL thread between frames. They are
  * defined below, next to the code that answers the host. */
@@ -5491,6 +5494,7 @@ static void *gl_main(void *arg)
     unsigned (*makeCurrent)(EGLDisplay, EGLSurface, EGLSurface, EGLContext) = tl_egl_resolve("eglMakeCurrent");
     unsigned (*swapBuffers)(EGLDisplay, EGLSurface) = tl_egl_resolve("eglSwapBuffers");
     unsigned (*swapInterval)(EGLDisplay, EGLint) = tl_egl_resolve("eglSwapInterval");
+    unsigned (*surfaceAttrib)(EGLDisplay, EGLSurface, EGLint, EGLint) = tl_egl_resolve("eglSurfaceAttrib");
     EGLint (*getError)(void) = tl_egl_resolve("eglGetError");
 
     /* Let lifecycle setup create the application object before the first
@@ -5507,13 +5511,6 @@ static void *gl_main(void *arg)
     if (!chooseConfig(dpy, want, &ec, 1, &n) || n < 1) { tl_log_line("pvz2: eglChooseConfig failed (%#x)", getError()); return NULL; }
     const EGLint ca[] = { 0x3098, 2, EGL_NONE };
     EGLContext ctx = createContext(dpy, ec, NULL, ca);
-    EGLSurface surf = createWindowSurface(dpy, ec, tl_nwindow_get(), NULL);
-    if (!ctx || !surf || !makeCurrent(dpy, surf, surf, ctx)) { tl_log_line("pvz2: could not make GL current (%#x)", getError()); return NULL; }
-    if (swapInterval) swapInterval(dpy, 1);
-    tl_log_line("pvz2: EGL %d.%d ready", maj, min);
-
-    typedef void (*v_fn)(void *, void *);
-    typedef void (*ii_fn)(void *, void *, int, int);
 
     /* The surface's size, before the guest is told about it.
      *
@@ -5543,6 +5540,17 @@ static void *gl_main(void *arg)
                     P.w, P.h);
         return NULL;
     }
+    /* The window knows the size before the surface is made: on Windows the
+     * window surface may keep a fixed size (the host's launch boost), and the
+     * guest's ANativeWindow has to report the same size. */
+    tl_nwindow_resize(P.w, P.h);
+    EGLSurface surf = createWindowSurface(dpy, ec, tl_nwindow_get(), NULL);
+    if (!ctx || !surf || !makeCurrent(dpy, surf, surf, ctx)) { tl_log_line("pvz2: could not make GL current (%#x)", getError()); return NULL; }
+    if (swapInterval) swapInterval(dpy, 1);
+    tl_log_line("pvz2: EGL %d.%d ready", maj, min);
+
+    typedef void (*v_fn)(void *, void *);
+    typedef void (*ii_fn)(void *, void *, int, int);
 
     v_fn created = (v_fn)tl_jni_native(VIEW, "Native_onSurfaceCreated", "()V");
     ii_fn changed = (ii_fn)tl_jni_native(VIEW, "Native_onSurfaceChanged", "(II)V");
@@ -5592,6 +5600,16 @@ static void *gl_main(void *arg)
         if (want_w > 0 && want_h > 0 && (want_w != P.w || want_h != P.h)) {
             tl_log_line("pvz2: the surface is now %dx%d (it was %dx%d)", want_w, want_h, P.w, P.h);
             P.w = want_w; P.h = want_h;
+            /* A Windows window surface may be fixed-size (the launch boost):
+             * resize it to the size the guest is about to be told, so the
+             * picture is no longer stretched after the boost ends and later
+             * window resizes keep 1:1. A surface that follows the window
+             * ignores this and already has the new size. */
+            if (surfaceAttrib) {
+                surfaceAttrib(dpy, surf, EGL_WIDTH, want_w);
+                surfaceAttrib(dpy, surf, EGL_HEIGHT, want_h);
+            }
+            tl_nwindow_resize(want_w, want_h);
             /* The guest must be told the new size *and* made to use it: the
              * size it read at start-up is still in its app object, and nothing
              * on the surface-change path re-reads it (the RE lane's write-up:

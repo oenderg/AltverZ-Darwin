@@ -151,6 +151,9 @@ Adapt starts in the window's shape, between 4:3 and 2.4:1. Changing mode or aspe
 takes effect next start. Current display uses that monitor's shape, without bars
 in full screen on supported display shapes. The game's own aspect keeps bars on
 a differently shaped monitor. Size, place and full-screen state are always saved.
+The game picks its art once, at start-up, so its surface starts at least the design's
+804 lines tall even in a smaller window; the picture is stretched into the window
+until the game is past its start. The saved window size itself is unchanged.
 `keepSizeAndPlace` and `keep_window` are ignored; old `adaptShape=1` (or `adapt=1`)
 migrates to Adapt when there is no `resizeMode`. The older keys and pointer
 preferences keep their meanings. Pages scroll when the DPI leaves too little room.

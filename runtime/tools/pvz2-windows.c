@@ -63,8 +63,9 @@ void tl_win_set_saves_dir(const char *dir);
 int tl_win_obb_ensure(const char *data_dir, const char *exe_dir);
 
 /* The size the game draws at. It lays out for 1748x804 and picks its HD art from 804 up. The window gets as
- * much of that as the screen has room for, never less than the minimum; the game's surface is the window's
- * real client size, so drawing and touch are 1:1. */
+ * much of that as the screen has room for, never less than the minimum. While the game starts, its surface
+ * is at least 804 lines tall so that it picks the HD art, and the picture is stretched into the window; after
+ * the start the surface follows the window's client size and drawing and touch are 1:1. */
 #define DESIGN_W 1748
 #define DESIGN_H 804
 #define MIN_CLIENT_W 800
@@ -86,6 +87,12 @@ int tl_win_obb_ensure(const char *data_dir, const char *exe_dir);
 #define PVZ2_REQUEST_MAGIC 0x50565A32u
 
 static int g_sw = DESIGN_W, g_sh = DESIGN_H;
+/* The game starts at the design height whatever the window size, so that it
+ * picks its HD art; the picture is stretched into the window until the game is
+ * past its start. Then the surface follows the window again. */
+static int g_starting = 1;
+static int g_surface_locked;
+static ULONGLONG g_start_ticks;
 static HWND g_hwnd;
 /* The picture: the game is a child window, the largest rectangle of the game's
  * shape that fits, centred. See "the picture" below. */
@@ -816,7 +823,24 @@ static void constrain_sizing(RECT *r, WPARAM edge)
  * around it. ANGLE draws into that child, so the guest's surface is exactly
  * the picture, and the bars are the parent's black background, never stale
  * game pixels. A tap in the bars is the parent's, and does nothing.
+ *
+ * While the game starts, the guest's surface is at least 804 lines tall even
+ * in a smaller window, and ANGLE stretches it into the child: the game picks
+ * its HD art once, from the size it starts at. WM_MOUSEMOVE and the overlays
+ * use the picture's pixels, so their coordinates are scaled by the same
+ * factor.
  */
+static int view_client_size(int *w, int *h)
+{
+    if (!g_view) return 0;
+    RECT rc;
+    if (!GetClientRect(g_view, &rc)) return 0;
+    if (rc.right <= 0 || rc.bottom <= 0) return 0;
+    *w = rc.right;
+    *h = rc.bottom;
+    return 1;
+}
+
 static void view_layout(void)
 {
     if (!g_hwnd || !g_view) return;
@@ -833,11 +857,19 @@ static void view_layout(void)
     SetWindowPos(g_view, NULL, x, y, vw, vh, SWP_NOZORDER | SWP_NOACTIVATE);
     badges_reposition();
     pointer_reposition();
-    if (vw != g_sw || vh != g_sh) {
-        g_sw = vw; g_sh = vh;
+    int sw = vw, sh = vh;
+    if (g_starting && sh < DESIGN_H) {
+        sh = DESIGN_H;
+        sw = (int)((double)vw * (double)sh / (double)vh + 0.5);
+    }
+    if (g_starting && g_surface_locked) {
+        /* The game's surface is the size it started with; a window resize
+         * during the start only changes the picture it is stretched into. */
+    } else if (sw != g_sw || sh != g_sh) {
+        g_sw = sw; g_sh = sh;
         tl_log_line("windows: window %dx%d client, the game draws at %dx%d (%d,%d), bars %d left %d right %d top %d bottom",
-                    cw, ch, vw, vh, x, y, x, cw - vw - x, y, ch - vh - y);
-        tl_pvz2_set_surface_size(vw, vh);
+                    cw, ch, sw, sh, x, y, x, cw - vw - x, y, ch - vh - y);
+        tl_pvz2_set_surface_size(sw, sh);
     }
 }
 
@@ -860,6 +892,7 @@ static void view_layout(void)
 #define BADGE_COUNT (TL_PVZ2_BADGE_SLOTS + 1 + 1 + 1 + TL_PVZ2_BADGE_POWERUPS)
 #define BADGE_TIMER 103
 #define STATS_TIMER 105
+#define START_TIMER 106
 
 static HWND g_badge_win;
 static int g_badge_visible;
@@ -1132,8 +1165,9 @@ static void badges_reposition(void)
  * between and around the letters. */
 static void badges_draw(const tl_pvz2_badge_snapshot *s)
 {
-    if (!g_gdiplus_started) return;
-    int w = s->surface_w, h = s->surface_h;
+    if (!g_gdiplus_started || s->surface_w <= 0 || s->surface_h <= 0) return;
+    int w = 0, h = 0;
+    if (!view_client_size(&w, &h)) return;
     if (!g_badge_dc) g_badge_dc = CreateCompatibleDC(NULL);
     if (!g_badge_dc) return;
     if (!g_badge_dib || w != g_badge_w || h != g_badge_h) {
@@ -1167,8 +1201,16 @@ static void badges_draw(const tl_pvz2_badge_snapshot *s)
     GdipSetSmoothingMode(g, SmoothingModeAntiAlias);
     GdipGraphicsClear(g, 0x00000000);
     for (int i = 0; i < BADGE_COUNT; i++) {
-        const int *r = badge_rect(i, s);
-        if (!r || r[2] < 16 || r[3] < 16) continue;
+        const int *src = badge_rect(i, s);
+        if (!src) continue;
+        /* The game's rects are in its surface; the badge window is the
+         * picture, which is smaller while the launch boost stretches it. */
+        int r[4];
+        r[0] = (int)((double)src[0] * w / s->surface_w + 0.5);
+        r[1] = (int)((double)src[1] * h / s->surface_h + 0.5);
+        r[2] = (int)((double)src[2] * w / s->surface_w + 0.5);
+        r[3] = (int)((double)src[3] * h / s->surface_h + 0.5);
+        if (r[2] < 16 || r[3] < 16) continue;
         wchar_t text[32];
         const wchar_t *label = badge_label(i, s, text, 32);
         if (!label) continue;
@@ -1464,7 +1506,8 @@ static void pointer_reposition(void)
     if (!GetWindowRect(g_view, &vr)) return;
     SetWindowPos(g_pointer_win, NULL, vr.left, vr.top, vr.right - vr.left, vr.bottom - vr.top,
                  SWP_NOZORDER | SWP_NOACTIVATE);
-    if (g_pointer_w != g_sw || g_pointer_h != g_sh) {
+    int vw = 0, vh = 0;
+    if (view_client_size(&vw, &vh) && (g_pointer_w != vw || g_pointer_h != vh)) {
         memset(&g_pointer_band_draw, 0, sizeof g_pointer_band_draw);
         g_plant_win_image = NULL;
     }
@@ -1907,11 +1950,29 @@ static void pointer_band_rect(const tl_pvz2_cursor_snapshot *s, int col, int row
     band[7] = pointer_band_axis(s, 1, row + 1);
 }
 
+/* The band is in the guest's surface pixels; the overlay window is the
+ * picture, which is smaller while the game starts. */
+static void pointer_band_view(const int band[8], int vw, int vh, int out[8])
+{
+    double sx = g_sw > 0 ? (double)vw / (double)g_sw : 1.0;
+    double sy = g_sh > 0 ? (double)vh / (double)g_sh : 1.0;
+    out[0] = (int)((double)band[0] * sx + 0.5);
+    out[1] = (int)((double)band[1] * sx + 0.5);
+    out[2] = (int)((double)band[2] * sy + 0.5);
+    out[3] = (int)((double)band[3] * sy + 0.5);
+    out[4] = (int)((double)band[4] * sx + 0.5);
+    out[5] = (int)((double)band[5] * sx + 0.5);
+    out[6] = (int)((double)band[6] * sy + 0.5);
+    out[7] = (int)((double)band[7] * sy + 0.5);
+}
+
 static int pointer_bands_draw(int band_ok, const int band[8], int brightness)
 {
-    if (!pointer_ensure_dib(g_sw, g_sh)) return 0;
+    int vw = 0, vh = 0;
+    if (!view_client_size(&vw, &vh)) return 0;
+    if (!pointer_ensure_dib(vw, vh)) return 0;
     GpBitmap *bitmap = NULL;
-    if (GdipCreateBitmapFromScan0(g_pointer_w, g_pointer_h, g_pointer_w * 4,
+    if (GdipCreateBitmapFromScan0(vw, vh, vw * 4,
                                   PixelFormat32bppPARGB, (BYTE *)g_pointer_bits, &bitmap) != Ok)
         return 0;
     GpGraphics *g = NULL;
@@ -1945,7 +2006,7 @@ static int pointer_bands_draw(int band_ok, const int band[8], int brightness)
     RECT vr;
     if (!GetWindowRect(g_view, &vr)) return 0;
     POINT dst = { vr.left, vr.top };
-    SIZE size = { g_sw, g_sh };
+    SIZE size = { vw, vh };
     POINT src = { 0, 0 };
     BLENDFUNCTION blend = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
     return UpdateLayeredWindow(g_pointer_win, NULL, &dst, &size, g_pointer_dc, &src, 0,
@@ -2088,13 +2149,16 @@ static void pointer_tick(void)
         return;
     }
 
+    int vw = 0, vh = 0;
+    if (!view_client_size(&vw, &vh)) {
+        pointer_hide();
+        return;
+    }
     int inside = 0, got = 0, sx = 0, sy = 0;
     POINT pt;
     if (GetCursorPos(&pt) && ScreenToClient(g_view, &pt)) {
         got = 1;
-        RECT rc;
-        GetClientRect(g_view, &rc);
-        if (pt.x >= 0 && pt.y >= 0 && pt.x < rc.right && pt.y < rc.bottom) {
+        if (pt.x >= 0 && pt.y >= 0 && pt.x < vw && pt.y < vh) {
             inside = 1;
             sx = pt.x;
             sy = pt.y;
@@ -2109,6 +2173,10 @@ static void pointer_tick(void)
         pointer_hide();
         return;
     }
+    /* The guest's grid and target are in its own surface pixels, not the
+     * picture's while the launch boost stretches the game. */
+    int gx = (int)((sx + 0.5) * (double)g_sw / (double)vw);
+    int gy = (int)((sy + 0.5) * (double)g_sh / (double)vh);
 
     if (s.generation != g_pointer_generation || g_pointer_art_serial != g_pointer_art_seen) {
         g_pointer_generation = s.generation;
@@ -2123,13 +2191,12 @@ static void pointer_tick(void)
     int col = -1, row = -1, in_bounds = 0, cross = 0, keep = 0;
     int band[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
     if (s.grid_valid) {
-        col = tl_cursor_grid_axis(&s, 0, (int)(sx + 0.5f));
-        row = tl_cursor_grid_axis(&s, 1, (int)(sy + 0.5f));
+        col = tl_cursor_grid_axis(&s, 0, gx);
+        row = tl_cursor_grid_axis(&s, 1, gy);
         in_bounds = col >= 0 && col < s.columns && row >= 0 && row < s.rows;
     }
     if (in_bounds) {
-        tl_pvz2_cursor_target((int)(sx + 0.5f), (int)(sy + 0.5f),
-                              s.kind == TL_PVZ2_CURSOR_PLANT);
+        tl_pvz2_cursor_target(gx, gy, s.kind == TL_PVZ2_CURSOR_PLANT);
         if (s.kind == TL_PVZ2_CURSOR_PLANT) {
             int answer = s.placement_known && s.placement_col == col && s.placement_row == row;
             if (answer) {
@@ -2193,8 +2260,8 @@ static void pointer_tick(void)
 
     double row_height = 0;
     if (s.grid_valid && s.app_h > 0 && s.app_scale > 0 && s.camera_scale > 0)
-        row_height = 76.0 * s.app_scale * s.camera_scale * (double)g_sh / (double)s.app_h;
-    double side = row_height > 0 ? row_height * 0.65 : (double)g_sh * 0.14;
+        row_height = 76.0 * s.app_scale * s.camera_scale * (double)vh / (double)s.app_h;
+    double side = row_height > 0 ? row_height * 0.65 : (double)vh * 0.14;
     if (!(side > 0)) side = 1;
     int long_side = g_plant_image->width > g_plant_image->height
                         ? g_plant_image->width : g_plant_image->height;
@@ -2206,10 +2273,12 @@ static void pointer_tick(void)
     int dx = (int)(sx - dw / 2.0);
     int dy = (int)(sy - dh / 2.0);
 
+    int view_band[8];
+    pointer_band_view(band, vw, vh, view_band);
     pointer_band_draw_state next;
     memset(&next, 0, sizeof next);
     next.band_ok = band_ok;
-    memcpy(next.band, band, sizeof band);
+    memcpy(next.band, view_band, sizeof view_band);
     next.brightness = g_cross_brightness;
     if (!g_pointer_visible || memcmp(&next, &g_pointer_band_draw, sizeof next) != 0) {
         if (!pointer_bands_draw(next.band_ok, next.band, next.brightness)) {
@@ -2461,6 +2530,20 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         }
         if (wp == STATS_TIMER) {
             stats_tick();
+            return 0;
+        }
+        if (wp == START_TIMER) {
+            if (!g_starting) {
+                KillTimer(h, START_TIMER);
+                return 0;
+            }
+            int done = tl_pvz2_started();
+            if (!done && GetTickCount64() - g_start_ticks < 20000) return 0;
+            g_starting = 0;
+            KillTimer(h, START_TIMER);
+            view_layout();
+            tl_log_line("windows: the game is past its start (%s); the surface is the window's size again",
+                        done ? "the driver says so" : "the 20 s limit");
             return 0;
         }
         break;
@@ -2973,6 +3056,12 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     RECT rc; GetClientRect(g_hwnd, &rc);
     int cw = (int)(rc.right - rc.left), ch = (int)(rc.bottom - rc.top);
     tl_log_line("windows: window %dx%d client, the game draws at %dx%d", cw, ch, g_sw, g_sh);
+    {
+        int vw = 0, vh = 0;
+        if (g_starting && view_client_size(&vw, &vh) && g_sh > vh)
+            tl_log_line("windows: the game starts at %dx%d so that it picks its HD art (the picture is %dx%d)",
+                        g_sw, g_sh, vw, vh);
+    }
 
     /* The display's own maximum, before the game asks: the game's "Target 60
      * FPS" setting means "as fast as this screen goes", as on the Mac and the
@@ -3015,6 +3104,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     else tl_log_line("windows: the x64 translation cache is there; no preparing window");
     }
 #endif
+    /* The game starts at the surface chosen above; a window resize cannot
+     * change it until the game is past its start. */
+    g_surface_locked = 1;
+    g_start_ticks = GetTickCount64();
+    SetTimer(g_hwnd, START_TIMER, 250, NULL);
 #if defined(__x86_64__)
     if (!g_progress_preview_until)
 #endif
