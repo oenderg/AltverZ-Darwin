@@ -131,6 +131,12 @@ defaults. The Keyboard page of the settings window (window menu: Settings..., or
 records a key by clicking its field and pressing the key; Escape cancels, Delete clears,
 and a key another shortcut already uses is refused with that shortcut's name.
 
+The Settings window can be resized by its edges and corners (no maximize button). It never gets
+smaller than the size it opens at, at the window's DPI: `WM_GETMINMAXINFO` holds the edges and
+`WM_WINDOWPOSCHANGING` holds `SetWindowPos`/`MoveWindow` callers such as AltSnap. The tab area fills
+the window, the buttons keep to the bottom right, and sliders, drop-downs, paths and text widen
+with it (up to a readable width).
+
 Settings has four tabs: General, Gameplay, Keyboard and About. General selects Fixed
 or Adapt mode and, in Fixed, the startup aspect (`display`, `game`, `16:9`, `16:10`,
 `3:2`, `4:3`, `21:9`). Fixed constrains interactive resizing to the startup aspect;

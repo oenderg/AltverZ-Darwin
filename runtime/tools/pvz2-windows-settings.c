@@ -299,15 +299,56 @@ static HFONT make_font(int dpi)
     return CreateFontIndirectW(&ncm.lfMessageFont);
 }
 
-static HWND add(HWND parent, const wchar_t *cls, const wchar_t *text, DWORD style,
-                int x, int y, int w, int h, int id)
+/* How a control follows the window's width and height. Every control is made at
+ * its position for the minimum size (in 96-dpi units); the page layout then moves
+ * and stretches it from these rules, so the minimum looks exactly as it always
+ * did and a larger window only adds room where it is useful. */
+enum {
+    A_RIGHT  = 1,    /* x moves with the right edge (a button at the right) */
+    A_HALF   = 2,    /* x moves by half the extra width, up to 120 units (the second column) */
+    W_FULL   = 4,    /* w grows with all the extra width */
+    W_HALF   = 8,    /* w grows with half of it */
+    A_BOTTOM = 16    /* sits at the bottom of the page when the page is taller */
+};
+typedef struct { HWND h; int x, y, w, ht, rule, cap; } item;
+#define ITEM_MAX 64
+static item g_items[PAGE_COUNT][ITEM_MAX];
+static int g_item_count[PAGE_COUNT];
+#define MIN_CLIENT_W 560   /* the client size the window opens at, in 96-dpi units */
+#define MIN_CLIENT_H 530
+#define PAGE_BASE_W  500   /* the width of a group box at that size */
+/* A normal resizable frame: edges and corners, no maximize button. */
+#ifndef SWP_STATECHANGED
+#define SWP_STATECHANGED 0x8000   /* set when the window is shown, hidden, minimized or maximized */
+#endif
+#define SETTINGS_STYLE (WS_CAPTION | WS_SYSMENU | WS_THICKFRAME)
+
+static HWND add_ruled(HWND parent, const wchar_t *cls, const wchar_t *text, DWORD style,
+                      int x, int y, int w, int h, int id, int rule, int cap)
 {
     if ((!wcscmp(cls, L"BUTTON") && (style & BS_TYPEMASK) != BS_GROUPBOX) ||
         !wcscmp(cls, L"EDIT") || !wcscmp(cls, L"msctls_trackbar32")) style |= WS_TABSTOP;
     HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, S(x), S(y), S(w), S(h),
                              parent, (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
     SendMessageW(c, WM_SETFONT, (WPARAM)g_font, TRUE);
+    for (int i = 0; i < PAGE_COUNT; i++)
+        if (g_page[i] == parent && g_item_count[i] < ITEM_MAX)
+            g_items[i][g_item_count[i]++] = (item){ c, x, y, w, h, rule, cap };
     return c;
+}
+
+static HWND add(HWND parent, const wchar_t *cls, const wchar_t *text, DWORD style,
+                int x, int y, int w, int h, int id)
+{
+    return add_ruled(parent, cls, text, style, x, y, w, h, id, 0, 0);
+}
+
+static item *item_of(int page, int id)
+{
+    HWND c = g_page[page] ? GetDlgItem(g_page[page], id) : NULL;
+    for (int i = 0; c && i < g_item_count[page]; i++)
+        if (g_items[page][i].h == c) return &g_items[page][i];
+    return NULL;
 }
 
 static HWND add_page(HWND parent, int x, int y, int w, int h, int id)
@@ -432,19 +473,23 @@ static LRESULT CALLBACK keyfield_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp,
 
 static void key_row(HWND page, int field, int x, int y, int label_w, int key_w)
 {
-    add(page, L"STATIC", field_label(field), 0, x, y + 3, label_w, 20, 0);
-    HWND e = add(page, L"EDIT", L"", WS_BORDER | ES_CENTER | ES_READONLY,
-                 x + label_w + 8, y, key_w, 24, g_field_ids[field]);
+    /* The second column moves with half the extra width, and the key fields
+     * widen a little with it (up to 120 units). */
+    int col2 = x > 100;
+    add_ruled(page, L"STATIC", field_label(field), 0, x, y + 3, label_w, 20, 0, col2 ? A_HALF : 0, 0);
+    HWND e = add_ruled(page, L"EDIT", L"", WS_BORDER | ES_CENTER | ES_READONLY,
+                       x + label_w + 8, y, key_w, 24, g_field_ids[field],
+                       (col2 ? A_HALF : 0) | (key_w < 100 ? W_HALF : 0), 64);
     SetWindowSubclass(e, keyfield_proc, (UINT_PTR)g_field_ids[field], 0);
     field_refresh(e, field);
 }
 
 static void build_keyboard_page(HWND p)
 {
-    add(p, L"BUTTON", L"Seed packets", BS_GROUPBOX, 10, 8, 500, 142, 0);
+    add_ruled(p, L"BUTTON", L"Seed packets", BS_GROUPBOX, 10, 8, 500, 142, 0, W_FULL, 0);
     for (int i = 0; i < 8; i++)
         key_row(p, FIELD_SLOT0 + i, i < 4 ? 22 : 272, 32 + (i % 4) * 26, 96, 56);
-    add(p, L"BUTTON", L"Controls", BS_GROUPBOX, 10, 156, 500, 172, 0);
+    add_ruled(p, L"BUTTON", L"Controls", BS_GROUPBOX, 10, 156, 500, 172, 0, W_FULL, 0);
     key_row(p, FIELD_SHOVEL, 22, 180, 96, 56);
     key_row(p, FIELD_PLANT_FOOD, 22, 208, 96, 56);
     key_row(p, FIELD_FAST_FORWARD, 22, 236, 96, 56);
@@ -452,9 +497,11 @@ static void build_keyboard_page(HWND p)
     key_row(p, FIELD_POWERUP2, 272, 208, 96, 56);
     key_row(p, FIELD_POWERUP3, 272, 236, 96, 56);
     key_row(p, FIELD_COLLECT_SUN, 22, 294, 346, 100);
-    add(p, L"STATIC", L"Click a key field and press the key you want: letters, digits, punctuation, Space, Tab, the arrows or F1–F12. Esc cancels, Delete clears. A key can only belong to one shortcut.",
-        0, 22, 338, 476, 48, 0);
-    add(p, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON, 390, 392, 120, 26, ID_RESTORE);
+    add_ruled(p, L"STATIC", L"Click a key field and press the key you want: letters, digits, punctuation, Space, Tab, the arrows or F1–F12. Esc cancels, Delete clears. A key can only belong to one shortcut.",
+              0, 22, 338, 476, 48, 0, W_FULL, 204);
+    /* At the right, and at the foot of the page when the page is taller. */
+    add_ruled(p, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON, 390, 392, 120, 26, ID_RESTORE,
+              A_RIGHT | A_BOTTOM, 0);
 }
 
 static void pointer_page_label(void)
@@ -469,23 +516,24 @@ static void pointer_page_label(void)
 
 static void build_pointer_page(HWND p)
 {
-    add(p, L"BUTTON", L"Playing", BS_GROUPBOX, 10, 8, 500, 116, 0);
+    add_ruled(p, L"BUTTON", L"Playing", BS_GROUPBOX, 10, 8, 500, 116, 0, W_FULL, 0);
     HWND keys = add(p, L"BUTTON", L"Show keys in levels", BS_AUTOCHECKBOX, 24, 30, 440, 22, ID_SHOW_KEYS);
     SendMessageW(keys, BM_SETCHECK, g_pending.show_level_keys ? BST_CHECKED : BST_UNCHECKED, 0);
-    add(p, L"STATIC", L"“Show keys in levels” writes the key that works each control on its corner, in the game's own font (seed packets, shovel, fast-forward, plant food and the level's power-ups); it is on by default.",
-        0, 24, 60, 460, 54, 0);
-    add(p, L"BUTTON", L"The pointer", BS_GROUPBOX, 10, 134, 500, 200, 0);
+    add_ruled(p, L"STATIC", L"“Show keys in levels” writes the key that works each control on its corner, in the game's own font (seed packets, shovel, fast-forward, plant food and the level's power-ups); it is on by default.",
+              0, 24, 60, 460, 54, 0, W_FULL, 220);
+    add_ruled(p, L"BUTTON", L"The pointer", BS_GROUPBOX, 10, 134, 500, 200, 0, W_FULL, 0);
     HWND show = add(p, L"BUTTON", L"Show the selected plant at the pointer", BS_AUTOCHECKBOX,
                     24, 158, 440, 22, ID_SHOW_CURSOR);
     SendMessageW(show, BM_SETCHECK, g_pending.show_cursor_plant ? BST_CHECKED : BST_UNCHECKED, 0);
     add(p, L"STATIC", L"Cross brightness", 0, 24, 206, 140, 20, 0);
-    HWND bar = add(p, L"msctls_trackbar32", L"", TBS_HORZ | TBS_NOTICKS,
-                   180, 200, 220, 32, ID_CROSS_BRIGHTNESS);
+    /* The slider takes the extra width; its percentage stays at the right. */
+    HWND bar = add_ruled(p, L"msctls_trackbar32", L"", TBS_HORZ | TBS_NOTICKS,
+                         180, 200, 220, 32, ID_CROSS_BRIGHTNESS, W_FULL, 0);
     SendMessageW(bar, TBM_SETRANGE, TRUE, MAKELONG(0, 100));
     SendMessageW(bar, TBM_SETPOS, TRUE, g_pending.cursor_cross_brightness);
-    add(p, L"STATIC", L"", 0, 410, 206, 60, 20, ID_CROSS_VALUE);
-    add(p, L"STATIC", L"The plant, shovel or plant food in your hand follows the pointer, as it would under your finger, and a cross marks the tile it will land on; the cross hides where a plant cannot go. “Cross brightness” sets how bright the cross is: 45% by default.",
-        0, 24, 238, 460, 80, 0);
+    add_ruled(p, L"STATIC", L"", 0, 410, 206, 60, 20, ID_CROSS_VALUE, A_RIGHT, 0);
+    add_ruled(p, L"STATIC", L"The plant, shovel or plant food in your hand follows the pointer, as it would under your finger, and a cross marks the tile it will land on; the cross hides where a plant cannot go. “Cross brightness” sets how bright the cross is: 45% by default.",
+              0, 24, 238, 460, 80, 0, W_FULL, 220);
     pointer_page_label();
 
 }
@@ -499,42 +547,59 @@ static void mode_refresh(HWND p)
     SetWindowTextW(GetDlgItem(p, ID_MODE_FOOTER), g_pending.adapt_shape ?
         L"The window takes any shape from 4:3 to 2.4:1, and the game starts in the window's shape. The game lays a screen out once, so after you change the shape the picture keeps its old one, with bars. A new shape takes effect when the game next starts. Experimental." :
         L"The window keeps one shape and the game fills it, at any size. A new shape takes effect when the game next starts. “Current display” is the shape of the display the game is on, so full screen has no bars.");
-    /* Measure the actual wrapped text in the message font. Hiding the aspect
-     * row removes its space, and neither mode leaves a fixed-height plaque. */
-    HWND footer = GetDlgItem(p, ID_MODE_FOOTER);
+    /* The footer's height and the rows below it follow its wrapped text, which
+     * the page layout measures at the page's current width. */
+    SendMessageW(p, WM_SIZE, SIZE_RESTORED, 0);
+}
+
+/* A control's width at `dw` extra units of page width (in pixels), by its rule. */
+static int item_width(const item *it, int dw)
+{
+    int grow = it->rule & W_FULL ? dw : it->rule & W_HALF ? dw / 2 : 0;
+    if (it->cap && grow > S(it->cap)) grow = S(it->cap);
+    return S(it->w) + grow;
+}
+
+/* Hiding the aspect row removes its space, and neither mode leaves a
+ * fixed-height plaque: the footer is measured in the message font at its real
+ * width and the rows below follow it. Called by the page layout, before it
+ * places the controls. */
+static void general_vertical(HWND p, int dw)
+{
+    item *footer = item_of(GENERAL, ID_MODE_FOOTER);
+    if (!footer) return;
+    int w = item_width(footer, dw);
     wchar_t text[512];
-    GetWindowTextW(footer, text, 512);
+    GetWindowTextW(footer->h, text, 512);
     HDC dc = GetDC(p);
     HGDIOBJ old = SelectObject(dc, g_font);
-    RECT measured = { 0, 0, S(460), 0 };
+    RECT measured = { 0, 0, w, 0 };
     DrawTextW(dc, text, -1, &measured, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
     SelectObject(dc, old);
     ReleaseDC(p, dc);
-    int y = S(g_pending.adapt_shape ? 72 : 112);
-    int height = measured.bottom - measured.top;
-    int bottom = y + height + S(16);
-    int sx = GetScrollPos(p, SB_HORZ), sy = GetScrollPos(p, SB_VERT);
-    SetWindowPos(footer, NULL, S(24) - sx, y - sy, S(460), height, SWP_NOZORDER | SWP_NOACTIVATE);
-    SetWindowPos(GetDlgItem(p, ID_WINDOW_GROUP), NULL, S(10) - sx, S(8) - sy,
-                 S(500), bottom - S(8), SWP_NOZORDER | SWP_NOACTIVATE);
-    SetWindowPos(GetDlgItem(p, ID_START_FULL), NULL, S(24) - sx, bottom + S(20) - sy,
-                 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-    SetWindowPos(GetDlgItem(p, ID_CONFIRM_QUIT), NULL, S(24) - sx, bottom + S(62) - sy,
-                 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-    SetWindowPos(GetDlgItem(p, ID_QUIT_FOOTER), NULL, S(24) - sx, bottom + S(98) - sy,
-                 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-    InvalidateRect(p, NULL, TRUE);
+    int dpi = (int)GetDpiForWindow(g_self);
+    int y = g_pending.adapt_shape ? 72 : 112;
+    int height = (measured.bottom * 96 + dpi - 1) / dpi;      /* back to 96-dpi units */
+    int bottom = y + height + 16;
+    footer->y = y;
+    footer->ht = height;
+    item *it;
+    if ((it = item_of(GENERAL, ID_WINDOW_GROUP))) { it->y = 8; it->ht = bottom - 8; }
+    if ((it = item_of(GENERAL, ID_START_FULL))) it->y = bottom + 20;
+    if ((it = item_of(GENERAL, ID_CONFIRM_QUIT))) it->y = bottom + 62;
+    if ((it = item_of(GENERAL, ID_QUIT_FOOTER))) it->y = bottom + 98;
 }
 
 static void build_general_page(HWND p)
 {
-    add(p, L"BUTTON", L"Window", BS_GROUPBOX, 10, 8, 500, 242, ID_WINDOW_GROUP);
+    add_ruled(p, L"BUTTON", L"Window", BS_GROUPBOX, 10, 8, 500, 242, ID_WINDOW_GROUP, W_FULL, 0);
     add(p, L"STATIC", L"Mode", 0, 24, 36, 120, 22, 0);
     add(p, L"BUTTON", L"Fixed", BS_AUTORADIOBUTTON | WS_GROUP, 180, 32, 100, 24, ID_FIXED_SHAPE);
     add(p, L"BUTTON", L"Adapt", BS_AUTORADIOBUTTON, 292, 32, 100, 24, ID_ADAPT_SHAPE);
     add(p, L"STATIC", L"Aspect ratio", 0, 24, 78, 140, 22, ID_ASPECT_LABEL);
-    HWND combo = add(p, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP,
-                     180, 72, 302, 240, ID_ASPECT);
+    /* The list grows with the window, but not past a width that reads well. */
+    HWND combo = add_ruled(p, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP,
+                           180, 72, 302, 240, ID_ASPECT, W_FULL, 150);
     MONITORINFO mi = { .cbSize = sizeof(mi) };
     GetMonitorInfoW(MonitorFromWindow(g_owner, MONITOR_DEFAULTTONEAREST), &mi);
     double a = (double)(mi.rcMonitor.right - mi.rcMonitor.left) / (mi.rcMonitor.bottom - mi.rcMonitor.top);
@@ -550,13 +615,13 @@ static void build_general_page(HWND p)
         SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)names[i]);
         if (!strcmp(g_aspect_tags[i], g_pending.fixed_aspect)) SendMessageW(combo, CB_SETCURSEL, i, 0);
     }
-    add(p, L"STATIC", L"", 0, 24, 120, 460, 112, ID_MODE_FOOTER);
+    add_ruled(p, L"STATIC", L"", 0, 24, 120, 460, 112, ID_MODE_FOOTER, W_FULL, 220);
     HWND full = add(p, L"BUTTON", L"Start in full screen", BS_AUTOCHECKBOX, 24, 276, 440, 24, ID_START_FULL);
     SendMessageW(full, BM_SETCHECK, g_pending.start_fullscreen ? BST_CHECKED : BST_UNCHECKED, 0);
     HWND confirm = add(p, L"BUTTON", L"Ask before quitting", BS_AUTOCHECKBOX, 24, 318, 440, 24, ID_CONFIRM_QUIT);
     SendMessageW(confirm, BM_SETCHECK, g_pending.confirm_quit ? BST_CHECKED : BST_UNCHECKED, 0);
-    add(p, L"STATIC", L"Closing the window or pressing Alt+F4 saves and quits. To pause and keep your place instead, minimize. Quitting asks first when this is on.",
-        0, 24, 354, 460, 58, ID_QUIT_FOOTER);
+    add_ruled(p, L"STATIC", L"Closing the window or pressing Alt+F4 saves and quits. To pause and keep your place instead, minimize. Quitting asks first when this is on.",
+              0, 24, 354, 460, 58, ID_QUIT_FOOTER, W_FULL, 220);
     mode_refresh(p);
 }
 
@@ -587,32 +652,34 @@ static void build_about_page(HWND p)
 {
     add(p, L"STATIC", L"PvZ2 Reflourished", 0, 24, 20, 460, 24, 0);
     add(p, L"STATIC", L"Version " L"" PVZ2_APP_VERSION, 0, 24, 50, 460, 20, 0);
-    add(p, L"STATIC", L"Plants vs. Zombies 2: Reflourished, running on Windows: the game's own Android code, drawn through Direct3D 11.",
-        0, 24, 80, 460, 42, 0);
+    add_ruled(p, L"STATIC", L"Plants vs. Zombies 2: Reflourished, running on Windows: the game's own Android code, drawn through Direct3D 11.",
+              0, 24, 80, 460, 42, 0, W_FULL, 220);
     int y = 138;
     if (pvz2_updates_configured()) {
         /* The Mac's Updates section, word for word, with its own last check
          * time; the portable build has no updater, so nothing here. */
-        add(p, L"BUTTON", L"Updates", BS_GROUPBOX, 10, 132, 500, 120, 0);
+        add_ruled(p, L"BUTTON", L"Updates", BS_GROUPBOX, 10, 132, 500, 120, 0, W_FULL, 0);
         HWND auto_check = add(p, L"BUTTON", L"Check for updates automatically", BS_AUTOCHECKBOX,
                               24, 156, 440, 22, ID_AUTOMATIC_UPDATES);
         SendMessageW(auto_check, BM_SETCHECK, g_pending.automatic_updates ? BST_CHECKED : BST_UNCHECKED, 0);
-        add(p, L"STATIC", L"", 0, 24, 184, 340, 20, ID_LAST_CHECK);
-        add(p, L"BUTTON", L"Check Now", BS_PUSHBUTTON, 382, 180, 112, 26, ID_CHECK_NOW);
-        add(p, L"STATIC", L"Once a day the app looks for a new release on GitHub, and asks before it installs one. Your saves and settings stay as they are.",
-            0, 24, 212, 460, 34, 0);
+        add_ruled(p, L"STATIC", L"", 0, 24, 184, 340, 20, ID_LAST_CHECK, W_FULL, 0);
+        add_ruled(p, L"BUTTON", L"Check Now", BS_PUSHBUTTON, 382, 180, 112, 26, ID_CHECK_NOW, A_RIGHT, 0);
+        add_ruled(p, L"STATIC", L"Once a day the app looks for a new release on GitHub, and asks before it installs one. Your saves and settings stay as they are.",
+                  0, 24, 212, 460, 34, 0, W_FULL, 220);
         y = 262;
     }
-    add(p, L"BUTTON", L"Files", BS_GROUPBOX, 10, y, 500, 246, 0);
+    /* The paths take the extra width (they end in an ellipsis when they must);
+     * the buttons stay at the right. */
+    add_ruled(p, L"BUTTON", L"Files", BS_GROUPBOX, 10, y, 500, 246, 0, W_FULL, 0);
     add(p, L"STATIC", L"Saves and settings", 0, 24, y + 26, 350, 20, 0);
-    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, y + 50, 346, 22, 0);
-    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, y + 36, 112, 26, ID_OPEN_SAVES);
+    add_ruled(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, y + 50, 346, 22, 0, W_FULL, 0);
+    add_ruled(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, y + 36, 112, 26, ID_OPEN_SAVES, A_RIGHT, 0);
     add(p, L"STATIC", L"Game data", 0, 24, y + 94, 350, 20, 0);
-    add(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, y + 118, 346, 22, 0);
-    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, y + 104, 112, 26, ID_OPEN_DATA);
+    add_ruled(p, L"STATIC", L"", SS_PATHELLIPSIS, 24, y + 118, 346, 22, 0, W_FULL, 0);
+    add_ruled(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, y + 104, 112, 26, ID_OPEN_DATA, A_RIGHT, 0);
     add(p, L"STATIC", L"Log", 0, 24, y + 162, 350, 20, 0);
     add(p, L"STATIC", L"pvz2.log, for a bug report", 0, 24, y + 186, 346, 22, 0);
-    add(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, y + 172, 112, 26, ID_OPEN_LOG);
+    add_ruled(p, L"BUTTON", L"Open folder", BS_PUSHBUTTON, 382, y + 172, 112, 26, ID_OPEN_LOG, A_RIGHT, 0);
     about_refresh_check_time(p);
 }
 
@@ -642,32 +709,83 @@ static void show_page(int i)
     if (i == ABOUT && g_page[ABOUT]) about_refresh_check_time(g_page[ABOUT]);
 }
 
+/* Place one page's controls for the page's current size. Controls sit at their
+ * minimum-size positions, plus what their rule takes of the extra width; the
+ * extra is whatever the page is wider than the minimum one (never negative: a
+ * page that is too narrow scrolls, as it always did). */
+static void page_layout(int i)
+{
+    HWND p = g_page[i];
+    if (!p || !g_item_count[i]) return;
+    RECT r;
+    GetClientRect(p, &r);
+    int dw = r.right - S(PAGE_BASE_W + 20);
+    if (dw < 0) dw = 0;
+    int sx = GetScrollPos(p, SB_HORZ), sy = GetScrollPos(p, SB_VERT);
+    if (i == GENERAL) general_vertical(p, dw);
+    HDWP dwp = BeginDeferWindowPos(g_item_count[i]);
+    for (int k = 0; k < g_item_count[i] && dwp; k++) {
+        const item *it = &g_items[i][k];
+        /* The second column drifts right with the window, but only so far: past
+         * that the two columns would read as unrelated. */
+        int half = dw / 2 > S(120) ? S(120) : dw / 2;
+        int x = S(it->x) + (it->rule & A_RIGHT ? dw : it->rule & A_HALF ? half : 0);
+        int y = S(it->y), h = S(it->ht);
+        if ((it->rule & A_BOTTOM) && r.bottom - S(12) - h > y) y = r.bottom - S(12) - h;
+        dwp = DeferWindowPos(dwp, it->h, NULL, x - sx, y - sy, item_width(it, dw), h,
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    if (dwp) EndDeferWindowPos(dwp);
+    /* Controls that moved must repaint where they are now. */
+    RedrawWindow(p, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+}
+
+/* The smallest size the window may have: the client area it opens with, at the
+ * window's DPI, plus its frame; never more than the screen it is on holds. */
+static void min_window_size(HWND h, int *w, int *ht)
+{
+    UINT dpi = GetDpiForWindow(h);
+    if (!dpi) dpi = 96;
+    RECT r = { 0, 0, MulDiv(MIN_CLIENT_W, dpi, 96), MulDiv(MIN_CLIENT_H, dpi, 96) };
+    AdjustWindowRectExForDpi(&r, SETTINGS_STYLE, FALSE, 0, dpi);
+    *w = r.right - r.left;
+    *ht = r.bottom - r.top;
+    MONITORINFO mi = { .cbSize = sizeof(mi) };
+    if (GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mi)) {
+        if (*w > mi.rcWork.right - mi.rcWork.left) *w = mi.rcWork.right - mi.rcWork.left;
+        if (*ht > mi.rcWork.bottom - mi.rcWork.top) *ht = mi.rcWork.bottom - mi.rcWork.top;
+    }
+}
+
 static void layout(HWND h)
 {
     RECT rc;
     GetClientRect(h, &rc);
-    int foot = S(40);
-    if (g_tabs) {
-        SetWindowPos(g_tabs, NULL, S(10), S(10), rc.right - S(20), rc.bottom - S(60),
-                     SWP_NOZORDER | SWP_NOACTIVATE);
-        RECT pr = { 0, 0, rc.right - S(20), rc.bottom - S(60) };
-        TabCtrl_AdjustRect(g_tabs, FALSE, &pr);
-        for (int i = 0; i < PAGE_COUNT; i++)
-            if (g_page[i])
-                SetWindowPos(g_page[i], NULL, S(10) + pr.left, S(10) + pr.top,
-                             pr.right - pr.left, pr.bottom - pr.top,
-                             SWP_NOZORDER | SWP_NOACTIVATE);
-    }
+    if (IsIconic(h) || rc.right <= 0 || rc.bottom <= 0) return;
+    /* The tab area fills the window above the buttons; the buttons keep to the
+     * bottom right. */
     int bw = S(80), bh = S(26), gap = S(8);
     int x = rc.right - S(10) - bw;
     int y = rc.bottom - S(8) - bh;
-    HWND b;
-    if ((b = GetDlgItem(h, ID_APPLY)) != NULL) SetWindowPos(b, NULL, x, y, bw, bh, SWP_NOZORDER | SWP_NOACTIVATE);
-    x -= bw + gap;
-    if ((b = GetDlgItem(h, IDCANCEL)) != NULL) SetWindowPos(b, NULL, x, y, bw, bh, SWP_NOZORDER | SWP_NOACTIVATE);
-    x -= bw + gap;
-    if ((b = GetDlgItem(h, IDOK)) != NULL) SetWindowPos(b, NULL, x, y, bw, bh, SWP_NOZORDER | SWP_NOACTIVATE);
-    (void)foot;
+    HDWP dwp = BeginDeferWindowPos(8);
+    if (g_tabs && dwp) {
+        dwp = DeferWindowPos(dwp, g_tabs, NULL, S(10), S(10), rc.right - S(20), rc.bottom - S(60),
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+        RECT pr = { 0, 0, rc.right - S(20), rc.bottom - S(60) };
+        TabCtrl_AdjustRect(g_tabs, FALSE, &pr);
+        for (int i = 0; i < PAGE_COUNT && dwp; i++)
+            if (g_page[i])
+                dwp = DeferWindowPos(dwp, g_page[i], NULL, S(10) + pr.left, S(10) + pr.top,
+                                     pr.right - pr.left, pr.bottom - pr.top,
+                                     SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    static const int buttons[3] = { ID_APPLY, IDCANCEL, IDOK };
+    for (int k = 0; k < 3 && dwp; k++, x -= bw + gap) {
+        HWND b = GetDlgItem(h, buttons[k]);
+        if (b) dwp = DeferWindowPos(dwp, b, NULL, x, y, bw, bh, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    if (dwp) EndDeferWindowPos(dwp);
+    RedrawWindow(h, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
 static void build(HWND h)
@@ -680,6 +798,7 @@ static void build(HWND h)
     for (int id = IDOK; id <= ID_APPLY; id++) { HWND old = GetDlgItem(h, id); if (old) DestroyWindow(old); }
     g_tabs = NULL;
     memset(g_page, 0, sizeof(g_page));
+    memset(g_item_count, 0, sizeof(g_item_count));
 
     RECT rc;
     GetClientRect(h, &rc);
@@ -854,6 +973,39 @@ static LRESULT CALLBACK settings_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             tl_win_darkmode_redraw(h);
         }
         return 0;
+    case WM_GETMINMAXINFO: {
+        /* The edges stop at the minimum... */
+        MINMAXINFO *mm = (MINMAXINFO *)lp;
+        int w, ht;
+        min_window_size(h, &w, &ht);
+        mm->ptMinTrackSize.x = w;
+        mm->ptMinTrackSize.y = ht;
+        return 0;
+    }
+    case WM_WINDOWPOSCHANGING: {
+        /* ...and so does a program that calls SetWindowPos or MoveWindow (a
+         * window tool such as AltSnap): the minimum track size does not bind
+         * those. When the left or top edge is the one that moved, the opposite
+         * edge stays where it was. */
+        WINDOWPOS *wpos = (WINDOWPOS *)lp;
+        if ((wpos->flags & (SWP_NOSIZE | SWP_STATECHANGED)) || IsIconic(h)) break;
+        int w, ht;
+        min_window_size(h, &w, &ht);
+        if (wpos->cx >= w && wpos->cy >= ht) break;
+        RECT cur;
+        GetWindowRect(h, &cur);
+        if (wpos->cx < w) {
+            if (!(wpos->flags & SWP_NOMOVE) && wpos->x != cur.left && wpos->x + wpos->cx == cur.right)
+                wpos->x = cur.right - w;
+            wpos->cx = w;
+        }
+        if (wpos->cy < ht) {
+            if (!(wpos->flags & SWP_NOMOVE) && wpos->y != cur.top && wpos->y + wpos->cy == cur.bottom)
+                wpos->y = cur.bottom - ht;
+            wpos->cy = ht;
+        }
+        return 0;
+    }
     case WM_SIZE:
         layout(h);
         return 0;
@@ -875,6 +1027,8 @@ static LRESULT CALLBACK page_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
     case WM_SIZE:
+        for (int i = 0; i < PAGE_COUNT; i++)
+            if (g_page[i] == h) page_layout(i);
         for (int axis = 0; axis < 2; axis++) {
             int bar = axis ? SB_VERT : SB_HORZ;
             SCROLLINFO si = { .cbSize = sizeof(si), .fMask = SIF_POS };
@@ -892,12 +1046,15 @@ static LRESULT CALLBACK page_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                 int end = axis ? r.bottom : r.right;
                 if (end + old > extent) extent = end + old;
             }
-            si.nMax = extent + S(12) - 1;
+            /* A page scrolls only when its controls do not fit; then it keeps a
+             * margin after the last one. At the minimum size the Keyboard page
+             * fits, and a larger window takes every scroll bar away. */
             RECT r; GetClientRect(h, &r);
-            if (axis ? r.bottom : r.right) {
-                if (si.nMax < (axis ? r.bottom : r.right) - 1) si.nMax = (axis ? r.bottom : r.right) - 1;
-            }
-            si.nPage = axis ? r.bottom : r.right;
+            int room = axis ? r.bottom : r.right;
+            si.nMax = extent - 1;
+            if (extent > room) si.nMax += S(12);
+            if (room && si.nMax < room - 1) si.nMax = room - 1;
+            si.nPage = room;
             SetScrollInfo(h, bar, &si, TRUE);
             si.fMask = SIF_POS;
             GetScrollInfo(h, bar, &si);
@@ -991,7 +1148,7 @@ void pvz2_settings_open(HWND owner, pvz2_settings *live, const pvz2_settings_hos
     int dpi = (int)GetDpiForWindow(owner);
     if (!dpi) dpi = (int)GetDpiForSystem();
     RECT r = { 0, 0, MulDiv(560, dpi, 96), MulDiv(530, dpi, 96) };
-    AdjustWindowRectExForDpi(&r, WS_CAPTION | WS_SYSMENU, FALSE, 0, (UINT)dpi);
+    AdjustWindowRectExForDpi(&r, SETTINGS_STYLE, FALSE, 0, (UINT)dpi);
     int w = r.right - r.left, h = r.bottom - r.top;
     RECT o = { 0, 0, 0, 0 };
     GetWindowRect(owner ? owner : GetDesktopWindow(), &o);
@@ -1008,7 +1165,7 @@ void pvz2_settings_open(HWND owner, pvz2_settings *live, const pvz2_settings_hos
     if (y + h > mi.rcWork.bottom) y = mi.rcWork.bottom - h;
 
     HWND win = CreateWindowExW(0, L"PvZ2ReflourishedSettings", L"PvZ2 Reflourished Settings",
-                               WS_CAPTION | WS_SYSMENU | WS_VISIBLE, x, y, w, h,
+                               SETTINGS_STYLE | WS_CLIPCHILDREN | WS_VISIBLE, x, y, w, h,
                                owner, NULL, GetModuleHandleW(NULL), NULL);
     if (!win) return;
     ShowWindow(win, SW_SHOW);
