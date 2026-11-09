@@ -164,7 +164,9 @@ It uses and deletes its own temporary INI, never the player's settings.
 The shortcuts are the Mac host's, from `runtime/tools/pvz2-keys.h`: 1-4 and Q W E R pick seed
 packets 1-8, S the shovel, F plant food, Tab fast-forward, Space collects suns and coins, and
 Z X C the level's power-ups. They use the game's own card press and shovel, as on the Mac.
-Gameplay offers the in-level key labels, pointer preview and cross brightness.
+Gameplay offers the in-level key labels, pointer preview and cross brightness. The pointer
+preview ticks at the display's refresh rate with a high-resolution timer, and the plant follows
+mouse moves between ticks.
 
 ## Updates
 

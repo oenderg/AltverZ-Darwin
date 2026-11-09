@@ -99,6 +99,8 @@ static void pointer_apply_setting(void);
 static void pointer_reposition(void);
 static void pointer_hide(void);
 static void pointer_tick(void);
+static void pointer_rate_update(void);
+static void pointer_follow_mouse(void);
 static void make_pointer_window(HINSTANCE inst);
 static void overlays_above_game(void);
 static void badges_apply_setting(void);
@@ -387,6 +389,7 @@ static void refresh_update(bool display_event)
     g_refresh_monitor = mon;
     g_refresh_fps = fps;
     tl_pvz2_set_max_fps(fps);
+    pointer_rate_update();
     if (moved) tl_log_line("windows: the window is on another display (%d fps)", fps);
     else if (changed) tl_log_line("windows: the display can do %d fps now", fps);
 }
@@ -1357,12 +1360,10 @@ typedef struct {
 } pointer_art_job;
 
 typedef struct {
-    int dx, dy, dw, dh;
     int band_ok;
     int band[8];              /* left, right, top, bottom, x0, x1, y0, y1 */
     int brightness;
-    const pvz2_cursor_image *image;
-} pointer_draw_state;
+} pointer_band_draw_state;
 
 static HWND g_pointer_win;
 static int g_pointer_visible;
@@ -1373,6 +1374,20 @@ static HBITMAP g_pointer_dib;
 static HGDIOBJ g_pointer_old;
 static void *g_pointer_bits;
 static int g_pointer_w, g_pointer_h;
+
+/* The plant itself is a small layered window above the bands, so a pointer
+ * move only sets its position; the full-view bitmap is drawn when a band or
+ * the brightness changes. */
+static HWND g_plant_win;
+static int g_plant_visible;
+static int g_plant_x, g_plant_y;
+static HDC g_plant_dc;
+static HBITMAP g_plant_dib;
+static HGDIOBJ g_plant_old;
+static void *g_plant_bits;
+static int g_plant_win_w, g_plant_win_h;
+static const pvz2_cursor_image *g_plant_win_image;
+static int g_plant_win_clipped;
 
 static pvz2_cursor_images g_pointer_art;
 static int g_pointer_art_state;
@@ -1391,7 +1406,20 @@ static unsigned g_pointer_band_generation;
 static int g_pointer_wait_col = -1, g_pointer_wait_row = -1;
 static unsigned g_pointer_wait_generation;
 static ULONGLONG g_pointer_wait_since;
-static pointer_draw_state g_pointer_draw;
+static pointer_band_draw_state g_pointer_band_draw;
+
+/* One high-resolution timer posts WM_APP_POINTER_TICK to the window's thread;
+ * if Windows cannot give it a high-resolution waitable timer, the old 16 ms
+ * SetTimer is used instead. */
+#define WM_APP_POINTER_TICK (WM_APP + 2)
+static HANDLE g_pointer_timer, g_pointer_timer_stop, g_pointer_timer_thread;
+static atomic_llong g_pointer_period_100ns;
+static atomic_int g_pointer_tick_pending;
+static int g_pointer_fallback;
+static int g_pointer_timer_wanted;
+static int g_pointer_timer_logged;
+
+static unsigned long long g_pointer_ticks, g_pointer_moves, g_pointer_draws;
 
 static LRESULT CALLBACK pointer_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -1400,7 +1428,14 @@ static LRESULT CALLBACK pointer_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 
 static void pointer_below_badges(void)
 {
-    if (g_pointer_win && g_badge_win)
+    /* Badges stay on top, then the plant, then the bands. */
+    if (g_plant_win && g_badge_win)
+        SetWindowPos(g_plant_win, g_badge_win, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    if (g_pointer_win && g_plant_win)
+        SetWindowPos(g_pointer_win, g_plant_win, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    else if (g_pointer_win && g_badge_win)
         SetWindowPos(g_pointer_win, g_badge_win, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
@@ -1426,8 +1461,11 @@ static void pointer_reposition(void)
     if (!GetWindowRect(g_view, &vr)) return;
     SetWindowPos(g_pointer_win, NULL, vr.left, vr.top, vr.right - vr.left, vr.bottom - vr.top,
                  SWP_NOZORDER | SWP_NOACTIVATE);
-    if (g_pointer_w != g_sw || g_pointer_h != g_sh)
-        memset(&g_pointer_draw, 0, sizeof g_pointer_draw);
+    if (g_pointer_w != g_sw || g_pointer_h != g_sh) {
+        memset(&g_pointer_band_draw, 0, sizeof g_pointer_band_draw);
+        g_plant_win_image = NULL;
+    }
+    if (g_plant_visible) pointer_follow_mouse();
 }
 
 static void pointer_hide(void)
@@ -1436,10 +1474,19 @@ static void pointer_hide(void)
         ShowWindow(g_pointer_win, SW_HIDE);
         g_pointer_visible = 0;
     }
-    memset(&g_pointer_draw, 0, sizeof g_pointer_draw);
+    if (g_plant_win && g_plant_visible) {
+        ShowWindow(g_plant_win, SW_HIDE);
+        g_plant_visible = 0;
+    }
+    if (g_plant_win && g_plant_win_clipped) {
+        SetWindowRgn(g_plant_win, NULL, FALSE);
+        g_plant_win_clipped = 0;
+    }
+    memset(&g_pointer_band_draw, 0, sizeof g_pointer_band_draw);
     g_pointer_band_valid = 0;
     g_pointer_band_shown = 0;
     g_pointer_wait_col = g_pointer_wait_row = -1;
+    g_plant_win_image = NULL;
     tl_pvz2_cursor_target(0, 0, 0);
 }
 
@@ -1459,6 +1506,11 @@ static void make_pointer_window(HINSTANCE inst)
                                     0, 0, 1, 1, g_hwnd, NULL, inst, NULL);
     if (!g_pointer_win)
         tl_log_line("windows: the pointer window could not be made (%lu)", GetLastError());
+    g_plant_win = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW |
+                                  WS_EX_NOACTIVATE, L"PvZ2ReflourishedPointer", L"", WS_POPUP,
+                                  0, 0, 1, 1, g_hwnd, NULL, inst, NULL);
+    if (!g_plant_win)
+        tl_log_line("windows: the plant window could not be made (%lu)", GetLastError());
 }
 
 static int pointer_ensure_dib(int w, int h)
@@ -1484,7 +1536,7 @@ static int pointer_ensure_dib(int w, int h)
     g_pointer_old = SelectObject(g_pointer_dc, g_pointer_dib);
     g_pointer_w = w;
     g_pointer_h = h;
-    memset(&g_pointer_draw, 0, sizeof g_pointer_draw);
+    memset(&g_pointer_band_draw, 0, sizeof g_pointer_band_draw);
     return 1;
 }
 
@@ -1498,6 +1550,7 @@ static void pointer_clear_bitmap(void)
     g_plant_pixels = NULL;
     g_plant_image = NULL;
     g_plant_key[0] = 0;
+    g_plant_win_image = NULL;
 }
 
 /* GDI+ holds the pixels in BGRA order and uses premultiplied alpha. The loader
@@ -1573,6 +1626,117 @@ static void pointer_update_image(const tl_pvz2_cursor_snapshot *s)
                     s->plant[0] ? s->plant : "none");
 }
 
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+
+static LONGLONG pointer_period_100ns(int fps)
+{
+    if (fps < 1) fps = 60;
+    if (fps > 1000) fps = 1000;
+    return 10000000LL / fps;
+}
+
+static DWORD WINAPI pointer_timer_worker(void *arg)
+{
+    (void)arg;
+    HANDLE waits[2] = { g_pointer_timer_stop, g_pointer_timer };
+    for (;;) {
+        DWORD wait = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
+        if (wait != WAIT_OBJECT_0 + 1) break;
+        if (!atomic_exchange(&g_pointer_tick_pending, 1))
+            PostMessageW(g_hwnd, WM_APP_POINTER_TICK, 0, 0);
+        LONGLONG period = atomic_load(&g_pointer_period_100ns);
+        if (period < 1000) period = 1000;
+        LARGE_INTEGER due;
+        due.QuadPart = -period;
+        if (!SetWaitableTimer(g_pointer_timer, &due, 0, NULL, NULL, FALSE)) break;
+    }
+    return 0;
+}
+
+/* A high-resolution waitable timer at the display's rate; without it, the old
+ * 16 ms SetTimer (about 32 updates a second). No timeBeginPeriod: that would
+ * change the timer resolution for the whole process and the system. */
+static int pointer_timer_start(void)
+{
+    if (!g_hwnd || !g_pointer_win || !g_plant_win || !g_show_cursor_plant ||
+        !g_pointer_timer_wanted) return 0;
+    if (g_pointer_timer_thread || g_pointer_fallback) return 1;
+    int fps = g_refresh_fps > 0 ? g_refresh_fps : display_refresh_rate();
+    LONGLONG period = pointer_period_100ns(fps);
+    atomic_store(&g_pointer_period_100ns, period);
+    g_pointer_timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                             TIMER_ALL_ACCESS);
+    if (g_pointer_timer) {
+        g_pointer_timer_stop = CreateEventW(NULL, TRUE, FALSE, NULL);
+        if (g_pointer_timer_stop) {
+            atomic_store(&g_pointer_tick_pending, 0);
+            g_pointer_timer_thread = CreateThread(NULL, 0, pointer_timer_worker, NULL, 0, NULL);
+            if (g_pointer_timer_thread) {
+                LARGE_INTEGER due;
+                due.QuadPart = -period;
+                if (SetWaitableTimer(g_pointer_timer, &due, 0, NULL, NULL, FALSE)) {
+                    if (!g_pointer_timer_logged) {
+                        g_pointer_timer_logged = 1;
+                        tl_log_line("windows: pointer preview tick: high-resolution timer at %d Hz", fps);
+                    }
+                    return 1;
+                }
+                SetEvent(g_pointer_timer_stop);
+                WaitForSingleObject(g_pointer_timer_thread, 1000);
+                CloseHandle(g_pointer_timer_thread);
+                g_pointer_timer_thread = NULL;
+            }
+            CloseHandle(g_pointer_timer_stop);
+            g_pointer_timer_stop = NULL;
+        }
+        CloseHandle(g_pointer_timer);
+        g_pointer_timer = NULL;
+    }
+    if (SetTimer(g_hwnd, CURSOR_TIMER, 16, NULL)) {
+        g_pointer_fallback = 1;
+        if (!g_pointer_timer_logged) {
+            g_pointer_timer_logged = 1;
+            tl_log_line("windows: pointer preview tick: SetTimer fallback (16 ms)");
+        }
+        return 1;
+    }
+    tl_log_line("windows: pointer preview tick: no timer (%lu)", GetLastError());
+    return 0;
+}
+
+static void pointer_timer_stop(void)
+{
+    if (g_pointer_timer_thread) {
+        SetEvent(g_pointer_timer_stop);
+        WaitForSingleObject(g_pointer_timer_thread, 1000);
+        CloseHandle(g_pointer_timer_thread);
+        g_pointer_timer_thread = NULL;
+    }
+    if (g_pointer_timer) {
+        CloseHandle(g_pointer_timer);
+        g_pointer_timer = NULL;
+    }
+    if (g_pointer_timer_stop) {
+        CloseHandle(g_pointer_timer_stop);
+        g_pointer_timer_stop = NULL;
+    }
+    if (g_pointer_fallback) {
+        KillTimer(g_hwnd, CURSOR_TIMER);
+        g_pointer_fallback = 0;
+    }
+    atomic_store(&g_pointer_tick_pending, 0);
+}
+
+static void pointer_rate_update(void)
+{
+    int fps = g_refresh_fps > 0 ? g_refresh_fps : display_refresh_rate();
+    atomic_store(&g_pointer_period_100ns, pointer_period_100ns(fps));
+    if (g_pointer_timer_thread)
+        tl_log_line("windows: pointer overlay timer follows the display at %d Hz", fps);
+}
+
 static void pointer_art_done(pointer_art_result *r)
 {
     pointer_clear_bitmap();
@@ -1588,7 +1752,8 @@ static void pointer_art_done(pointer_art_result *r)
                     r->images.count, r->ms, bytes);
     } else {
         g_pointer_art_state = POINTER_ART_FAILED;
-        if (g_hwnd) KillTimer(g_hwnd, CURSOR_TIMER);
+        g_pointer_timer_wanted = 0;
+        pointer_timer_stop();
         pointer_hide();
         tl_log_line("windows: pointer art: %s", r->why[0] ? r->why : "could not read the OBB");
     }
@@ -1653,13 +1818,16 @@ static void pointer_apply_setting(void)
     }
     tl_pvz2_set_cursor_enabled(g_show_cursor_plant);
     if (!g_show_cursor_plant) {
-        if (g_hwnd) KillTimer(g_hwnd, CURSOR_TIMER);
+        g_pointer_timer_wanted = 0;
+        g_pointer_timer_logged = 0;
+        pointer_timer_stop();
         pointer_hide();
         tl_log_line("windows: pointer preview is off");
         return;
     }
+    g_pointer_timer_wanted = 1;
     pointer_load_art_once();
-    if (g_hwnd) SetTimer(g_hwnd, CURSOR_TIMER, 16, NULL);
+    pointer_timer_start();
     tl_log_line("windows: pointer preview is on, cross brightness %d%%", g_cross_brightness);
 }
 
@@ -1688,7 +1856,7 @@ static void pointer_band_rect(const tl_pvz2_cursor_snapshot *s, int col, int row
     band[7] = pointer_band_axis(s, 1, row + 1);
 }
 
-static int pointer_draw(const pointer_draw_state *state, const int band[8], int band_ok)
+static int pointer_bands_draw(int band_ok, const int band[8], int brightness)
 {
     if (!pointer_ensure_dib(g_sw, g_sh)) return 0;
     GpBitmap *bitmap = NULL;
@@ -1710,7 +1878,7 @@ static int pointer_draw(const pointer_draw_state *state, const int band[8], int 
                                  (REAL)(band[1] - band[0]), (REAL)(band[7] - band[6]));
             GdipAddPathRectangle(path, (REAL)band[4], (REAL)band[2],
                                  (REAL)(band[5] - band[4]), (REAL)(band[3] - band[2]));
-            unsigned alpha = (unsigned)((state->brightness * 255 + 50) / 100);
+            unsigned alpha = (unsigned)((brightness * 255 + 50) / 100);
             if (alpha > 255) alpha = 255;
             GpSolidFill *fill = NULL;
             if (GdipCreateSolidFill((ARGB)((alpha << 24) | 0xFFFFFF), &fill) == Ok) {
@@ -1719,11 +1887,6 @@ static int pointer_draw(const pointer_draw_state *state, const int band[8], int 
             }
             GdipDeletePath(path);
         }
-    }
-    if (g_plant_bitmap) {
-        GdipSetInterpolationMode(g, InterpolationModeHighQualityBilinear);
-        GdipDrawImageRect(g, (GpImage *)g_plant_bitmap, (REAL)state->dx, (REAL)state->dy,
-                          (REAL)state->dw, (REAL)state->dh);
     }
     GdipDeleteGraphics(g);
     GdipDisposeImage((GpImage *)bitmap);
@@ -1738,9 +1901,129 @@ static int pointer_draw(const pointer_draw_state *state, const int band[8], int 
                                &blend, ULW_ALPHA) != 0;
 }
 
+static int pointer_plant_ensure(int w, int h)
+{
+    if (!g_plant_dc) g_plant_dc = CreateCompatibleDC(NULL);
+    if (!g_plant_dc) return 0;
+    if (g_plant_dib && w == g_plant_win_w && h == g_plant_win_h) return 1;
+    if (g_plant_dib) {
+        SelectObject(g_plant_dc, g_plant_old);
+        DeleteObject(g_plant_dib);
+        g_plant_dib = NULL;
+    }
+    BITMAPINFO bi;
+    memset(&bi, 0, sizeof bi);
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    g_plant_dib = CreateDIBSection(g_plant_dc, &bi, DIB_RGB_COLORS, &g_plant_bits, NULL, 0);
+    if (!g_plant_dib) return 0;
+    g_plant_old = SelectObject(g_plant_dc, g_plant_dib);
+    g_plant_win_w = w;
+    g_plant_win_h = h;
+    return 1;
+}
+
+/* The plant window is exactly the scaled image, so moving it is a SetWindowPos
+ * and never touches its pixels. The region trims it to the picture near the
+ * window's edge, as the old full-view overlay was trimmed. */
+static void pointer_plant_region(void)
+{
+    if (!g_plant_win || !g_plant_visible || !g_view) return;
+    RECT vr, wr;
+    if (!GetWindowRect(g_view, &vr) || !GetWindowRect(g_plant_win, &wr)) return;
+    int left = wr.left < vr.left ? vr.left : wr.left;
+    int top = wr.top < vr.top ? vr.top : wr.top;
+    int right = wr.right > vr.right ? vr.right : wr.right;
+    int bottom = wr.bottom > vr.bottom ? vr.bottom : wr.bottom;
+    if (right <= left || bottom <= top) {
+        pointer_hide();
+        return;
+    }
+    int clipped = left != wr.left || top != wr.top || right != wr.right || bottom != wr.bottom;
+    if (!clipped) {
+        if (g_plant_win_clipped) {
+            SetWindowRgn(g_plant_win, NULL, FALSE);
+            g_plant_win_clipped = 0;
+        }
+        return;
+    }
+    HRGN rgn = CreateRectRgn(left - wr.left, top - wr.top, right - wr.left, bottom - wr.top);
+    if (!rgn) return;
+    if (SetWindowRgn(g_plant_win, rgn, FALSE)) g_plant_win_clipped = 1;
+    else DeleteObject(rgn);
+}
+
+static void pointer_plant_move(int x, int y)
+{
+    if (!g_plant_win || !g_plant_visible) return;
+    if (x == g_plant_x && y == g_plant_y) return;
+    SetWindowPos(g_plant_win, NULL, x, y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    g_plant_x = x;
+    g_plant_y = y;
+    g_pointer_moves++;
+    pointer_plant_region();
+}
+
+static int pointer_plant_draw(int x, int y, int w, int h)
+{
+    if (!g_plant_win || !g_plant_bitmap || !g_plant_image) return 0;
+    if (!pointer_plant_ensure(w, h)) return 0;
+    GpBitmap *bitmap = NULL;
+    if (GdipCreateBitmapFromScan0(w, h, w * 4, PixelFormat32bppPARGB,
+                                  (BYTE *)g_plant_bits, &bitmap) != Ok)
+        return 0;
+    GpGraphics *g = NULL;
+    if (GdipGetImageGraphicsContext((GpImage *)bitmap, &g) != Ok) {
+        GdipDisposeImage((GpImage *)bitmap);
+        return 0;
+    }
+    GdipSetInterpolationMode(g, InterpolationModeHighQualityBilinear);
+    GdipSetPixelOffsetMode(g, PixelOffsetModeHalf);
+    GdipGraphicsClear(g, 0);
+    GdipDrawImageRect(g, (GpImage *)g_plant_bitmap, 0, 0, (REAL)w, (REAL)h);
+    GdipDeleteGraphics(g);
+    GdipDisposeImage((GpImage *)bitmap);
+
+    POINT dst = { x, y };
+    SIZE size = { w, h };
+    POINT src = { 0, 0 };
+    BLENDFUNCTION blend = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+    if (!UpdateLayeredWindow(g_plant_win, NULL, &dst, &size, g_plant_dc, &src, 0,
+                             &blend, ULW_ALPHA))
+        return 0;
+    g_plant_x = x;
+    g_plant_y = y;
+    g_plant_win_image = g_plant_image;
+    g_pointer_draws++;
+    if (!g_plant_visible) {
+        ShowWindow(g_plant_win, SW_SHOWNOACTIVATE);
+        g_plant_visible = 1;
+        pointer_below_badges();
+    }
+    pointer_plant_region();
+    return 1;
+}
+
+static void pointer_follow_mouse(void)
+{
+    if (!g_show_cursor_plant || !g_pointer_inside || !g_plant_visible || !g_view)
+        return;
+    if (!g_plant_win_image || g_plant_win_w <= 0 || g_plant_win_h <= 0) return;
+    RECT vr;
+    if (!GetWindowRect(g_view, &vr)) return;
+    pointer_plant_move(vr.left + g_pointer_x - g_plant_win_w / 2,
+                       vr.top + g_pointer_y - g_plant_win_h / 2);
+}
+
 static void pointer_tick(void)
 {
-    if (!g_show_cursor_plant || !g_ready || !g_gdiplus_started || !g_pointer_win) {
+    if (!g_show_cursor_plant || IsIconic(g_hwnd) || !g_ready || !g_gdiplus_started ||
+        !g_pointer_win || !g_plant_win) {
         pointer_hide();
         return;
     }
@@ -1870,50 +2153,40 @@ static void pointer_tick(void)
     int dx = (int)(sx - dw / 2.0);
     int dy = (int)(sy - dh / 2.0);
 
-    pointer_draw_state next;
+    pointer_band_draw_state next;
     memset(&next, 0, sizeof next);
-    next.dx = dx;
-    next.dy = dy;
-    next.dw = dw;
-    next.dh = dh;
     next.band_ok = band_ok;
     memcpy(next.band, band, sizeof band);
     next.brightness = g_cross_brightness;
-    next.image = g_plant_image;
-
-    if (g_pointer_w != g_sw || g_pointer_h != g_sh)
-        memset(&g_pointer_draw, 0, sizeof g_pointer_draw);
-    if (!g_pointer_visible || memcmp(&next, &g_pointer_draw, sizeof next) != 0) {
-        LARGE_INTEGER begin, end, freq;
-        QueryPerformanceFrequency(&freq);
-        QueryPerformanceCounter(&begin);
-        int drawn = pointer_draw(&next, band, band_ok);
-        QueryPerformanceCounter(&end);
-        if (!drawn) {
+    if (!g_pointer_visible || memcmp(&next, &g_pointer_band_draw, sizeof next) != 0) {
+        if (!pointer_bands_draw(next.band_ok, next.band, next.brightness)) {
             pointer_hide();
             return;
         }
-        g_pointer_draw = next;
-        if (pointer_stats) {
-            static double total_ms, worst_ms;
-            static unsigned updates;
-            double ms = (double)(end.QuadPart - begin.QuadPart) * 1000.0 /
-                        (double)(freq.QuadPart ? freq.QuadPart : 1);
-            total_ms += ms;
-            if (ms > worst_ms) worst_ms = ms;
-            if (++updates == 300) {
-                tl_log_line("windows: pointer draw: %.3f ms average, %.3f ms worst (%u updates)",
-                            total_ms / updates, worst_ms, updates);
-                updates = 0;
-                total_ms = worst_ms = 0;
-            }
+        g_pointer_band_draw = next;
+        g_pointer_draws++;
+        if (!g_pointer_visible) {
+            ShowWindow(g_pointer_win, SW_SHOWNOACTIVATE);
+            g_pointer_visible = 1;
+            overlays_above_game();
         }
     }
-    if (!g_pointer_visible) {
-        ShowWindow(g_pointer_win, SW_SHOWNOACTIVATE);
-        g_pointer_visible = 1;
-        overlays_above_game();
+
+    RECT vr;
+    if (!GetWindowRect(g_view, &vr)) {
+        pointer_hide();
+        return;
     }
+    int px = vr.left + dx;
+    int py = vr.top + dy;
+    if (g_plant_visible && g_plant_win_image == g_plant_image &&
+        g_plant_win_w == dw && g_plant_win_h == dh) {
+        pointer_plant_move(px, py);
+    } else if (!pointer_plant_draw(px, py, dw, dh)) {
+        pointer_hide();
+        return;
+    }
+    if (g_pointer_visible || g_plant_visible) g_pointer_ticks++;
 }
 
 static void touch(int phase, LPARAM lp)
@@ -1953,6 +2226,8 @@ static LRESULT CALLBACK view_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             TRACKMOUSEEVENT tm = { sizeof(tm), TME_LEAVE, h, 0 };
             if (TrackMouseEvent(&tm)) g_pointer_tracking = 1;
         }
+        if (g_pointer_timer_wanted) pointer_timer_start();
+        pointer_follow_mouse();
         if (g_down) touch(1, lp);
         return 0;
     case WM_MOUSELEAVE:
@@ -1992,6 +2267,7 @@ static void make_view(HINSTANCE inst)
 
 static ULONGLONG g_stats_time;
 static unsigned long g_stats_frames;
+static unsigned long long g_stats_pointer_ticks, g_stats_pointer_moves, g_stats_pointer_draws;
 
 /* The Mac's five-second line, for the same kind of proof on Windows: the
  * frame count says what the host actually presented, not what it asked for. */
@@ -2002,8 +2278,17 @@ static void stats_tick(void)
     double since = g_stats_time ? (now - g_stats_time) / 1000.0 : 0.0;
     tl_log_line("windows: frames=%lu, last 5s=%.1f fps", frames,
                 since > 0 ? (frames - g_stats_frames) / since : 0.0);
+    if (g_pointer_visible || g_plant_visible) {
+        tl_log_line("windows: pointer overlay: %.1f Hz, %.1f moves/s, %.1f draws/s",
+                    since > 0 ? (double)(g_pointer_ticks - g_stats_pointer_ticks) / since : 0.0,
+                    since > 0 ? (double)(g_pointer_moves - g_stats_pointer_moves) / since : 0.0,
+                    since > 0 ? (double)(g_pointer_draws - g_stats_pointer_draws) / since : 0.0);
+    }
     g_stats_time = now;
     g_stats_frames = frames;
+    g_stats_pointer_ticks = g_pointer_ticks;
+    g_stats_pointer_moves = g_pointer_moves;
+    g_stats_pointer_draws = g_pointer_draws;
 }
 
 static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
@@ -2085,9 +2370,11 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             g_badge_generation = 0;
             badges_hide();
             pointer_hide();
+            pointer_timer_stop();
         } else if (h == g_hwnd) {
             view_layout();
             pointer_reposition();
+            if (g_pointer_timer_wanted) pointer_timer_start();
             InvalidateRect(h, NULL, TRUE);
         }
         return 0;
@@ -2113,7 +2400,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         if (wp == CURSOR_TIMER) {
-            pointer_tick();
+            if (g_pointer_fallback) pointer_tick();
             return 0;
         }
         if (wp == STATS_TIMER) {
@@ -2123,6 +2410,10 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_APP_POINTER_ART:
         pointer_art_done((pointer_art_result *)lp);
+        return 0;
+    case WM_APP_POINTER_TICK:
+        atomic_store(&g_pointer_tick_pending, 0);
+        pointer_tick();
         return 0;
     case WM_EXITSIZEMOVE:
         if (!g_fullscreen) save_geometry();
@@ -2681,6 +2972,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         DispatchMessageW(&m);
     }
     tl_log_line("windows: the window is closed");
+    g_pointer_timer_wanted = 0;
+    pointer_timer_stop();
     pvz2_updates_shutdown();
     if (SUCCEEDED(com)) CoUninitialize();
     ExitProcess(0);
