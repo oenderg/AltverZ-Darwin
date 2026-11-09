@@ -1686,10 +1686,19 @@ static LONGLONG pointer_period_100ns(int fps)
     return 10000000LL / fps;
 }
 
+static LONGLONG pointer_clock_100ns(void)
+{
+    FILETIME ft;
+    GetSystemTimePreciseAsFileTime(&ft);
+    ULARGE_INTEGER ticks = { .LowPart = ft.dwLowDateTime, .HighPart = ft.dwHighDateTime };
+    return (LONGLONG)ticks.QuadPart;
+}
+
 static DWORD WINAPI pointer_timer_worker(void *arg)
 {
     (void)arg;
     HANDLE waits[2] = { g_pointer_timer_stop, g_pointer_timer };
+    LONGLONG next = pointer_clock_100ns();
     for (;;) {
         DWORD wait = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
         if (wait != WAIT_OBJECT_0 + 1) break;
@@ -1700,7 +1709,12 @@ static DWORD WINAPI pointer_timer_worker(void *arg)
         LONGLONG period = atomic_load(&g_pointer_period_100ns);
         if (period < 1000) period = 1000;
         LARGE_INTEGER due;
-        due.QuadPart = -period;
+        /* Absolute deadlines keep wake-up and PostMessage latency out of the
+         * period. Skip missed slots rather than sending a burst of old ticks. */
+        next += period;
+        LONGLONG now = pointer_clock_100ns();
+        if (next <= now) next += ((now - next) / period + 1) * period;
+        due.QuadPart = next;
         if (!SetWaitableTimer(g_pointer_timer, &due, 0, NULL, NULL, FALSE)) break;
     }
     return 0;
@@ -1743,7 +1757,7 @@ static int pointer_timer_start(void)
         return 1;
     }
     LARGE_INTEGER due;
-    due.QuadPart = -period;
+    due.QuadPart = pointer_clock_100ns() + period;
     if (g_pointer_timer_thread) {
         if (!g_pointer_timer_armed) {
             atomic_store(&g_pointer_timer_active, 1);

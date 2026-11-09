@@ -14,9 +14,13 @@ through a guard that turns a fault into a log line instead of a crash.
   from it while it starts. If the host writes a new size there before the game is done, a few seconds
   later the game copies from an image that was never made (a null image in the copy at 0x1550050,
   fault 0x48) and crashes. The driver's `tl_pvz2_started()` turns true once the game has read the
-  `prevent_load_game` setting (every start, right before it loads the save) and then drawn smoothly
+  `prevent_load_game` setting (on the normal logo-screen path, right before it loads the save) and then drawn smoothly
   for 2 s (~9 s on a recent Mac); the Mac host holds the window's size until then, scaling the
   picture meanwhile. Holding back only that one write is not enough: the clicks then miss.
+  Windows starts can skip that preference read entirely. There the driver also recognizes
+  MainMenu installed at LawnApp +0xb00 (ShowMainMenu, 0x940210, after constructor 0x6a3f84),
+  checking its vtable (0x2388368), then still requires the two smooth seconds. This is a
+  read-only check on the game thread, not a timer declaring startup complete.
 - **The game picks its art once**, from the size it starts at: the HD set (1536 lines) when the
   surface is tall enough (750 and 804 px tall did), the standard set (768) when it is small (551 did).
   The Mac host starts at least 804 px tall for that reason, then goes to the display's scale.

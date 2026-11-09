@@ -586,11 +586,12 @@ static void poll_trace(const char *what, const char *k)
 }
 
 /* The end of the game's start-up, for the host. The game reads
- * "prevent_load_game" in every start (about 6 s in), right before it loads the
+ * "prevent_load_game" on the normal logo-screen path, right before it loads the
  * save; the loading after it stalls the frames (25, then 44 fps), and the
  * title runs smoothly once it is done. So: that read, and then 2 s of frames
  * with no gap over 150 ms. A new screen size written into the game before that
- * crashes it (the host holds the size until then: tools/pvz2-macos.m). */
+ * crashes it (the host holds the size until then: tools/pvz2-macos.m). Windows
+ * also recognizes the installed MainMenu because its starts can skip that read. */
 static atomic_bool g_save_gate_read, g_started;
 int tl_pvz2_started(void) { return atomic_load(&g_started); }
 
@@ -5494,7 +5495,9 @@ static void *gl_main(void *arg)
     unsigned (*makeCurrent)(EGLDisplay, EGLSurface, EGLSurface, EGLContext) = tl_egl_resolve("eglMakeCurrent");
     unsigned (*swapBuffers)(EGLDisplay, EGLSurface) = tl_egl_resolve("eglSwapBuffers");
     unsigned (*swapInterval)(EGLDisplay, EGLint) = tl_egl_resolve("eglSwapInterval");
+#ifdef _WIN32
     unsigned (*surfaceAttrib)(EGLDisplay, EGLSurface, EGLint, EGLint) = tl_egl_resolve("eglSurfaceAttrib");
+#endif
     EGLint (*getError)(void) = tl_egl_resolve("eglGetError");
 
     /* Let lifecycle setup create the application object before the first
@@ -5605,10 +5608,12 @@ static void *gl_main(void *arg)
              * picture is no longer stretched after the boost ends and later
              * window resizes keep 1:1. A surface that follows the window
              * ignores this and already has the new size. */
+#ifdef _WIN32
             if (surfaceAttrib) {
                 surfaceAttrib(dpy, surf, EGL_WIDTH, want_w);
                 surfaceAttrib(dpy, surf, EGL_HEIGHT, want_h);
             }
+#endif
             tl_nwindow_resize(want_w, want_h);
             /* The guest must be told the new size *and* made to use it: the
              * size it read at start-up is still in its app object, and nothing
@@ -5797,6 +5802,22 @@ static void *gl_main(void *arg)
         swapBuffers(dpy, surf);
         if (!atomic_load(&g_started)) {
             static double last, smooth_since;
+#ifdef _WIN32
+            /* Windows starts can reach MainMenu without querying the optional
+             * prevent_load_game preference. LawnApp::ShowMainMenu (0x940210)
+             * installs MainMenu at app +0xb00 after its constructor (0x6a3f84).
+             * Its vtable identifies the object rather than treating any nonzero
+             * pointer as readiness. Still require two smooth seconds afterwards. */
+            if (!atomic_load(&g_save_gate_read)) {
+                uint64_t app = atomic_load(&g_app_object), menu = 0, vtable = 0;
+                uint64_t expected = (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(0x2388368);
+                if (app && expected && guest_read(app + 0xb00, &menu, sizeof menu) && menu &&
+                    guest_read(menu, &vtable, sizeof vtable) && vtable == expected) {
+                    atomic_store(&g_save_gate_read, true);
+                    tl_log_line("pvz2: startup gate: the guest has installed MainMenu (Windows)");
+                }
+            }
+#endif
             double t = now_s();
             if (last == 0 || t - last > 0.15 || !atomic_load(&g_save_gate_read)) smooth_since = t;
             last = t;
