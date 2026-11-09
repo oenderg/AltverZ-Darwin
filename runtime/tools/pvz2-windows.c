@@ -71,6 +71,7 @@ int tl_win_obb_ensure(const char *data_dir, const char *exe_dir);
 /* WM_SYSCOMMAND carries menu IDs with the low four bits masked, so a system-menu
  * item's ID must leave them zero. */
 #define ID_CHECK_UPDATES 0x1010
+#define ID_SYSTEM_SEPARATOR 0x1020
 
 static int g_sw = DESIGN_W, g_sh = DESIGN_H;
 static HWND g_hwnd;
@@ -374,6 +375,23 @@ static void refresh_update(bool display_event)
     else if (changed) tl_log_line("windows: the display can do %d fps now", fps);
 }
 
+/* A fullscreen start has no system menu, and restoring WS_SYSMENU can give the
+ * window a fresh one. Check the actual menu rather than remembering an insertion
+ * made at startup. The popup check also repairs a menu Windows reset later. */
+static void ensure_system_menu(HMENU menu)
+{
+    if (!menu) return;
+    if (GetMenuState(menu, ID_SETTINGS, MF_BYCOMMAND) == (UINT)-1)
+        if (!InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, ID_SETTINGS, L"Settings...\tCtrl+,"))
+            tl_log_line("windows: could not add Settings to the window menu (%lu)", GetLastError());
+    if (GetMenuState(menu, ID_CHECK_UPDATES, MF_BYCOMMAND) == (UINT)-1)
+        if (!InsertMenuW(menu, 1, MF_BYPOSITION | MF_STRING, ID_CHECK_UPDATES, L"Check for Updates..."))
+            tl_log_line("windows: could not add Check for Updates to the window menu (%lu)", GetLastError());
+    if (GetMenuState(menu, ID_SYSTEM_SEPARATOR, MF_BYCOMMAND) == (UINT)-1)
+        if (!InsertMenuW(menu, 2, MF_BYPOSITION | MF_SEPARATOR, ID_SYSTEM_SEPARATOR, NULL))
+            tl_log_line("windows: could not add the window menu separator (%lu)", GetLastError());
+}
+
 static void toggle_fullscreen(int on)
 {
     if (!g_hwnd || on == g_fullscreen) return;
@@ -397,6 +415,7 @@ static void toggle_fullscreen(int on)
         SetWindowPlacement(g_hwnd, &g_windowed_placement);
         SetWindowPos(g_hwnd, NULL, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER);
         g_fullscreen = 0;
+        ensure_system_menu(GetSystemMenu(g_hwnd, FALSE));
         tl_log_line("windows: back to the window's own size and place");
     }
     overlays_above_game();
@@ -1793,6 +1812,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         break;
+    case WM_INITMENUPOPUP:
+        if (HIWORD(lp)) ensure_system_menu((HMENU)wp);
+        break;
     case WM_SYSCOMMAND:
         if ((wp & 0xfff0) == ID_SETTINGS) { open_settings(); return 0; }
         if ((wp & 0xfff0) == ID_CHECK_UPDATES) { pvz2_updates_check(h); return 0; }
@@ -2228,12 +2250,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 
     /* The window menu: Settings..., Check for Updates..., then a separator, as
      * the player's mock-up had it. Windows' own items (Move, Size, Close) follow. */
-    HMENU sys = GetSystemMenu(g_hwnd, FALSE);
-    if (sys) {
-        InsertMenuW(sys, 0, MF_BYPOSITION | MF_STRING, ID_SETTINGS, L"Settings...\tCtrl+,");
-        InsertMenuW(sys, 1, MF_BYPOSITION | MF_STRING, ID_CHECK_UPDATES, L"Check for Updates...");
-        InsertMenuW(sys, 2, MF_BYPOSITION | MF_SEPARATOR, 0, NULL);
-    }
+    ensure_system_menu(GetSystemMenu(g_hwnd, FALSE));
 
     g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = "com.ea.game.pvz2_rfl",
                             .width = g_sw, .height = g_sh, .metal_layer = g_view, .angle_egl = g_egl,
