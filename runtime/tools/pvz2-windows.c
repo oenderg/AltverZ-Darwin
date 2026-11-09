@@ -377,19 +377,49 @@ static void refresh_update(bool display_event)
 
 /* A fullscreen start has no system menu, and restoring WS_SYSMENU can give the
  * window a fresh one. Check the actual menu rather than remembering an insertion
- * made at startup. The popup check also repairs a menu Windows reset later. */
-static void ensure_system_menu(HMENU menu)
+ * made at startup. The popup check also repairs a menu Windows reset later.
+ *
+ * The menu belongs to the process that first calls GetSystemMenu: PowerToys'
+ * Always On Top does this from its own process, and the game's InsertMenuW then
+ * fails with ERROR_INVALID_MENU_HANDLE. Take the menu in WM_NCCREATE and fall
+ * back to our own popup menu if that still happens. */
+static int g_system_menu_taken;
+/* The menu Windows shows is not the game's copy; our own menu is used until a
+ * fullscreen round trip recreates it. */
+static int g_menu_foreign;
+static int g_menu_error_logged;
+static int g_fallback_click;
+
+static int menu_has_app_items(HMENU menu)
 {
-    if (!menu) return;
+    return menu &&
+           GetMenuState(menu, ID_SETTINGS, MF_BYCOMMAND) != (UINT)-1 &&
+           GetMenuState(menu, ID_CHECK_UPDATES, MF_BYCOMMAND) != (UINT)-1;
+}
+
+static int ensure_system_menu(HMENU menu)
+{
+    if (!menu) return 0;
+    DWORD error = 0;
     if (GetMenuState(menu, ID_SETTINGS, MF_BYCOMMAND) == (UINT)-1)
-        if (!InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, ID_SETTINGS, L"Settings...\tCtrl+,"))
-            tl_log_line("windows: could not add Settings to the window menu (%lu)", GetLastError());
+        if (!InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, ID_SETTINGS, L"Settings...\tCtrl+,") && !error)
+            error = GetLastError();
     if (GetMenuState(menu, ID_CHECK_UPDATES, MF_BYCOMMAND) == (UINT)-1)
-        if (!InsertMenuW(menu, 1, MF_BYPOSITION | MF_STRING, ID_CHECK_UPDATES, L"Check for Updates..."))
-            tl_log_line("windows: could not add Check for Updates to the window menu (%lu)", GetLastError());
+        if (!InsertMenuW(menu, 1, MF_BYPOSITION | MF_STRING, ID_CHECK_UPDATES, L"Check for Updates...") && !error)
+            error = GetLastError();
     if (GetMenuState(menu, ID_SYSTEM_SEPARATOR, MF_BYCOMMAND) == (UINT)-1)
-        if (!InsertMenuW(menu, 2, MF_BYPOSITION | MF_SEPARATOR, ID_SYSTEM_SEPARATOR, NULL))
-            tl_log_line("windows: could not add the window menu separator (%lu)", GetLastError());
+        if (!InsertMenuW(menu, 2, MF_BYPOSITION | MF_SEPARATOR, ID_SYSTEM_SEPARATOR, NULL) && !error)
+            error = GetLastError();
+    if (menu_has_app_items(menu)) {
+        g_menu_error_logged = 0;
+        return 1;
+    }
+    if (!g_menu_error_logged) {
+        g_menu_error_logged = 1;
+        tl_log_line("windows: the window menu is not this process's (%lu); using our own menu from now on",
+                    error ? error : GetLastError());
+    }
+    return 0;
 }
 
 static void toggle_fullscreen(int on)
@@ -415,7 +445,10 @@ static void toggle_fullscreen(int on)
         SetWindowPlacement(g_hwnd, &g_windowed_placement);
         SetWindowPos(g_hwnd, NULL, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER);
         g_fullscreen = 0;
-        ensure_system_menu(GetSystemMenu(g_hwnd, FALSE));
+        g_system_menu_taken = 1;
+        g_menu_foreign = 0;
+        g_menu_error_logged = 0;
+        if (!ensure_system_menu(GetSystemMenu(g_hwnd, FALSE))) g_menu_foreign = 1;
         tl_log_line("windows: back to the window's own size and place");
     }
     overlays_above_game();
@@ -454,6 +487,60 @@ static void open_settings(void)
         .user = NULL
     };
     pvz2_settings_open(g_hwnd, &g_settings, &host);
+}
+
+/* The menu Windows shows belongs to the process that first called
+ * GetSystemMenu. If a window watcher won that race, our InsertMenuW fails and
+ * the real menu cannot be changed. Show the same items ourselves. */
+static void fallback_menu_position(HWND h, int cursor, int *x, int *y)
+{
+    POINT pt;
+    if (cursor && GetCursorPos(&pt)) { *x = pt.x; *y = pt.y; return; }
+    RECT wr;
+    GetWindowRect(h, &wr);
+    UINT dpi = GetDpiForWindow(h);
+    *x = wr.left + GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) +
+         GetSystemMetricsForDpi(SM_CXSIZE, dpi) / 2;
+    *y = wr.top + GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) +
+         GetSystemMetricsForDpi(SM_CYSIZE, dpi);
+}
+
+static void show_fallback_menu(HWND h, int cursor)
+{
+    int x, y;
+    fallback_menu_position(h, cursor, &x, &y);
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    int maximized = IsZoomed(h) != FALSE;
+    int minimized = IsIconic(h) != FALSE;
+    AppendMenuW(menu, MF_STRING, ID_SETTINGS, L"Settings...\tCtrl+,");
+    AppendMenuW(menu, MF_STRING, ID_CHECK_UPDATES, L"Check for Updates...");
+    AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(menu, MF_STRING | (maximized || minimized ? 0 : MF_GRAYED), SC_RESTORE, L"&Restore");
+    AppendMenuW(menu, MF_STRING | (maximized ? MF_GRAYED : 0), SC_MOVE, L"&Move");
+    AppendMenuW(menu, MF_STRING | (maximized ? MF_GRAYED : 0), SC_SIZE, L"&Size");
+    AppendMenuW(menu, MF_STRING | (minimized ? MF_GRAYED : 0), SC_MINIMIZE, L"Mi&nimize");
+    AppendMenuW(menu, MF_STRING | (maximized || minimized ? MF_GRAYED : 0), SC_MAXIMIZE, L"Ma&ximize");
+    AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(menu, MF_STRING, SC_CLOSE, L"&Close\tAlt+F4");
+    SetMenuDefaultItem(menu, SC_CLOSE, FALSE);
+    int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
+                             x, y, 0, h, NULL);
+    DestroyMenu(menu);
+    if (cmd == ID_SETTINGS) { open_settings(); return; }
+    if (cmd == ID_CHECK_UPDATES) { pvz2_updates_check(h); return; }
+    if (cmd) PostMessageW(h, WM_SYSCOMMAND, (WPARAM)cmd, 0);
+}
+
+/* Returns 1 when the fallback was shown, so the caller must not let
+ * DefWindowProc show the menu that cannot be changed. */
+static int fallback_menu_if_needed(HWND h, int cursor)
+{
+    if (g_fullscreen) return 0;
+    if (!g_menu_foreign && ensure_system_menu(GetSystemMenu(h, FALSE))) return 0;
+    g_menu_foreign = 1;
+    show_fallback_menu(h, cursor);
+    return 1;
 }
 
 /* The shape the game starts in. Fixed: the selected aspect. Adapt: the
@@ -1724,6 +1811,18 @@ static void stats_tick(void)
 static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
+    case WM_NCCREATE:
+    case WM_CREATE:
+        /* Take the system menu while the window is still being made, before a
+         * window watcher can call GetSystemMenu for itself. */
+        if (!g_system_menu_taken) {
+            HMENU menu = GetSystemMenu(h, FALSE);
+            if (menu) {
+                g_system_menu_taken = 1;
+                if (!ensure_system_menu(menu)) g_menu_foreign = 1;
+            }
+        }
+        break;
     case WM_KEYDOWN:
         if (wp == VK_F11) { toggle_fullscreen(!g_fullscreen); return 0; }
         if (wp == VK_OEM_COMMA && GetKeyState(VK_CONTROL) < 0) { open_settings(); return 0; }
@@ -1733,8 +1832,32 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         /* Alt+Enter: full screen, as every game has it. Alt alone opens the
          * window menu, which is where Settings... lives. */
         if (wp == VK_RETURN && (GetKeyState(VK_MENU) < 0)) { toggle_fullscreen(!g_fullscreen); return 0; }
+        if (wp == VK_SPACE && (GetKeyState(VK_MENU) < 0) && fallback_menu_if_needed(h, 0)) return 0;
         break;
     case WM_CHAR: typed(wp); return 0;
+    case WM_NCRBUTTONDOWN:
+        /* Some foreign menus are shown on the button down; take that path too. */
+        if (wp == HTCAPTION || wp == HTSYSMENU) {
+            if (g_menu_foreign) {
+                g_fallback_click = 1;
+                show_fallback_menu(h, 1);
+                return 0;
+            }
+            g_fallback_click = 0;
+        }
+        break;
+    case WM_NCRBUTTONUP:
+        /* The title bar and the window icon open the system menu. */
+        if (g_fallback_click) { g_fallback_click = 0; return 0; }
+        if ((wp == HTCAPTION || wp == HTSYSMENU) && fallback_menu_if_needed(h, 1)) return 0;
+        break;
+    case WM_NCLBUTTONDOWN:
+        /* A click on the window icon. */
+        if (wp == HTSYSMENU && fallback_menu_if_needed(h, 1)) return 0;
+        break;
+    case WM_NCLBUTTONUP:
+        if (wp == HTSYSMENU && g_menu_foreign) return 0;
+        break;
     case WM_SIZE:
         if (h == g_hwnd && wp == SIZE_MINIMIZED) {
             g_badge_generation = 0;
@@ -1813,9 +1936,14 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         }
         break;
     case WM_INITMENUPOPUP:
-        if (HIWORD(lp)) ensure_system_menu((HMENU)wp);
+        if (HIWORD(lp)) {
+            if (ensure_system_menu((HMENU)wp)) g_menu_foreign = 0;
+            else g_menu_foreign = 1;
+        }
         break;
     case WM_SYSCOMMAND:
+        if ((wp & 0xfff0) == SC_KEYMENU && fallback_menu_if_needed(h, 0)) return 0;
+        if ((wp & 0xfff0) == SC_MOUSEMENU && fallback_menu_if_needed(h, 1)) return 0;
         if ((wp & 0xfff0) == ID_SETTINGS) { open_settings(); return 0; }
         if ((wp & 0xfff0) == ID_CHECK_UPDATES) { pvz2_updates_check(h); return 0; }
         break;
@@ -2250,7 +2378,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 
     /* The window menu: Settings..., Check for Updates..., then a separator, as
      * the player's mock-up had it. Windows' own items (Move, Size, Close) follow. */
-    ensure_system_menu(GetSystemMenu(g_hwnd, FALSE));
+    if (!g_fullscreen && !ensure_system_menu(GetSystemMenu(g_hwnd, FALSE))) g_menu_foreign = 1;
 
     g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = "com.ea.game.pvz2_rfl",
                             .width = g_sw, .height = g_sh, .metal_layer = g_view, .angle_egl = g_egl,
