@@ -36,9 +36,9 @@ case "$target" in
     game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/PvZ2 Reflourished x64.exe"
         UPD_DEFS="-DPVZ2_UPDATES=1 -DPVZ2_UPDATE_FEED_URL=\"$FEED\" -DPVZ2_UPDATE_PUBLIC_KEY=\"$KEY\""
         UPD_EXTRA="-I$WS/include"; UPD_LIBS="-L$WS/x64 -lWinSparkle"
-        LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
+        LDX="-mwindows -lwinmm -lshell32 -lole32 -luuid -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     game-portable) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT-portable/PvZ2 Reflourished x64.exe"
-        LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
+        LDX="-mwindows -lwinmm -lshell32 -lole32 -luuid -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
 UPD_OBJ="$OBJ/portable"

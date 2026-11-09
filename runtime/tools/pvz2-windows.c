@@ -25,7 +25,10 @@
 #include <commctrl.h>
 #include <ctype.h>
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <shellapi.h>
+#include <propkey.h>
+#include <propsys.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <wchar.h>
@@ -73,6 +76,15 @@ int tl_win_obb_ensure(const char *data_dir, const char *exe_dir);
 #define ID_CHECK_UPDATES 0x1010
 #define ID_SYSTEM_SEPARATOR 0x1020
 
+/* The taskbar's identity for the game. The installer gives its shortcuts the
+ * same string, so a pinned or Start menu button shows this jump list too. */
+#define PVZ2_APP_USER_MODEL_ID L"io.github.oenderg.reflourished"
+#define PVZ2_APP_USER_MODEL_ID_A "io.github.oenderg.reflourished"
+#define PVZ2_WINDOW_CLASS L"PvZ2Reflourished"
+/* A second start asks the running game to do one of these. */
+#define PVZ2_WM_START_ACTION (WM_APP + 19)
+#define PVZ2_REQUEST_MAGIC 0x50565A32u
+
 static int g_sw = DESIGN_W, g_sh = DESIGN_H;
 static HWND g_hwnd;
 /* The picture: the game is a child window, the largest rectangle of the game's
@@ -96,6 +108,10 @@ static void view_layout(void);
 static void startup_layout_from_window(void);
 static char g_exe_dir[MAX_PATH], g_data[MAX_PATH], g_saves[MAX_PATH], g_apk[MAX_PATH], g_egl[MAX_PATH], g_gles[MAX_PATH];
 static char g_settings_path[MAX_PATH];
+/* One game per data folder: the mutex's key and the jump list's --data. */
+static HANDLE g_instance_mutex;
+static unsigned long long g_data_key;
+static int g_explicit_data;
 static pvz2_settings g_settings;
 static tl_ga_config g_cfg;
 static atomic_int g_ready;
@@ -541,6 +557,188 @@ static int fallback_menu_if_needed(HWND h, int cursor)
     g_menu_foreign = 1;
     show_fallback_menu(h, cursor);
     return 1;
+}
+
+/* ------------------------------------------- one game per data folder, and the jump list */
+
+static void parse_start_args(int *action, char *data, size_t n)
+{
+    int argc = 0;
+    LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return;
+    for (int i = 1; i < argc; i++) {
+        if (!wcscmp(argv[i], L"--settings")) {
+            *action = 1;
+        } else if (!wcscmp(argv[i], L"--check-updates")) {
+            if (*action == 0) *action = 2;
+        } else if (!wcscmp(argv[i], L"--data") && i + 1 < argc && n) {
+            WideCharToMultiByte(CP_ACP, 0, argv[i + 1], -1, data, (int)n, NULL, NULL);
+            i++;
+        }
+    }
+    LocalFree(argv);
+}
+
+/* FNV-1a of the lowercased absolute data folder. The mutex is Local, so two
+ * Windows sessions do not block each other; the path is the whole key, so
+ * TL_DATA and portable folders run alongside each other. */
+static unsigned long long instance_key(const char *path)
+{
+    char lower[MAX_PATH];
+    snprintf(lower, sizeof(lower), "%s", path);
+    CharLowerBuffA(lower, (DWORD)strlen(lower));
+    unsigned long long h = 1469598103934665603ULL;
+    for (const unsigned char *p = (const unsigned char *)lower; *p; p++) {
+        h ^= *p;
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+/* 1 when another game owns this data folder. The first game holds the mutex for
+ * its whole life; an abandoned one from a crash is taken over. */
+static int instance_claim(void)
+{
+    wchar_t name[64];
+    swprintf(name, 64, L"Local\\PvZ2Reflourished-%016llx", g_data_key);
+    g_instance_mutex = CreateMutexW(NULL, TRUE, name);
+    if (!g_instance_mutex) {
+        tl_log_line("windows: no instance mutex (%lu); starting anyway", GetLastError());
+        return 0;
+    }
+    if (GetLastError() != ERROR_ALREADY_EXISTS) return 0;
+    DWORD wait = WaitForSingleObject(g_instance_mutex, 0);
+    if (wait == WAIT_TIMEOUT) return 1;
+    if (wait == WAIT_FAILED) tl_log_line("windows: the instance mutex could not be read (%lu)", GetLastError());
+    return 0;
+}
+
+typedef struct {
+    DWORD size;
+    unsigned long long key;
+    DWORD action;
+} PvZ2Request;
+
+typedef struct {
+    const COPYDATASTRUCT *cds;
+    int handled;
+} PvZ2Send;
+
+static BOOL CALLBACK send_request(HWND h, LPARAM lp)
+{
+    wchar_t cls[64];
+    if (!GetClassNameW(h, cls, 64) || wcscmp(cls, PVZ2_WINDOW_CLASS)) return TRUE;
+    PvZ2Send *ctx = (PvZ2Send *)lp;
+    DWORD_PTR result = 0;
+    if (SendMessageTimeoutW(h, WM_COPYDATA, 0, (LPARAM)ctx->cds,
+                            SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &result) && result == 1)
+        ctx->handled = 1;
+    return ctx->handled ? FALSE : TRUE;
+}
+
+/* The window can appear a moment after the mutex is taken (the game is still
+ * starting); retry for five seconds before giving up. */
+static int instance_send(int action)
+{
+    PvZ2Request req = { sizeof(req), g_data_key, (DWORD)action };
+    COPYDATASTRUCT cds = { PVZ2_REQUEST_MAGIC, sizeof(req), &req };
+    for (int i = 0; i < 50; i++) {
+        PvZ2Send ctx = { &cds, 0 };
+        EnumWindows(send_request, (LPARAM)&ctx);
+        if (ctx.handled) return 1;
+        Sleep(100);
+    }
+    return 0;
+}
+
+static void set_app_id(void)
+{
+    HRESULT hr = SetCurrentProcessExplicitAppUserModelID(PVZ2_APP_USER_MODEL_ID);
+    if (SUCCEEDED(hr))
+        tl_log_line("windows: app user model id %s", PVZ2_APP_USER_MODEL_ID_A);
+    else
+        tl_log_line("windows: could not set the app user model id (%08lx)", (unsigned long)hr);
+}
+
+static void jump_task(IObjectCollection *tasks, const wchar_t *exe, const wchar_t *dir,
+                      const wchar_t *args, const wchar_t *title)
+{
+    IShellLinkW *link = NULL;
+    if (FAILED(CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER,
+                                &IID_IShellLinkW, (void **)&link)))
+        return;
+    link->lpVtbl->SetPath(link, exe);
+    link->lpVtbl->SetArguments(link, args);
+    link->lpVtbl->SetWorkingDirectory(link, dir);
+    link->lpVtbl->SetDescription(link, title);
+    link->lpVtbl->SetIconLocation(link, exe, 0);
+    IPropertyStore *store = NULL;
+    if (SUCCEEDED(link->lpVtbl->QueryInterface(link, &IID_IPropertyStore, (void **)&store))) {
+        PROPVARIANT pv;
+        memset(&pv, 0, sizeof(pv));
+        pv.vt = VT_LPWSTR;
+        pv.pwszVal = (LPWSTR)title;
+        store->lpVtbl->SetValue(store, &PKEY_Title, &pv);
+        store->lpVtbl->Release(store);
+    }
+    tasks->lpVtbl->AddObject(tasks, (IUnknown *)link);
+    link->lpVtbl->Release(link);
+}
+
+/* The taskbar's Tasks section. Each link starts this exe with --settings or
+ * --check-updates. A TL_DATA or portable folder also passes --data, so the
+ * second start reaches the same mutex; the normal folders need no path. */
+static void install_jump_list(void)
+{
+    wchar_t exe[MAX_PATH], dir[MAX_PATH], data[MAX_PATH], args[2 * MAX_PATH];
+    if (!GetModuleFileNameW(NULL, exe, MAX_PATH)) return;
+    MultiByteToWideChar(CP_ACP, 0, g_exe_dir, -1, dir, MAX_PATH);
+    MultiByteToWideChar(CP_ACP, 0, g_data, -1, data, MAX_PATH);
+
+    ICustomDestinationList *list = NULL;
+    HRESULT hr = CoCreateInstance(&CLSID_DestinationList, NULL, CLSCTX_INPROC_SERVER,
+                                  &IID_ICustomDestinationList, (void **)&list);
+    if (FAILED(hr)) {
+        tl_log_line("windows: no jump list (%08lx)", (unsigned long)hr);
+        return;
+    }
+    hr = list->lpVtbl->SetAppID(list, PVZ2_APP_USER_MODEL_ID);
+    if (FAILED(hr)) tl_log_line("windows: the jump list kept another app id (%08lx)", (unsigned long)hr);
+
+    UINT max_slots = 0;
+    IObjectArray *removed = NULL;
+    hr = list->lpVtbl->BeginList(list, &max_slots, &IID_IObjectArray, (void **)&removed);
+    if (SUCCEEDED(hr)) {
+        IObjectCollection *tasks = NULL;
+        hr = CoCreateInstance(&CLSID_EnumerableObjectCollection, NULL, CLSCTX_INPROC_SERVER,
+                              &IID_IObjectCollection, (void **)&tasks);
+        if (SUCCEEDED(hr)) {
+            if (g_explicit_data)
+                swprintf(args, 2 * MAX_PATH, L"--settings --data \"%ls\"", data);
+            else
+                swprintf(args, 2 * MAX_PATH, L"--settings");
+            jump_task(tasks, exe, dir, args, L"Settings...");
+            if (pvz2_updates_built_in()) {
+                if (g_explicit_data)
+                    swprintf(args, 2 * MAX_PATH, L"--check-updates --data \"%ls\"", data);
+                else
+                    swprintf(args, 2 * MAX_PATH, L"--check-updates");
+                jump_task(tasks, exe, dir, args, L"Check for Updates...");
+            }
+            hr = list->lpVtbl->AddUserTasks(list, (IObjectArray *)tasks);
+            if (FAILED(hr)) tl_log_line("windows: no jump list tasks (%08lx)", (unsigned long)hr);
+            tasks->lpVtbl->Release(tasks);
+        } else {
+            tl_log_line("windows: no jump list collection (%08lx)", (unsigned long)hr);
+        }
+        if (removed) removed->lpVtbl->Release(removed);
+        hr = list->lpVtbl->CommitList(list);
+        if (FAILED(hr)) tl_log_line("windows: could not commit the jump list (%08lx)", (unsigned long)hr);
+        else tl_log_line("windows: jump list tasks installed (Settings%s)", pvz2_updates_built_in() ? ", Check for Updates" : "");
+    } else {
+        tl_log_line("windows: could not start the jump list (%08lx)", (unsigned long)hr);
+    }
+    list->lpVtbl->Release(list);
 }
 
 /* The shape the game starts in. Fixed: the selected aspect. Adapt: the
@@ -1835,6 +2033,30 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == VK_SPACE && (GetKeyState(VK_MENU) < 0) && fallback_menu_if_needed(h, 0)) return 0;
         break;
     case WM_CHAR: typed(wp); return 0;
+    case PVZ2_WM_START_ACTION:
+        /* A minimized game comes back; a maximized or full-screen one keeps
+         * its shape, only coming to the front. */
+        tl_log_line("windows: the start asks for %s",
+                    wp == 1 ? "settings" : wp == 2 ? "updates" : "the front");
+        if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
+        SetForegroundWindow(h);
+        if (wp == 1) open_settings();
+        else if (wp == 2) pvz2_updates_check(h);
+        return 0;
+    case WM_COPYDATA: {
+        const COPYDATASTRUCT *cds = (const COPYDATASTRUCT *)lp;
+        if (cds && cds->dwData == PVZ2_REQUEST_MAGIC && cds->cbData >= sizeof(PvZ2Request)) {
+            const PvZ2Request *req = (const PvZ2Request *)cds->lpData;
+            if (req->size == sizeof(PvZ2Request) && req->key == g_data_key) {
+                int action = (int)req->action;
+                tl_log_line("windows: another start asks for %s",
+                            action == 1 ? "settings" : action == 2 ? "updates" : "the front");
+                PostMessageW(h, PVZ2_WM_START_ACTION, (WPARAM)action, 0);
+                return 1;
+            }
+        }
+        break;
+    }
     case WM_NCRBUTTONDOWN:
         /* Some foreign menus are shown on the button down; take that path too. */
         if (wp == HTCAPTION || wp == HTSYSMENU) {
@@ -2011,7 +2233,7 @@ static HWND make_window(HINSTANCE inst)
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-    wc.lpszClassName = L"PvZ2Reflourished";
+    wc.lpszClassName = PVZ2_WINDOW_CLASS;
     RegisterClassExW(&wc);
 
     int maximized = 0;
@@ -2234,6 +2456,9 @@ static void migrate_old_state(const char *old_data, const char *new_state)
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 {
     (void)prev; (void)cmd;
+    int start_action = 0;
+    char data_arg[MAX_PATH] = "";
+    parse_start_args(&start_action, data_arg, sizeof(data_arg));
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     tl_win_install_crash_handler();
     INITCOMMONCONTROLSEX icc = { .dwSize = sizeof(icc), .dwICC = ICC_TAB_CLASSES | ICC_BAR_CLASSES | ICC_STANDARD_CLASSES | ICC_PROGRESS_CLASS };
@@ -2243,21 +2468,29 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     slashes(g_exe_dir);
     char *s = strrchr(g_exe_dir, '/'); if (s) *s = 0;
 
-    /* The three folders. TL_DATA wins over everything, and then the saves and
-     * the settings live in it too, so a test leaves nothing behind. */
+    /* The three folders. TL_DATA and --data win over everything, and then the
+     * saves and the settings live in it too, so a test leaves nothing behind.
+     * The jump list passes --data for a TL_DATA or portable game, so a hand-over
+     * start reaches the same folder. */
     const char *tl = getenv("TL_DATA");
     const char *mode = "normal";
     char portable[MAX_PATH + 16];
     join(portable, sizeof(portable), g_exe_dir, "portable");
-    if (tl && *tl) {
-        snprintf(g_data, sizeof(g_data), "%s", tl); slashes(g_data);
+    g_explicit_data = 0;
+    if (data_arg[0]) {
+        snprintf(g_data, sizeof(g_data), "%s", data_arg);
         snprintf(g_saves, sizeof(g_saves), "%s", g_data);
-        join(g_settings_path, sizeof(g_settings_path), g_data, "settings.ini");
+        g_explicit_data = 1;
+        mode = "--data (the start names the folder)";
+    } else if (tl && *tl) {
+        snprintf(g_data, sizeof(g_data), "%s", tl);
+        snprintf(g_saves, sizeof(g_saves), "%s", g_data);
+        g_explicit_data = 1;
         mode = "TL_DATA (everything in one folder)";
     } else if (GetFileAttributesA(portable) != INVALID_FILE_ATTRIBUTES) {
-        join(g_data, sizeof(g_data), g_exe_dir, "data"); slashes(g_data);
+        join(g_data, sizeof(g_data), g_exe_dir, "data");
         snprintf(g_saves, sizeof(g_saves), "%s", g_data);
-        join(g_settings_path, sizeof(g_settings_path), g_data, "settings.ini");
+        g_explicit_data = 1;
         mode = "portable (a \"portable\" file is beside the program)";
     } else {
         char roaming[MAX_PATH] = ".", local[MAX_PATH] = ".";
@@ -2265,12 +2498,29 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, local))) slashes(local);
         join(g_saves, sizeof(g_saves), roaming, "PvZ2 Reflourished");
         join(g_data, sizeof(g_data), local, "PvZ2 Reflourished");
-        join(g_settings_path, sizeof(g_settings_path), g_saves, "settings.ini");
     }
+    /* Absolute paths, so the mutex, the jump list's --data and a second start
+     * all name the same folder. */
+    {
+        char full[MAX_PATH];
+        if (GetFullPathNameA(g_data, sizeof(full), full, NULL) && full[0])
+            snprintf(g_data, sizeof(g_data), "%s", full);
+        if (GetFullPathNameA(g_saves, sizeof(full), full, NULL) && full[0])
+            snprintf(g_saves, sizeof(g_saves), "%s", full);
+    }
+    slashes(g_data);
     slashes(g_saves);
+    join(g_settings_path, sizeof(g_settings_path), g_saves, "settings.ini");
     slashes(g_settings_path);
+    g_data_key = instance_key(g_data);
     tl_win_mkdirs(g_data);
     tl_win_mkdirs(g_saves);
+    /* Before the log is opened: a second start must not truncate the running
+     * game's pvz2.log, and must not reach the OBB, ANGLE or the translation. */
+    if (instance_claim()) {
+        (void)instance_send(start_action);
+        return 0;
+    }
     {
         char logp[MAX_PATH + 16];
         join(logp, sizeof(logp), g_data, "pvz2.log");
@@ -2287,9 +2537,19 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     tl_log_line("windows: settings file %s", g_settings_path);
     tl_log_line("windows: the game's saves, config, reminders and Nimble data %s", g_saves);
     tl_log_line("windows: the game's data %s (the OBB, the CDN archive, the x64 cache and pvz2.log)", g_data);
+    tl_log_line("windows: one game per data folder, key %016llx", g_data_key);
     tl_pvz2_set_state_dir(g_saves);
     if (strcmp(g_saves, g_data) != 0) migrate_old_state(g_data, g_saves);
     tl_win_set_saves_dir(g_saves);
+
+    /* The taskbar identity, before the first host window (the OBB download can
+     * make one). COM is for the jump list; WinSparkle and the game find it
+     * ready. A start that exits above does not reach here. */
+    HRESULT com = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    int com_ready = SUCCEEDED(com) || com == RPC_E_CHANGED_MODE;
+    if (FAILED(com) && com != RPC_E_CHANGED_MODE)
+        tl_log_line("windows: COM did not start (%08lx); the jump list is off", (unsigned long)com);
+    set_app_id();
 
     /* Windows' own light or dark preference, before any host window: the
      * download window, the preparing window and the game window follow it. */
@@ -2356,6 +2616,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
      * game never sees a different size while it starts. */
     ShowWindow(g_hwnd, g_fullscreen ? SW_SHOW : (g_windowed_placement.showCmd == SW_SHOWMAXIMIZED ? SW_SHOWMAXIMIZED : show));
     UpdateWindow(g_hwnd);
+    if (com_ready) install_jump_list();
+    if (start_action) PostMessageW(g_hwnd, PVZ2_WM_START_ACTION, (WPARAM)start_action, 0);
     overlays_above_game();
     /* The shown window can be a different size than the created one (a
      * maximized start): the shape the game starts in is chosen from it. */
@@ -2420,5 +2682,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     }
     tl_log_line("windows: the window is closed");
     pvz2_updates_shutdown();
+    if (SUCCEEDED(com)) CoUninitialize();
     ExitProcess(0);
 }

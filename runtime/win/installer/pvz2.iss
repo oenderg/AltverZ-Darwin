@@ -33,6 +33,10 @@
 #define AppName "PvZ2 Reflourished"
 #define AppExe "PvZ2 Reflourished.exe"
 #define AppUrl "https://github.com/oenderg/Reflourished-Darwin"
+; The taskbar group and its jump list. The game sets the same string with
+; SetCurrentProcessExplicitAppUserModelID, so a pinned or Start menu shortcut
+; shows the game's Tasks section too.
+#define AppUserModelID "io.github.oenderg.reflourished"
 
 [Setup]
 ; A fixed identity: players' saves, settings and the update check hang off it. Never change it.
@@ -83,8 +87,8 @@ Source: "{#StageDir}\arm64\*"; DestDir: "{app}"; Flags: ignoreversion recursesub
 Source: "{#StageDir}\x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "portable"; Check: not IsArm64
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "{#AppUserModelID}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon; AppUserModelID: "{#AppUserModelID}"
 
 [Run]
 ; The finished page, for a person installing by hand.

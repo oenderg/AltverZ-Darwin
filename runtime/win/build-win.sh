@@ -35,9 +35,9 @@ target="${1:-starttest}"
 case "$target" in
     starttest) SRCS="$WIN_CORE $H/win-starttest.c"; OUT="$BIN/rfl-starttest.exe" ;;
     game) SRCS="$WIN_CORE $WIN_GAME"; OUT="$BIN/PvZ2 Reflourished.exe"
-        LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
+        LDX="-mwindows -lwinmm -lshell32 -lole32 -luuid -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     game-portable) SRCS="$WIN_CORE $WIN_GAME"; OUT="$REPO/out/win-portable$SUF/PvZ2 Reflourished.exe"
-        LDX="-mwindows -lwinmm -lshell32 -lole32 -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
+        LDX="-mwindows -lwinmm -lshell32 -lole32 -luuid -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     settings-test) SRCS="$H/win-settings-test.c $H/../tools/pvz2-windows-settings.c $H/../tools/pvz2-windows-updates.c"; OUT="$BIN/rfl-settings-test.exe"; LDX="-lshell32 -lcomctl32 -lgdi32 -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac

@@ -127,9 +127,16 @@ maximized=0
 ```
 
 An empty value means "None" for that shortcut. A missing file or a broken value means the
-defaults. The Keyboard page of the settings window (window menu: Settings..., or Ctrl+,)
-records a key by clicking its field and pressing the key; Escape cancels, Delete clears,
-and a key another shortcut already uses is refused with that shortcut's name.
+defaults. The Keyboard page of the settings window (Settings... in the window menu or the
+taskbar jump list, or Ctrl+,) records a key by clicking its field and pressing the key;
+Escape cancels, Delete clears, and a key another shortcut already uses is refused with that
+shortcut's name.
+
+The game's taskbar button (and a pinned or Start menu shortcut) has a jump list with
+Settings..., plus Check for Updates... in the installed build. A second start, from the jump
+list, a double click or a shortcut, hands its request to the running game and quits before it
+loads anything. The named mutex is keyed by the data folder's lowercased absolute path, so a
+TL_DATA or portable folder is a different game and can run beside the normal one.
 
 The Settings window can be resized by its edges and corners (no maximize button). It never gets
 smaller than the size it opens at, at the window's DPI: `WM_GETMINMAXINFO` holds the edges and
@@ -163,7 +170,8 @@ Gameplay offers the in-level key labels, pointer preview and cross brightness.
 
 The installed build updates itself with [WinSparkle](https://winsparkle.org) 0.9.4. Once a day
 it reads the Windows appcast (`sparkle/windows-appcast.xml` on the default branch); "Check for
-Updates..." in the window menu, and "Check Now" on Settings' About page, check at once. The
+Updates..." in the window menu and the taskbar jump list, and "Check Now" on Settings' About
+page, check at once. The
 About page's Updates section (absent from the portable build) has "Check for updates
 automatically", on by default (`[updates] automaticChecks` in `settings.ini`), the last check
 time, and the check button. Every setup program the feed offers is signed with the project's
