@@ -101,6 +101,7 @@ static void pointer_hide(void);
 static void pointer_tick(void);
 static void pointer_rate_update(void);
 static void pointer_follow_mouse(void);
+static void pointer_timer_suspend(void);
 static void make_pointer_window(HINSTANCE inst);
 static void overlays_above_game(void);
 static void badges_apply_setting(void);
@@ -1415,8 +1416,10 @@ static pointer_band_draw_state g_pointer_band_draw;
 static HANDLE g_pointer_timer, g_pointer_timer_stop, g_pointer_timer_thread;
 static atomic_llong g_pointer_period_100ns;
 static atomic_int g_pointer_tick_pending;
+static atomic_int g_pointer_timer_active;
 static int g_pointer_fallback;
 static int g_pointer_timer_wanted;
+static int g_pointer_timer_armed;   /* the timer is armed; the UI thread owns this */
 static int g_pointer_timer_logged;
 
 static unsigned long long g_pointer_ticks, g_pointer_moves, g_pointer_draws;
@@ -1488,6 +1491,9 @@ static void pointer_hide(void)
     g_pointer_wait_col = g_pointer_wait_row = -1;
     g_plant_win_image = NULL;
     tl_pvz2_cursor_target(0, 0, 0);
+    /* Nothing to follow until a mouse move brings the preview back; an idle
+     * tick at 175 Hz is not free. */
+    if (g_pointer_timer_wanted) pointer_timer_suspend();
 }
 
 static void make_pointer_window(HINSTANCE inst)
@@ -1644,8 +1650,10 @@ static DWORD WINAPI pointer_timer_worker(void *arg)
     for (;;) {
         DWORD wait = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
         if (wait != WAIT_OBJECT_0 + 1) break;
+        if (!atomic_load(&g_pointer_timer_active)) continue;
         if (!atomic_exchange(&g_pointer_tick_pending, 1))
             PostMessageW(g_hwnd, WM_APP_POINTER_TICK, 0, 0);
+        if (!atomic_load(&g_pointer_timer_active)) continue;
         LONGLONG period = atomic_load(&g_pointer_period_100ns);
         if (period < 1000) period = 1000;
         LARGE_INTEGER due;
@@ -1655,6 +1663,25 @@ static DWORD WINAPI pointer_timer_worker(void *arg)
     return 0;
 }
 
+/* Stopping the tick while the overlay is hidden must not destroy the thread:
+ * the mouse enters and leaves many times a minute. CancelWaitableTimer leaves
+ * the worker waiting, and the next start arms the timer again. */
+static void pointer_timer_suspend(void)
+{
+    if (g_pointer_fallback) {
+        if (g_pointer_timer_armed) {
+            KillTimer(g_hwnd, CURSOR_TIMER);
+            g_pointer_timer_armed = 0;
+        }
+        return;
+    }
+    if (g_pointer_timer_thread && g_pointer_timer_armed) {
+        atomic_store(&g_pointer_timer_active, 0);
+        CancelWaitableTimer(g_pointer_timer);
+        g_pointer_timer_armed = 0;
+    }
+}
+
 /* A high-resolution waitable timer at the display's rate; without it, the old
  * 16 ms SetTimer (about 32 updates a second). No timeBeginPeriod: that would
  * change the timer resolution for the whole process and the system. */
@@ -1662,27 +1689,47 @@ static int pointer_timer_start(void)
 {
     if (!g_hwnd || !g_pointer_win || !g_plant_win || !g_show_cursor_plant ||
         !g_pointer_timer_wanted) return 0;
-    if (g_pointer_timer_thread || g_pointer_fallback) return 1;
     int fps = g_refresh_fps > 0 ? g_refresh_fps : display_refresh_rate();
     LONGLONG period = pointer_period_100ns(fps);
     atomic_store(&g_pointer_period_100ns, period);
+    if (g_pointer_fallback) {
+        if (!g_pointer_timer_armed) {
+            if (!SetTimer(g_hwnd, CURSOR_TIMER, 16, NULL)) return 0;
+            g_pointer_timer_armed = 1;
+        }
+        return 1;
+    }
+    LARGE_INTEGER due;
+    due.QuadPart = -period;
+    if (g_pointer_timer_thread) {
+        if (!g_pointer_timer_armed) {
+            atomic_store(&g_pointer_timer_active, 1);
+            if (!SetWaitableTimer(g_pointer_timer, &due, 0, NULL, NULL, FALSE)) {
+                atomic_store(&g_pointer_timer_active, 0);
+                return 0;
+            }
+            g_pointer_timer_armed = 1;
+        }
+        return 1;
+    }
     g_pointer_timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
                                              TIMER_ALL_ACCESS);
     if (g_pointer_timer) {
         g_pointer_timer_stop = CreateEventW(NULL, TRUE, FALSE, NULL);
         if (g_pointer_timer_stop) {
             atomic_store(&g_pointer_tick_pending, 0);
+            atomic_store(&g_pointer_timer_active, 1);
             g_pointer_timer_thread = CreateThread(NULL, 0, pointer_timer_worker, NULL, 0, NULL);
             if (g_pointer_timer_thread) {
-                LARGE_INTEGER due;
-                due.QuadPart = -period;
                 if (SetWaitableTimer(g_pointer_timer, &due, 0, NULL, NULL, FALSE)) {
+                    g_pointer_timer_armed = 1;
                     if (!g_pointer_timer_logged) {
                         g_pointer_timer_logged = 1;
                         tl_log_line("windows: pointer preview tick: high-resolution timer at %d Hz", fps);
                     }
                     return 1;
                 }
+                atomic_store(&g_pointer_timer_active, 0);
                 SetEvent(g_pointer_timer_stop);
                 WaitForSingleObject(g_pointer_timer_thread, 1000);
                 CloseHandle(g_pointer_timer_thread);
@@ -1696,6 +1743,7 @@ static int pointer_timer_start(void)
     }
     if (SetTimer(g_hwnd, CURSOR_TIMER, 16, NULL)) {
         g_pointer_fallback = 1;
+        g_pointer_timer_armed = 1;
         if (!g_pointer_timer_logged) {
             g_pointer_timer_logged = 1;
             tl_log_line("windows: pointer preview tick: SetTimer fallback (16 ms)");
@@ -1708,6 +1756,7 @@ static int pointer_timer_start(void)
 
 static void pointer_timer_stop(void)
 {
+    atomic_store(&g_pointer_timer_active, 0);
     if (g_pointer_timer_thread) {
         SetEvent(g_pointer_timer_stop);
         WaitForSingleObject(g_pointer_timer_thread, 1000);
@@ -1723,9 +1772,10 @@ static void pointer_timer_stop(void)
         g_pointer_timer_stop = NULL;
     }
     if (g_pointer_fallback) {
-        KillTimer(g_hwnd, CURSOR_TIMER);
+        if (g_pointer_timer_armed) KillTimer(g_hwnd, CURSOR_TIMER);
         g_pointer_fallback = 0;
     }
+    g_pointer_timer_armed = 0;
     atomic_store(&g_pointer_tick_pending, 0);
 }
 
@@ -1757,6 +1807,7 @@ static void pointer_art_done(pointer_art_result *r)
         pointer_hide();
         tl_log_line("windows: pointer art: %s", r->why[0] ? r->why : "could not read the OBB");
     }
+    if (r->ok && g_pointer_timer_wanted) pointer_timer_start();
     g_pointer_generation = 0;
     free(r);
 }
@@ -2016,8 +2067,10 @@ static void pointer_follow_mouse(void)
     if (!g_plant_win_image || g_plant_win_w <= 0 || g_plant_win_h <= 0) return;
     RECT vr;
     if (!GetWindowRect(g_view, &vr)) return;
-    pointer_plant_move(vr.left + g_pointer_x - g_plant_win_w / 2,
-                       vr.top + g_pointer_y - g_plant_win_h / 2);
+    /* The same rounding as pointer_tick, so a move and a tick agree. */
+    int dx = (int)(g_pointer_x - g_plant_win_w / 2.0);
+    int dy = (int)(g_pointer_y - g_plant_win_h / 2.0);
+    pointer_plant_move(vr.left + dx, vr.top + dy);
 }
 
 static void pointer_tick(void)
@@ -2309,6 +2362,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_KEYDOWN:
         if (wp == VK_F11) { toggle_fullscreen(!g_fullscreen); return 0; }
         if (wp == VK_OEM_COMMA && GetKeyState(VK_CONTROL) < 0) { open_settings(); return 0; }
+        /* A seed key picks a plant without a mouse move, so arm the timer
+         * here; WM_MOUSEMOVE would otherwise be the only way back. */
+        if (g_pointer_timer_wanted) pointer_timer_start();
         if (key_down(wp, lp)) return 0;
         break;
     case WM_SYSKEYDOWN:
