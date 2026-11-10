@@ -2610,8 +2610,8 @@ static void make_view(HINSTANCE inst)
  * window snapped or maximized, a new shape chosen in Settings) the picture
  * keeps the game's shape with black bars. Two round buttons sit in the larger
  * bar, as on the Mac: the first restarts the game in the window's shape (it
- * saves first, and the new copy opens in the same place), the second puts the
- * window back in the game's shape.
+ * saves first, and the new copy opens in the same place), the second trims
+ * the bars (the window shrinks to the picture, which stays where it is).
  *
  * They are drawn in the window's own paint, in the bars, with hit testing in
  * the window's mouse messages: the picture is a child window, so a click in it
@@ -2620,18 +2620,14 @@ static void make_view(HINSTANCE inst)
  * minimum they are left out (the picture could not be drawn under them).
  */
 #define FIT_RESTART 0
-#define FIT_KEEP 1
+#define FIT_TRIM 1
 static HWND g_fit_tip;
 static int g_fit_shown;
 static int g_fit_cx[2], g_fit_cy[2], g_fit_d;
 static int g_fit_hot = -1, g_fit_down = -1, g_fit_tracking;
-/* The window's outer rectangle the last time it had the game's shape, for the second button. */
-static RECT g_good_frame;
-static int g_good_frame_set;
-static int g_in_sizemove;
 static const wchar_t *const g_fit_tips[2] = {
     L"Restart the game in the window's shape (the game saves first)",
-    L"Put the window back in the game's shape"
+    L"Trim the black bars (the window takes the game's shape)"
 };
 
 static int shape_matches(int cw, int ch)
@@ -2680,11 +2676,6 @@ static void fit_update(void)
     if (!iconic) GetClientRect(g_hwnd, &cr);
     int cw = cr.right, ch = cr.bottom;
     int same = shape_matches(cw, ch);
-    /* Where the window was the last time it had the game's shape. A window still being dragged is not settled. */
-    if (same && !g_fullscreen && !IsZoomed(g_hwnd) && !g_in_sizemove) {
-        GetWindowRect(g_hwnd, &g_good_frame);
-        g_good_frame_set = 1;
-    }
     int shown = 0, cx[2] = { 0 }, cy[2] = { 0 }, d = 0;
     RECT vr;
     if (!same && cw > 0 && ch > 0 && !g_fullscreen && !g_starting && !g_restarting &&
@@ -2805,23 +2796,37 @@ static void window_rules_changed(void)
     fit_update();
 }
 
-/* The second button: the window goes back to the game's shape, where it was the
- * last time it had it, or else the same width in that shape. In the Fixed mode
- * the window keeps the game's shape until the game restarts (the shape chosen
- * in Settings is kept for then). */
-static void keep_game_shape(void)
+/* The second button trims the bars: the window's client area becomes exactly
+ * the picture drawn now, and the window moves so that the picture stays where
+ * it is on the screen. Only the black bars go; the size the player chose stays
+ * as far as the game's shape allows. In the Fixed mode the window then keeps
+ * the game's shape until the game restarts (the shape chosen in Settings is
+ * kept for then). A maximized window is restored first, and the picture's
+ * place is taken before that. */
+static void trim_bars(void)
 {
-    if (!g_hwnd || g_fullscreen || g_layout_h <= 0) return;
+    RECT pic;
+    if (!g_hwnd || !g_view || g_fullscreen || g_layout_h <= 0 || !GetWindowRect(g_view, &pic)) return;
+    int w = pic.right - pic.left, h = pic.bottom - pic.top;
+    if (w < 1 || h < 1) return;
     double a = (double)g_layout_w / g_layout_h;
-    tl_log_line("windows: the window goes back to the game's shape (%.3f:1)", a);
     if (!g_win_adapt) g_lock_aspect = a;
     if (IsZoomed(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
-    if (g_good_frame_set && rect_on_a_monitor(&g_good_frame))
-        SetWindowPos(g_hwnd, NULL, g_good_frame.left, g_good_frame.top,
-                     g_good_frame.right - g_good_frame.left, g_good_frame.bottom - g_good_frame.top,
-                     SWP_NOZORDER | SWP_NOACTIVATE);
-    else
-        window_to_aspect(a);
+    RECT wr, cr;
+    POINT origin = { 0, 0 };
+    if (!GetWindowRect(g_hwnd, &wr) || !GetClientRect(g_hwnd, &cr) || !ClientToScreen(g_hwnd, &origin)) return;
+    /* The frame's size and where the client area starts in it, measured on the window itself. */
+    int fw = (wr.right - wr.left) - cr.right, fh = (wr.bottom - wr.top) - cr.bottom;
+    int x = pic.left - (origin.x - wr.left), y = pic.top - (origin.y - wr.top);
+    MONITORINFO mi = { .cbSize = sizeof(mi) };
+    if (GetMonitorInfoW(MonitorFromRect(&pic, MONITOR_DEFAULTTONEAREST), &mi)) {
+        if (x + w + fw > mi.rcWork.right) x = mi.rcWork.right - (w + fw);
+        if (y + h + fh > mi.rcWork.bottom) y = mi.rcWork.bottom - (h + fh);
+        if (x < mi.rcWork.left) x = mi.rcWork.left;
+        if (y < mi.rcWork.top) y = mi.rcWork.top;
+    }
+    tl_log_line("windows: the window trims the bars: %dx%d client at %d,%d (%.3f:1)", w, h, pic.left, pic.top, a);
+    SetWindowPos(g_hwnd, NULL, x, y, w + fw, h + fh, SWP_NOZORDER | SWP_NOACTIVATE);
     fit_update();
 }
 
@@ -2907,7 +2912,7 @@ static void restart_to_fit(void)
 static void fit_action(int which)
 {
     if (which == FIT_RESTART) restart_to_fit();
-    else if (which == FIT_KEEP) keep_game_shape();
+    else if (which == FIT_TRIM) trim_bars();
 }
 
 /* One button: a dark disc, lighter under the pointer and pressed, and a white
@@ -2925,7 +2930,7 @@ static void fit_paint_button(GpGraphics *g, int which, double cx, double cy, dou
     if (GdipCreatePen1(0xFFFFFFFF, (REAL)(r * 0.12 < 1.5 ? 1.5 : r * 0.12), UnitPixel, &pen) != Ok) return;
     GdipSetPenStartCap(pen, LineCapRound);
     GdipSetPenEndCap(pen, LineCapRound);
-    if (which == FIT_KEEP) {
+    if (which == FIT_TRIM) {
         double e = r * 0.27;
         GdipDrawLine(g, pen, (REAL)(cx - e), (REAL)(cy - e), (REAL)(cx + e), (REAL)(cy + e));
         GdipDrawLine(g, pen, (REAL)(cx - e), (REAL)(cy + e), (REAL)(cx + e), (REAL)(cy - e));
@@ -3227,13 +3232,8 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             g_pointer_handled++;
         }
         return 0;
-    case WM_ENTERSIZEMOVE:
-        g_in_sizemove = 1;
-        return 0;
     case WM_EXITSIZEMOVE:
-        g_in_sizemove = 0;
         if (!g_fullscreen) save_geometry();
-        fit_update();
         return 0;
     case WM_SIZING:
         if (!g_fullscreen && !g_win_adapt) {

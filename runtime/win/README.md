@@ -192,9 +192,10 @@ window's DPI, and they shrink in a narrow bar and disappear below about 20 px.
   mutex instead of handing over to the old copy, opens at that frame, takes its startup shape
   from it and appends to the same `pvz2.log`. If the new process does not start, the line
   `windows: the restart did not start` is logged and the game carries on.
-- **Put back (cross).** Resizes the window to the last frame that had the game's shape, or else
-  the same width in that shape. In Fixed the window keeps the game's shape until the next start
-  (the shape chosen in Settings is kept for then).
+- **Trim the bars (cross).** The window's client area becomes exactly the picture drawn now, and
+  the window moves so that the picture stays where it is on the screen: only the black bars go,
+  and the size the player chose stays. A maximized window is restored first. In Fixed the window
+  then keeps the game's shape until the next start (the shape chosen in Settings is kept for then).
 
 `runtime/win/build-win.sh settings-test` builds `out/win/rfl-settings-test.exe`,
 a native Windows test of defaults, old INI migration and round-trip persistence.

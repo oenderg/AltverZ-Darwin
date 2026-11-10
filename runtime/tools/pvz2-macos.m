@@ -113,10 +113,7 @@ static atomic_int g_surface_w = 1748, g_surface_h = 804;
  * restarts the game in the window's shape, the way Android's size
  * compatibility mode does. Main thread only. */
 static int g_layout_w = 1748, g_layout_h = 804;
-static NSButton *g_fit_button, *g_keep_button;
-/* The window's frame the last time it had the game's shape: the cancel button
- * puts it back there. */
-static NSRect g_good_frame;
+static NSButton *g_fit_button, *g_trim_button;
 /* A restart to fit the window: the new copy waits for the old one to save and
  * leave, and opens where the old window was. */
 static bool g_relaunch;
@@ -1012,10 +1009,10 @@ static void *tapper(void *arg)
             continue;
         }
         if (!strcmp(tok, "keep")) {
-            /* The cancel button, pressed by a test. */
-            tl_log_line("macos: the tap script presses the cancel button");
+            /* The trim button (the cross), pressed by a test. */
+            tl_log_line("macos: the tap script presses the trim button");
             dispatch_async(dispatch_get_main_queue(), ^{
-                [(id)NSApp.delegate performSelector:@selector(keepGameShape:) withObject:nil];
+                [(id)NSApp.delegate performSelector:@selector(trimBars:) withObject:nil];
             });
             sleep(2);
             continue;
@@ -2424,9 +2421,10 @@ static double host_now(void)
 
 /* Two buttons, shown when the window is not the shape the game is laid out
  * for (a resize in the adapt mode, a new shape chosen in the settings): one
- * restarts the game in the window's shape, the other puts the window back in
- * the game's -- the way out of a resize that was not meant (dragging a corner
- * changes the shape freely). They sit in the larger black bar. */
+ * restarts the game in the window's shape, the other trims the black bars (the
+ * window shrinks to the picture, which stays where it is) -- the way out of a
+ * resize that left bars (dragging a corner changes the shape freely). They sit
+ * in the larger black bar. */
 static NSButton *round_button(NSString *symbol, NSString *tip, SEL action, NSView *in)
 {
     NSImage *icon = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:tip];
@@ -2451,15 +2449,14 @@ static NSButton *round_button(NSString *symbol, NSString *tip, SEL action, NSVie
     bool same = b.size.height > 0 && g_layout_h > 0 &&
                 fabs((b.size.width / b.size.height) / ((double)g_layout_w / g_layout_h) - 1.0) <= 0.02;
     bool full = (self.window.styleMask & NSWindowStyleMaskFullScreen) != 0;
-    if (same && !full && !self.inLiveResize) g_good_frame = self.window.frame;
-    if (same || !fits) { g_fit_button.hidden = YES; g_keep_button.hidden = YES; return; }
+    if (same || !fits) { g_fit_button.hidden = YES; g_trim_button.hidden = YES; return; }
     if (!g_fit_button) {
         g_fit_button = round_button(@"arrow.clockwise",
                                     @"Restart the game in the window's shape (the game saves first)",
                                     @selector(restartToFit:), self);
-        g_keep_button = round_button(@"xmark",
-                                     @"Put the window back in the game's shape",
-                                     @selector(keepGameShape:), self);
+        g_trim_button = round_button(@"xmark",
+                                     @"Trim the black bars (the window takes the game's shape)",
+                                     @selector(trimBars:), self);
     }
     const double r = 18, pad = 10, gap = 8;
     double cx, cy, kx, ky;
@@ -2477,10 +2474,10 @@ static NSButton *round_button(NSString *symbol, NSString *tip, SEL action, NSVie
         kx = cx - 2 * r - gap; ky = cy;
     }
     g_fit_button.frame = NSMakeRect(cx - r, cy - r, 2 * r, 2 * r);
-    g_keep_button.frame = NSMakeRect(kx - r, ky - r, 2 * r, 2 * r);
+    g_trim_button.frame = NSMakeRect(kx - r, ky - r, 2 * r, 2 * r);
     g_fit_button.hidden = NO;
     /* A window in full screen cannot change its shape. */
-    g_keep_button.hidden = full;
+    g_trim_button.hidden = full;
 }
 
 - (void)layout
@@ -3081,26 +3078,37 @@ static void start_updater(void)
 @property(strong) NSWindow *window;
 @property(strong) NSTimer *statsTimer;
 @end@implementation PVZ2Delegate
-/* The cancel button: the window goes back to the game's shape -- where it was
- * the last time it had it, or else the same width in that shape. In the fixed
- * mode the window keeps the game's shape until the game restarts (the shape
- * chosen in the settings is kept for then). */
-- (void)keepGameShape:(id)sender
+/* The trim button: the window's content becomes exactly the picture drawn now,
+ * and the window moves so that the picture stays where it is on the screen --
+ * only the black bars go, and the size the player chose stays as far as the
+ * game's shape allows. In the fixed mode the window keeps the game's shape
+ * until the game restarts (the shape chosen in the settings is kept for then).
+ * A zoomed window just takes the new frame. */
+- (void)trimBars:(id)sender
 {
     (void)sender;
     NSWindow *w = g_window;
-    if (!w || (w.styleMask & NSWindowStyleMaskFullScreen) || g_layout_h <= 0) return;
+    if (!w || !g_view || (w.styleMask & NSWindowStyleMaskFullScreen) || g_layout_h <= 0) return;
+    NSRect b = g_view.bounds;
+    double x, y, vw, vh;
+    if (!tl_viewport_fit(b.size.width, b.size.height, g_layout_w, g_layout_h, &x, &y, &vw, &vh)) return;
     double a = (double)g_layout_w / g_layout_h;
-    tl_log_line("macos: the window goes back to the game's shape (%.3f:1)", a);
     if (!adapt_mode()) {
         g_fixed_lock = a;
         w.contentAspectRatio = NSMakeSize(round(a * 1000), 1000);
     }
-    NSSize gs = [w contentRectForFrameRect:g_good_frame].size;
-    if (!NSIsEmptyRect(g_good_frame) && gs.height > 0 && fabs(gs.width / gs.height / a - 1.0) <= 0.02)
-        [w setFrame:g_good_frame display:YES animate:YES];
-    else
-        window_to_aspect(w, a);
+    /* The picture in screen coordinates, on whole points. */
+    NSRect pic = [w convertRectToScreen:[g_view convertRect:NSMakeRect(x, y, vw, vh) toView:nil]];
+    pic = NSMakeRect(round(pic.origin.x), round(pic.origin.y), round(pic.size.width), round(pic.size.height));
+    NSRect nf = [w frameRectForContentRect:pic];
+    NSRect vis = (w.screen ?: NSScreen.mainScreen).visibleFrame;
+    if (NSMaxX(nf) > NSMaxX(vis)) nf.origin.x = NSMaxX(vis) - nf.size.width;
+    if (nf.origin.x < vis.origin.x) nf.origin.x = vis.origin.x;
+    if (NSMaxY(nf) > NSMaxY(vis)) nf.origin.y = NSMaxY(vis) - nf.size.height;
+    if (nf.origin.y < vis.origin.y) nf.origin.y = vis.origin.y;
+    tl_log_line("macos: the window trims the bars: %.0fx%.0f points at %.0f,%.0f (%.3f:1)",
+                pic.size.width, pic.size.height, pic.origin.x, pic.origin.y, a);
+    [w setFrame:nf display:YES];
 }
 
 /* The fit button: the game restarts in the window's shape. The game saves on

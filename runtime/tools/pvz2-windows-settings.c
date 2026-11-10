@@ -546,8 +546,8 @@ static void mode_refresh(HWND p)
     ShowWindow(GetDlgItem(p, ID_ASPECT), g_pending.adapt_shape ? SW_HIDE : SW_SHOW);
     ShowWindow(GetDlgItem(p, ID_ASPECT_LABEL), g_pending.adapt_shape ? SW_HIDE : SW_SHOW);
     SetWindowTextW(GetDlgItem(p, ID_MODE_FOOTER), g_pending.adapt_shape ?
-        L"The window takes any shape from 4:3 to 2.4:1, and the game starts in the window's shape. The game lays a screen out once, so after you change the shape the picture keeps its old one, with bars: \u21BB restarts the game in the new shape (it saves first), \u2715 puts the window back. Experimental." :
-        L"The window keeps one shape and the game fills it, at any size. A new shape takes effect when the game restarts: \u21BB in the corner does that now (it saves first), \u2715 keeps the current shape until the next start. \u201CCurrent display\u201D is the shape of the display the game is on, so full screen has no bars.");
+        L"The window takes any shape from 4:3 to 2.4:1, and the game starts in the window's shape. The game lays a screen out once, so after you change the shape the picture keeps its old one, with bars: \u21BB restarts the game in the new shape (it saves first), \u2715 trims the black bars. Experimental." :
+        L"The window keeps one shape and the game fills it, at any size. A new shape takes effect when the game restarts: \u21BB in the corner does that now (it saves first), \u2715 trims the black bars and keeps the window in the current shape until the next start. \u201CCurrent display\u201D is the shape of the display the game is on, so full screen has no bars.");
     /* The footer's height and the rows below it follow its wrapped text, which
      * the page layout measures at the page's current width. */
     SendMessageW(p, WM_SIZE, SIZE_RESTORED, 0);
