@@ -4,6 +4,14 @@ The x86-64 Windows build links ScarletNX's recompiler library
 (https://github.com/scarletnx/ScarletNX, GPLv3) at commit `5b9c0fab`, with `scarletnx.patch` applied:
 
 ```sh
+runtime/win/x64/scarletnx/build-scarletnx.sh <folder>   # in MSYS2's CLANG64 shell
+```
+
+It fetches that one commit into `<folder>`, applies the patch, and builds the `scarletnx-recompiler`
+target (Release, `SNX_TOOLS_ONLY=ON`, no tests or front ends) into `<folder>/build/lib`, where
+`build-x64.sh` links it from. By hand:
+
+```sh
 git clone https://github.com/scarletnx/ScarletNX && cd ScarletNX
 git checkout 5b9c0fab
 git apply /path/to/runtime/win/x64/scarletnx/scarletnx.patch

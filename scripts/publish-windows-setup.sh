@@ -1,12 +1,12 @@
 #!/bin/bash
 # Sign a Windows setup, check the signature against the key the app carries, and write the
-# Windows update feed (sparkle/windows-appcast.xml) for it. The Windows builds are not made
-# in GitHub Actions (the x86-64 one needs MSYS2), so this runs on the release Mac after
-# build-installer.sh and build-installer.cmd made the setup (docs/RELEASING.md, "Windows").
+# Windows update feed (sparkle/windows-appcast.xml) for it. The release workflow runs it
+# with the SPARKLE_PRIVATE_KEY secret (--key-file - on stdin); by hand it runs on the release
+# Mac with the key from the login keychain, for a setup made outside the workflow.
 #
 #   scripts/publish-windows-setup.sh <PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe> --tag <tag>
-#       [--key-file <file>]   the EdDSA private key file (default: the Mac app's key in the
-#                             login keychain, where sign_update looks by itself)
+#       [--key-file <file>]   the EdDSA private key file, or - for stdin (default: the Mac
+#                             app's key in the login keychain, where sign_update looks by itself)
 #       [--notes-html <html>] what the update window shows (default: the CHANGELOG's entry
 #                             for VERSION, as the Mac feed has it)
 #       [--public-key <file>] the public key to check against (default: sparkle/public-key,

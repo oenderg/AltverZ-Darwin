@@ -12,9 +12,9 @@ Actions > **Build** > Run workflow, with:
 
 | Input | Meaning |
 |---|---|
-| `apk_url` | a link to the PvZ2 Reflourished APK (direct, Google Drive or MEGA); empty = the repository's own copy (below) |
+| `apk_url` | a link to the PvZ2 Reflourished APK (direct, Google Drive or MEGA; the Windows jobs take a direct link only); empty = the repository's own copy (below) |
 | `obb_url` | optional; empty = the mod's own OBB (only needed for full builds) |
-| `platforms` | iPhone/iPad and Mac, or one of them |
+| `platforms` | All (default: iPhone/iPad, Mac and Windows), iPhone/iPad and Mac, one of those, or Windows |
 | `variants` | Slim and full (default), Slim, or Full |
 | `release_tag` | optional; empty = `v<VERSION>` (for example `v1.0.0`) |
 
@@ -31,14 +31,27 @@ variants it builds slim first, packages it, removes intermediate bundles, then b
 the same converted game libraries. The build number comes from the version, not the run number.
 The release title is `Reflourished-Darwin <version> · PvZ2: Reflourished <game>`.
 
-A release of both platforms and variants holds:
+A release of all platforms and both variants holds:
 
 ```text
 PvZ2-Reflourished-<game>-Darwin-<version>-iOS.ipa
 PvZ2-Reflourished-<game>-Darwin-<version>-iOS-Full.ipa
 PvZ2-Reflourished-<game>-Darwin-<version>-Mac.dmg
 PvZ2-Reflourished-<game>-Darwin-<version>-Mac-Full.dmg
+PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe
+PvZ2-Reflourished-<game>-Darwin-<version>-Windows-x64.zip
+PvZ2-Reflourished-<game>-Darwin-<version>-Windows-ARM64.zip
 ```
+
+**Windows** runs beside the Apple job, in three jobs: `windows-arm64` (macOS) cross-builds the
+ARM64 programs with llvm-mingw; `windows` (`windows-2025`) installs MSYS2's CLANG64 at the
+versions `runtime/win/x64/msys2-clang64.txt` pins, builds ScarletNX with our patch (cached
+between runs), the x86-64 programs, the setup with Inno Setup 7.1.1 and both portable zips;
+`windows-publish` waits for the Apple job, attaches the three files to its release, rewrites the
+release text so the table lists them (`release-notes.py --assets`), signs the setup and commits
+the Windows update feed (below). The Windows files have no Full variant: the setup and the zips
+download the game's data on first start. A Windows-only run with Publish creates the release
+when it does not exist yet.
 
 For example: `PvZ2-Reflourished-1.4.2-Darwin-1.0.0-iOS.ipa`. Slim is a small download; the app
 downloads the game's data on first launch. Full has the data inside, for an offline first launch.
@@ -137,12 +150,13 @@ and WinSparkle's window, which asks before it installs. docs/windows-shipping.md
   installs either build). `scripts/update-windows-appcast.py` writes it; `--check` validates it.
 - **The key** is the Mac app's: the Windows program carries the same `sparkle/public-key`, so
   one private key signs both platforms. Nothing new to keep safe.
-- **Publishing.** The Windows builds are not made in GitHub Actions (the x86-64 one needs
-  MSYS2), so after the release exists, build the setup, then on the release Mac run
-  `scripts/publish-windows-setup.sh <setup.exe> --tag <tag> --upload --commit` and push. The
-  script signs from the login keychain, refuses a signature that does not verify with
-  `sparkle/public-key`, attaches the setup to the release and commits the feed. Until the first
-  Windows release, the feed does not exist and an installed build's check reports an error.
+- **Publishing.** The release workflow's `windows-publish` job runs
+  `scripts/publish-windows-setup.sh` with the `SPARKLE_PRIVATE_KEY` secret on stdin: it signs
+  the setup, refuses a signature that does not verify with `sparkle/public-key`, writes the feed
+  and commits it (`chore(sparkle-windows): ...`), and the job pushes it. Without the secret the
+  feed is left as it is. For a setup made outside the workflow, run the script on the release
+  Mac (`--upload --commit`, the key from the login keychain) and push. Until the first Windows
+  release, the feed does not exist and an installed build's check reports an error.
 
 ## The AltStore / SideStore source
 

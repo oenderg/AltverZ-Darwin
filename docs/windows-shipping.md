@@ -176,25 +176,25 @@ base64 of the 32-byte seed, which becomes a PKCS#8 Ed25519 key with the prefix `
 
 ### Release steps
 
-The Windows builds are made on the release Mac and in a Windows PC or VM (the x86-64 program
-needs MSYS2), not in GitHub Actions, so a Windows release is three steps after the Mac and iOS
-release exists (docs/RELEASING.md, "Windows updates"):
+The release workflow makes and publishes the Windows files with the Apple ones
+(docs/RELEASING.md, "Running the build"): its Windows jobs build both programs, the setup and
+the zips, attach them to the release, and its `windows-publish` job runs
+`scripts/publish-windows-setup.sh` with the `SPARKLE_PRIVATE_KEY` secret, which signs the setup,
+checks the signature against `sparkle/public-key` (the key the Windows program carries), writes
+`sparkle/windows-appcast.xml` with `scripts/update-windows-appcast.py` (the release notes from
+`release-notes/<version>.md`, as the Mac feed has them), validates it and commits it
+(`chore(sparkle-windows): ...`); the job pushes it to the default branch, which is when
+installed copies see the update.
 
-1. Build the setup with `runtime/win/installer/build-installer.sh` and `build-installer.cmd`
-   from the release's APK, with `VERSION` as its version.
-2. On the Mac: `scripts/publish-windows-setup.sh PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe
-   --tag <tag> --upload --commit`. It signs the setup with the Mac app's key from the login
-   keychain (Sparkle's `sign_update`; `--key-file` takes the exported key instead), checks the
-   signature against `sparkle/public-key`, the key the Windows program carries, attaches the
-   setup to the release, writes `sparkle/windows-appcast.xml` with
-   `scripts/update-windows-appcast.py` (the release notes from CHANGELOG, as the Mac feed has
-   them), validates it and commits it (`chore(sparkle-windows): ...`). Without `--upload` and
-   `--commit` it only signs, checks and writes the feed.
-3. Push the commit to the default branch: that is when installed copies see the update.
+By hand, for a setup built outside the workflow: build it with
+`runtime/win/installer/build-installer.sh` and `build-installer.cmd`, then on the Mac run
+`scripts/publish-windows-setup.sh PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe
+--tag <tag> --upload --commit` (the key from the login keychain; `--key-file` takes the
+exported key instead) and push the commit.
 
 The feed offers only the newest release, as the Mac feed does: the setup is a whole install,
-so a player on any older version goes straight to the newest one. The release workflow and the
-Mac feed are not changed by any of this.
+so a player on any older version goes straight to the newest one. The Mac feed is not changed
+by any of this.
 
 The app checks once a day at start-up (Settings > About: "Check for updates automatically", on
 by default, `[updates] automaticChecks` in `settings.ini`) and at once from "Check for Updates..."

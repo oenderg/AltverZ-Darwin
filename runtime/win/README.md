@@ -298,8 +298,9 @@ are forced merely to inflate a counter.
 
 `out/win-installer/PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe` is the setup program: one
 file for both architectures. On ARM64 Windows it installs the ARM64 program, everywhere else
-the x64 one. It is made with Inno Setup 7 on a Windows PC: `runtime/win/installer/build-installer.sh`
-stages both trees and (with `--zip`) writes the file to carry them there, and
+the x64 one. It is made with Inno Setup 7 on Windows (the release workflow, or a PC):
+`runtime/win/installer/build-installer.sh` stages both trees and (with `--zip`) writes the file
+to carry them to a PC, and
 `runtime/win/installer/build-installer.cmd` runs `pvz2.iss` on it. It installs for the current
 user without an administrator prompt into `%LOCALAPPDATA%\Programs\PvZ2 Reflourished`, makes the
 Start menu entry (a desktop shortcut is a task that starts unchecked), and Windows' Installed
@@ -357,3 +358,25 @@ runtime/win/build-win.sh starttest                  # out/win/rfl-starttest.exe
 
 `rfl-starttest.exe <apk> <data dir>` loads the four libraries, runs their constructors and
 JNI_OnLoad, and the mod's library, and logs each step.
+
+The x86-64 programs are built on Windows, in MSYS2's CLANG64 shell:
+
+```sh
+runtime/win/x64/setup-msys2.sh                          # the pinned CLANG64 packages
+runtime/win/x64/scarletnx/build-scarletnx.sh <snx>      # ScarletNX at its pin, with our patch
+runtime/win/fetch-zlib.sh <zlib>                        # the two zlibs
+runtime/win/fetch-winsparkle.sh
+sh runtime/win/x64/build-x64.sh runtime <snx> <zlib> out/win-x64 game   # and game-portable
+runtime/win/x64/collect-dlls.sh "out/win-x64-portable/PvZ2 Reflourished x64.exe" out/win/x64-runtime
+```
+
+`runtime/win/x64/msys2-clang64.txt` pins every CLANG64 package the build uses, dependencies
+included, to the versions the release was tested with: the eight DLLs beside the x64 program
+come from them, so a new LLVM is a deliberate change, tested on a PC first. `collect-dlls.sh`
+follows the program's imports into `/clang64/bin` and stops when the set differs from the eight
+`runtime/win/licenses/x64` covers.
+
+The release workflow (`.github/workflows/build.yml`, docs/RELEASING.md) does all of this: a
+macOS job builds the ARM64 programs, a `windows-2025` job the x86-64 ones, the setup (Inno Setup
+7.1.1, checked against its release's sha256) and both zips, and a last job attaches them to the
+release and signs the Windows update feed.
