@@ -37,12 +37,17 @@ RUN="${RUN:-$ROOT/out/runs/$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$RUN/data"
 [ -n "$SAVE" ] && cp -R "$SAVE/." "$RUN/data/"
 
-# The window of one process, by its pid (CoreGraphics, through a one-line Swift program).
+# The window of one process, by its pid (CoreGraphics, through a one-line Swift program): the
+# largest of its normal-layer windows, since newer macOS also lists the app's menu bar there.
 window_of() {
     swift -e 'import CoreGraphics; let pid = Int(CommandLine.arguments[1])!
 let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as! [[String: Any]]
+var best = 0, area = 0.0
 for w in list where (w[kCGWindowOwnerPID as String] as? Int) == pid && (w[kCGWindowLayer as String] as? Int) == 0 {
-    if let n = w[kCGWindowNumber as String] as? Int { print(n); break } }' "$1" 2>/dev/null
+    let b = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
+    let a = ((b["Width"] as? Double) ?? 0) * ((b["Height"] as? Double) ?? 0)
+    if let n = w[kCGWindowNumber as String] as? Int, a > area { best = n; area = a } }
+if best != 0 { print(best) }' "$1" 2>/dev/null
 }
 
 env TL_DATA="$RUN/data" TL_PVZ2_LOG="$RUN/run.log" TL_PVZ2_TAP="$TAP" TL_PVZ2_TAP_DELAY=1 \
