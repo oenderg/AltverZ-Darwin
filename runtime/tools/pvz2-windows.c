@@ -2969,7 +2969,8 @@ static void show_progress_window(HINSTANCE inst)
         if (forced >= 96 && forced <= 480) dpi = (UINT)forced;
     }
     g_progress_dpi = dpi;
-    RECT r = { 0, 0, MulDiv(560, dpi, 96), MulDiv(216, dpi, 96) };
+    int client_w = MulDiv(560, dpi, 96), client_h = MulDiv(216, dpi, 96);
+    RECT r = { 0, 0, client_w, client_h };
     AdjustWindowRectExForDpi(&r, WS_CAPTION | WS_SYSMENU, FALSE, 0, dpi);
     int w = r.right - r.left, h = r.bottom - r.top;
     RECT game;
@@ -3002,6 +3003,16 @@ static void show_progress_window(HINSTANCE inst)
     HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, L"PvZ2ReflourishedPrepare", L"PvZ2 Reflourished",
                                 WS_CAPTION | WS_SYSMENU, x, y, w, h, g_hwnd, NULL, inst, NULL);
     if (!hwnd) return;
+    /* The frame belongs to the display, whose DPI can differ from the layout's in a preview: at a 96 layout on
+     * this 200% display the frame is larger than AdjustWindowRectExForDpi allowed for, and the client lost the
+     * bottom of the status line. Measure the client that was made and grow the window by the difference. */
+    RECT made;
+    if (GetClientRect(hwnd, &made)) {
+        int made_w = made.right - made.left, made_h = made.bottom - made.top;
+        if (made_w != client_w || made_h != client_h)
+            SetWindowPos(hwnd, NULL, 0, 0, w + (client_w - made_w), h + (client_h - made_h),
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
     tl_win_darkmode_window(hwnd);
     /* Theme before the first paint, including the labels' parent colours. A
      * visible creation paints the light class brush before subclassing. */
