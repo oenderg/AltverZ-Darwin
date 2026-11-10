@@ -2829,10 +2829,9 @@ static void progress_tick(HWND h)
         if (function_rate < 0.0) function_rate = 0.0;
     }
     double percent = (double)weight_done * 100.0 / (double)weight_total;
-    /* The first units are the largest and the slowest per weight, so a rate taken from the start promises far too
-     * long. Take the estimate's rate from the 10% mark: by then the units flow, and the average over everything since
-     * is stable enough not to jump with each completion. */
-    if (!g_progress_have_base && weight_total && weight_done * 10 >= weight_total) {
+    /* Start the clock when work is known, not after a tenth of the run. Five percent and five seconds give the
+     * first estimate enough completions to average; the cumulative rate then bridges stalls between units. */
+    if (!g_progress_have_base && weight_total) {
         g_progress_base_weight = weight_done;
         g_progress_base_time = now;
         g_progress_have_base = 1;
@@ -2840,8 +2839,8 @@ static void progress_tick(HWND h)
     int estimate_valid = 0;
     if (g_progress_have_base && weight_done < weight_total) {
         double span = (double)(now - g_progress_base_time) / 1000.0;
-        /* Twenty seconds is long enough that a stall between two units does not double the estimate. */
-        double rate = span >= 20.0 ? (double)(weight_done - g_progress_base_weight) / span : 0.0;
+        double rate = span >= 5.0 && percent >= 5.0
+                          ? (double)(weight_done - g_progress_base_weight) / span : 0.0;
         if (rate > 1.0) {
             double left = (double)(weight_total - weight_done) / rate;
             if (!g_progress_have_estimate) {
