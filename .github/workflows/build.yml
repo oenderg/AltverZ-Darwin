@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: "Link to the PvZ2 Reflourished 1.4.2 APK (direct, Google Drive or MEGA); empty: the repository's own copy (the build-inputs draft release)"
+        description: "Link to the PvZ2 Reflourished 1.4.2 APK (direct, Google Drive or MEGA; Windows takes direct links only); empty: the repository's own copy (the build-inputs draft release)"
         required: false
         default: ""
       obb_url:
@@ -14,15 +14,15 @@ on:
       platforms:
         description: "What to build"
         type: choice
-        options: [iPhone/iPad and Mac, iPhone/iPad, Mac]
-        default: iPhone/iPad and Mac
+        options: [All, iPhone/iPad and Mac, iPhone/iPad, Mac, Windows]
+        default: All
       variants:
         description: "Which downloads to build"
         type: choice
         options: [Slim and full, Slim, Full]
         default: Slim and full
       publish:
-        description: "Publish the release, the AltStore source and the Mac update feed (off: build only)"
+        description: "Publish the release, the AltStore source and the update feeds (off: build only)"
         type: boolean
         default: true
       release_tag:
@@ -35,6 +35,8 @@ permissions:
 
 jobs:
   build:
+    name: iPhone, iPad and Mac
+    if: github.event.inputs.platforms != 'Windows'
     # The Xcode 27 image, so the release is built with the same SDK as a local build
     # (Xcode 27). An app built with an older SDK is treated differently by iPadOS 27:
     # the 26.5 SDK builds were held to full-screen sizes on the iPad while the local
@@ -243,5 +245,260 @@ jobs:
           git add sparkle/appcast.xml
           git diff --cached --quiet && exit 0
           git commit -m "chore(sparkle): update the Mac update feed for $TAG"
+          git pull --rebase origin "${{ github.event.repository.default_branch }}"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"
+
+  # Windows: the ARM64 programs cross-build on a Mac with llvm-mingw, the way they are built
+  # locally; the x86-64 programs, the setup and the zips are made on Windows in MSYS2's CLANG64
+  # with the package versions runtime/win/x64/msys2-clang64.txt pins (docs/windows-shipping.md).
+  windows-arm64:
+    name: Windows ARM64 programs
+    if: github.event.inputs.platforms == 'All' || github.event.inputs.platforms == 'Windows'
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      TL_WIN_TOOLCHAIN: ${{ github.workspace }}/out/win-toolchain
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain cache
+        uses: actions/cache@v6
+        with:
+          path: out/win-toolchain
+          key: win-arm64-toolchain-${{ hashFiles('runtime/win/setup-toolchain.sh', 'runtime/win/fetch-zlib.sh') }}
+
+      - name: Toolchain
+        run: runtime/win/setup-toolchain.sh
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          runtime/win/fetch-winsparkle.sh
+          runtime/win/build-win.sh game
+          runtime/win/build-win.sh game-portable
+          ls -l "out/win/PvZ2 Reflourished.exe" "out/win-portable/PvZ2 Reflourished.exe"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-arm64-programs
+          path: |
+            out/win/PvZ2 Reflourished.exe
+            out/win-portable/PvZ2 Reflourished.exe
+          retention-days: 1
+          if-no-files-found: error
+
+  windows:
+    name: Windows setup and zips
+    needs: windows-arm64
+    runs-on: windows-2025
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Keep line endings
+        # The scripts and patches must stay LF: Git for Windows checks text out as CRLF by default.
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-arm64-programs
+          path: out
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: false
+          install: git make patch perl zip unzip
+
+      - name: Toolchain (pinned CLANG64 packages)
+        run: runtime/win/x64/setup-msys2.sh
+
+      - name: Inno Setup 7.1.1
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe'
+          $file = "$env:RUNNER_TEMP\innosetup-7.1.1-x64.exe"
+          Invoke-WebRequest $url -OutFile $file
+          $sum = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          if ($sum -ne '8a5a6711c3766a6e5fb74f280ba0e3551e719ce94538d901fdbd1f8f9920b3f0') { throw "innosetup-7.1.1-x64.exe has sha256 $sum" }
+          Start-Process $file -Wait -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/ALLUSERS', '/DIR="C:\Program Files\Inno Setup 7"'
+          (Get-Item 'C:\Program Files\Inno Setup 7\ISCC.exe').FullName
+
+      - name: Release metadata
+        id: metadata
+        run: |
+          . scripts/app-version.sh
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "prefix=PvZ2-Reflourished-$GAME_VERSION-Darwin-$APP_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: The APK and the CDN archive
+        env:
+          APK_URL: ${{ github.event.inputs.apk_url }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export PATH="$PATH:/c/Program Files/GitHub CLI"
+          json() { python3 -c "import json,sys; print(json.load(open('data/game-1.4.2.json'))$1)"; }
+          mkdir -p inputs
+          if [ -n "$APK_URL" ]; then
+            case "$APK_URL" in *drive.google.*|*mega.*)
+              echo "the Windows build takes a direct APK link or the repository's own copy" >&2; exit 1 ;;
+            esac
+            curl -fL --retry 3 -o inputs/pvz2.apk "$APK_URL"
+          else
+            name="PvZ2-Reflourished-$(json '["version"]').apk"
+            id="$(gh api "repos/$REPOSITORY/releases" --paginate \
+              --jq ".[] | select(.draft and .tag_name == \"build-inputs\") | .assets[] | select(.name == \"$name\") | .id" | head -1)"
+            [ -n "$id" ] || { echo "no APK link given and no $name in a build-inputs draft release" >&2; exit 1; }
+            gh api -H "Accept: application/octet-stream" "repos/$REPOSITORY/releases/assets/$id" > inputs/pvz2.apk
+          fi
+          got="$(sha256sum inputs/pvz2.apk | cut -d' ' -f1)"
+          [ "$got" = "$(json '["apk_sha256"]')" ] || { echo "the APK has sha256 $got, not the game's" >&2; exit 1; }
+          curl -fL --retry 3 -o inputs/1.4.2.main.tar "$(json '["cdn_url"]')"
+          ls -l inputs
+
+      - name: ScarletNX cache
+        uses: actions/cache@v6
+        with:
+          path: out/scarletnx
+          key: scarletnx-${{ hashFiles('runtime/win/x64/scarletnx/scarletnx.patch', 'runtime/win/x64/scarletnx/build-scarletnx.sh', 'runtime/win/x64/msys2-clang64.txt') }}
+
+      - name: ScarletNX
+        run: runtime/win/x64/scarletnx/build-scarletnx.sh out/scarletnx
+
+      - name: x86-64 programs
+        run: |
+          set -euo pipefail
+          runtime/win/fetch-winsparkle.sh
+          runtime/win/fetch-zlib.sh out/win-zlib
+          sh runtime/win/x64/build-x64.sh runtime out/scarletnx out/win-zlib out/win-x64 game
+          sh runtime/win/x64/build-x64.sh runtime out/scarletnx out/win-zlib out/win-x64 game-portable
+          runtime/win/x64/collect-dlls.sh "out/win-x64-portable/PvZ2 Reflourished x64.exe" out/win/x64-runtime
+          ls -l out/win-x64/*.exe out/win-x64-portable/*.exe out/win/x64-runtime
+          sha256sum out/win/x64-runtime/*.dll
+
+      - name: ANGLE
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export PATH="$PATH:/c/Program Files/GitHub CLI"
+          runtime/win/fetch-angle.sh all
+
+      - name: Stage the setup
+        run: runtime/win/installer/build-installer.sh --apk inputs/pvz2.apk --tar inputs/1.4.2.main.tar
+
+      - name: The setup (Inno Setup)
+        shell: cmd
+        run: call runtime\win\installer\build-installer.cmd "%GITHUB_WORKSPACE%\out\win-installer" ${{ steps.metadata.outputs.version }} "%GITHUB_WORKSPACE%\out\win-release"
+
+      - name: The portable zips
+        run: |
+          set -euo pipefail
+          runtime/win/package-zip.sh --arch all --apk inputs/pvz2.apk --tar inputs/1.4.2.main.tar \
+            --x64-runtime out/win/x64-runtime --out out/win-release
+          ls -l out/win-release
+          sha256sum out/win-release/*
+
+      - name: Keep the setup
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/win-release/${{ steps.metadata.outputs.prefix }}-Windows-Setup.exe
+          archive: false
+          retention-days: ${{ github.event.inputs.publish == 'true' && 1 || 14 }}
+          if-no-files-found: error
+
+      - name: Keep the x64 zip
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/win-release/${{ steps.metadata.outputs.prefix }}-Windows-x64.zip
+          archive: false
+          retention-days: ${{ github.event.inputs.publish == 'true' && 1 || 14 }}
+          if-no-files-found: error
+
+      - name: Keep the ARM64 zip
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/win-release/${{ steps.metadata.outputs.prefix }}-Windows-ARM64.zip
+          archive: false
+          retention-days: ${{ github.event.inputs.publish == 'true' && 1 || 14 }}
+          if-no-files-found: error
+
+  # After the Apple job published the release (or alone, for a Windows-only run): attach the
+  # Windows files, list them in the release text, sign the setup and update the Windows feed.
+  # On a Mac, for Sparkle's sign_update (scripts/publish-windows-setup.sh).
+  windows-publish:
+    name: Publish Windows
+    needs: [build, windows]
+    if: >-
+      always() && github.event.inputs.publish == 'true' && needs.windows.result == 'success' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: PvZ2-Reflourished-*-Windows-*
+          path: win-release
+          merge-multiple: true
+
+      - name: Release metadata
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          . scripts/app-version.sh
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "game=$GAME_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=${RELEASE_TAG:-v$APP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "prefix=PvZ2-Reflourished-$GAME_VERSION-Darwin-$APP_VERSION" >> "$GITHUB_OUTPUT"
+          ls -l win-release
+
+      - name: Attach the files and list them
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          GAME: ${{ steps.metadata.outputs.game }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" win-release/* --repo "$REPOSITORY" --clobber
+          else
+            # A Windows-only run with no release yet: make it, then write its text below.
+            gh release create "$TAG" win-release/* --repo "$REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Reflourished-Darwin $VERSION · PvZ2: Reflourished $GAME" --notes "…"
+          fi
+          gh release view "$TAG" --repo "$REPOSITORY" --json assets > "$RUNNER_TEMP/assets.json"
+          python3 scripts/release-notes.py --assets "$RUNNER_TEMP/assets.json" --version "$VERSION" \
+            --tag "$TAG" --repo "$REPOSITORY" > release-notes.md
+          cat release-notes.md
+          gh release edit "$TAG" --repo "$REPOSITORY" --notes-file release-notes.md
+
+      - name: Update the Windows update feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          PREFIX: ${{ steps.metadata.outputs.prefix }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "no SPARKLE_PRIVATE_KEY secret: the Windows update feed is left as it is"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # The key goes to sign_update on stdin, never to a file or the log.
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | scripts/publish-windows-setup.sh \
+            "win-release/$PREFIX-Windows-Setup.exe" --tag "$TAG" --key-file - --commit
           git pull --rebase origin "${{ github.event.repository.default_branch }}"
           git push origin "HEAD:${{ github.event.repository.default_branch }}"
