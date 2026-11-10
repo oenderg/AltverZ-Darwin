@@ -14,4 +14,6 @@ For updates, add this source in AltStore or SideStore (Sources → +) and instal
 The first time, macOS refuses to open it because it is not notarized: click **Done**, then **Open Anyway** in System Settings → Privacy & Security.
 After that the app updates itself (PvZ2 Reflourished → Check for Updates…).
 
-Your saves stay when you update. Found a bug? [Open an issue](https://github.com/{repo}/issues/new/choose) with the app's log (on the Mac: Settings → About → Log).
+**Windows** (Windows 10 or 11, 64-bit): run the setup. It is not signed: when Windows says "Windows protected your PC", click **More info**, then **Run anyway**. After that the game updates itself. The portable zips need no install and don't update themselves.
+
+Your saves stay when you update. Found a bug? [Open an issue](https://github.com/{repo}/issues/new/choose) with the app's log (on the Mac and on Windows: Settings → About → Log).

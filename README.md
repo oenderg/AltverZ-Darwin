@@ -1,15 +1,15 @@
 <h1 align="center">Reflourished-Darwin</h1>
 
 <p align="center">
-  <img src="docs/banner/banner-night-corner.webp" alt="PvZ2: Reflourished on iPhone, iPad and Mac" width="100%">
+  <img src="docs/banner/banner-night-corner.webp" alt="PvZ2: Reflourished on iPhone, iPad, Mac and Windows" width="100%">
 </p>
 
-<p align="center"><b>PvZ2: Reflourished natively on iPhone, iPad and Mac.</b><br>No jailbreak, no JIT, no emulator.</p>
+<p align="center"><b>PvZ2: Reflourished natively on iPhone, iPad, Mac and Windows.</b><br>No jailbreak, no JIT, no emulator.</p>
 
 <p align="center">
-The mod's Android code is converted ahead of time into ordinary, signed Apple code, so the game
-runs the way any other app does: full screen, at your display's refresh rate, with sound, saves
-and the mod's own content built in.
+The mod's Android code is converted into ordinary code for each system, so the game runs the
+way any other app does: full screen, at your display's refresh rate, with sound, saves and the
+mod's own content built in.
 </p>
 
 <p align="center">
@@ -18,6 +18,7 @@ and the mod's own content built in.
   <img alt="Game version" src="https://img.shields.io/badge/PvZ2%20Reflourished-1.4.2-2ea44f">
   <img alt="iPhone and iPad" src="https://img.shields.io/badge/iOS%20%26%20iPadOS-15.5%2B-0a84ff?logo=apple&logoColor=white">
   <img alt="Mac" src="https://img.shields.io/badge/macOS-14%2B%20·%20Apple%20silicon-0a84ff?logo=apple&logoColor=white">
+  <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%26%2011%20·%20x64%20%26%20ARM64-0078d4?logo=windows&logoColor=white">
   <a href="https://github.com/oenderg/Reflourished-Darwin/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/oenderg/Reflourished-Darwin?style=social"></a>
 </p>
 
@@ -60,15 +61,15 @@ and the mod's own content built in.
 </details>
 
 <details>
-<summary><b>Keyboard</b> (Mac, and iPad with a keyboard)</summary>
+<summary><b>Keyboard</b> (Mac, Windows, and iPad with a keyboard)</summary>
 
 * `1`-`4` and `Q`, `W`, `E`, `R` take the seed packets, `S` the shovel.
 * `Space` collects every sun, coin, gem, plant food and sprout drop on the lawn.
 * `Tab` toggles fast-forward, `F` picks up plant food, and `Z`, `X`, `C` select the level's
   power-ups from left to right.
 * `Esc` pauses and resumes. The keys rest while the game is paused.
-* On the Mac, Settings (`Cmd-,`) lets you pick any keys; Keyboard → **Show keys in levels**
-  (on by default) writes each key at its control's corner in the game's font.
+* On the Mac and Windows, Settings (`Cmd-,` / `Ctrl-,`) lets you pick any keys; Keyboard →
+  **Show keys in levels** (on by default) writes each key at its control's corner in the game's font.
 * On iPad, keys appear after the first press on a hardware keyboard.
 
 </details>
@@ -85,10 +86,24 @@ and the mod's own content built in.
 </details>
 
 <details>
+<summary><b>Windows</b></summary>
+
+* One setup for Intel/AMD and ARM PCs. It installs for your account only, with no administrator
+  prompt.
+* A window you can resize, or full screen (`F11` or `Alt+Enter`); Settings with `Ctrl-,` or a
+  right-click on the game's taskbar button.
+* The plant you picked follows the pointer, with the same keys and key labels as on the Mac.
+* Prefer no installer? The portable zips keep everything, saves included, in the folder you unpack
+  them to.
+
+</details>
+
+<details>
 <summary><b>Updates</b></summary>
 
 * The Mac app updates itself: it checks once a day and asks before it installs
-  (PvZ2 Reflourished > Check for Updates…).
+  (PvZ2 Reflourished > Check for Updates…). So does the installed Windows game (Settings >
+  About, or Check for Updates… on its taskbar button); the portable zips don't.
 * iPhone and iPad get updates through AltStore and SideStore with this repository's source.
 * Your saves stay, and a full app needs no second 1.3 GB download.
 
@@ -134,8 +149,8 @@ and the mod's own content built in.
 
 ## Install
 
-Every [release](https://github.com/oenderg/Reflourished-Darwin/releases/latest) has two
-downloads for each platform:
+Every [release](https://github.com/oenderg/Reflourished-Darwin/releases/latest) has these
+downloads:
 
 | File | What it is |
 |---|---|
@@ -143,6 +158,9 @@ downloads for each platform:
 | `PvZ2-Reflourished-<game>-Darwin-<version>-iOS-Full.ipa` | iPhone and iPad, with the game's data inside (about 1.3 GB) |
 | `PvZ2-Reflourished-<game>-Darwin-<version>-Mac.dmg` | Mac, slim |
 | `PvZ2-Reflourished-<game>-Darwin-<version>-Mac-Full.dmg` | Mac, with the game's data inside |
+| `PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe` | Windows PCs, Intel/AMD and ARM (about 120 MB) |
+| `PvZ2-Reflourished-<game>-Darwin-<version>-Windows-x64.zip` | Windows, Intel/AMD, portable (no installer, no updates) |
+| `PvZ2-Reflourished-<game>-Darwin-<version>-Windows-ARM64.zip` | Windows, ARM (Snapdragon), portable |
 
 A slim app downloads the game's data (1.3 GB) the first time it opens and checks it, so keep
 it open on Wi-Fi until the game starts.
@@ -159,7 +177,21 @@ Applications. The app is not notarized, so the first time macOS refuses to open 
 click **Done**, then in **System Settings → Privacy & Security** click **Open Anyway**.
 After that the app updates itself.
 
-Your saves live with the app (on the Mac, in `~/Library/Application Support/PvZ2 Reflourished`).
+**Windows** (Windows 10 or 11, 64-bit) - run the setup. It is not signed, so Windows shows
+"Windows protected your PC" the first time: click **More info**, then **Run anyway**.
+
+<p align="center">
+  <img src="docs/windows/smartscreen-1.png" alt="Windows protected your PC, with More info" width="45%">
+  <img src="docs/windows/smartscreen-2.png" alt="After More info: Run anyway" width="45%">
+</p>
+
+The first start downloads the game's data (1.3 GB). On Intel and AMD PCs it then prepares the
+game for that PC, once: about 2 minutes on a recent PC, longer on older ones, with a progress
+window. Later starts take seconds. After that the game updates itself.
+
+Your saves live with the app (on the Mac, in `~/Library/Application Support/PvZ2 Reflourished`;
+on Windows, in `%APPDATA%\PvZ2 Reflourished`). Uninstalling on Windows asks whether to delete them,
+with No selected.
 
 ## Build it yourself
 
@@ -192,6 +224,9 @@ The results land in `out/`. Add `--ios` or `--mac` to build just one of them; le
 ## Known issues
 
 * Tested on one iPhone so far.
+* Windows: tested on Windows 11 (an Intel desktop PC and an ARM virtual machine); Windows 10
+  should work but is untested.
+* Windows: the setup is not code-signed, so SmartScreen warns the first time (see Install).
 
 ## How it works
 
@@ -202,10 +237,15 @@ translated from Android's ELF format into Mach-O dylibs at build time, with the 
 JNI calls the game makes, its file system, OpenGL ES through ANGLE over Metal, audio,
 touch and keyboard input, and the app's lifecycle.
 
+On Windows the same host code runs without the Apple conversion step. ARM PCs run the game's ARM64
+code directly, loaded from the APK at start-up. Intel and AMD PCs translate it to x86-64 on the
+first start with the [ScarletNX](https://github.com/scarletnx/ScarletNX) recompiler and keep the
+result, and the game draws through ANGLE over Direct3D 11.
+
 | Folder | What is in it |
 |---|---|
 | `converter/` | ELF → Mach-O conversion and the hook bake |
-| `runtime/` | the host: Android and JNI environment, graphics, audio, input, iOS and Mac apps |
+| `runtime/` | the host: Android and JNI environment, graphics, audio, input, iOS, Mac and Windows apps |
 | `data/` | the mod's recorded hook table and the game version it matches |
 | `prebuilt/` | ANGLE for iOS and the iOS Simulator (rebuild with `REBUILD_ANGLE=1 ./build.sh …`) |
 | `scripts/` | downloads, the disk image, the AltStore source, the Mac test runner |
