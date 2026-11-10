@@ -34,6 +34,8 @@
 #include <wchar.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <stddef.h>
 
 #include "husk-tl-audio.h"
 #include "husk-tl-cdn.h"
@@ -57,6 +59,7 @@ static ULONGLONG g_progress_preview_until, g_progress_preview_start, g_progress_
 
 void tl_log_line(const char *fmt, ...);
 void tl_win_log_open(const char *path);
+void tl_win_log_open_mode(const char *path, int append);
 void tl_win_mkdirs(const char *path);
 void tl_win_install_crash_handler(void);
 void tl_win_set_saves_dir(const char *dir);
@@ -101,6 +104,11 @@ static HWND g_hwnd;
  * shape that fits, centred. See "the picture" below. */
 static HWND g_view;
 static int g_adapt;
+/* The window's own shape rule. g_adapt is the mode the game started in (its layout is fixed from then on);
+ * a settings change moves this one at once, as the Mac's window rules do. g_lock_aspect is the Fixed mode's
+ * window shape when it is not the game's own (a new shape chosen in Settings): 0 = the game's shape. */
+static int g_win_adapt;
+static double g_lock_aspect;
 static int g_show_keys;
 static int g_show_cursor_plant = 1;
 static int g_cross_brightness = 45;
@@ -119,12 +127,18 @@ static int g_layout_w = DESIGN_W, g_layout_h = DESIGN_H;
 static bool g_down;
 static void view_layout(void);
 static void startup_layout_from_window(void);
+static void window_rules_changed(void);
 static char g_exe_dir[MAX_PATH], g_data[MAX_PATH], g_saves[MAX_PATH], g_apk[MAX_PATH], g_egl[MAX_PATH], g_gles[MAX_PATH];
 static char g_settings_path[MAX_PATH];
 /* One game per data folder: the mutex's key and the jump list's --data. */
 static HANDLE g_instance_mutex;
 static unsigned long long g_data_key;
 static int g_explicit_data;
+/* A restart to fit the window: --relaunch --frame=x,y,w,h [--maximized]. The new copy waits for the old
+ * one to let go of the data folder, opens at that frame and keeps appending to the same log. */
+static int g_relaunch, g_relaunch_maximized;
+static RECT g_relaunch_frame;
+static int g_restarting;
 static wchar_t g_app_id[128];
 static HWND g_request_window, g_request_text;
 static HFONT g_request_font;
@@ -335,6 +349,16 @@ static void default_client(int *w, int *h, int *x, int *y)
 static void initial_placement(RECT *out, int *maximized)
 {
     *maximized = 0;
+    /* A restart to fit the window opens exactly where the old window was. */
+    if (g_relaunch && g_relaunch_frame.right - g_relaunch_frame.left >= 200 &&
+        g_relaunch_frame.bottom - g_relaunch_frame.top >= 150 && rect_on_a_monitor(&g_relaunch_frame)) {
+        *out = g_relaunch_frame;
+        *maximized = g_relaunch_maximized;
+        tl_log_line("windows: the window opens where the restart left it: %ldx%ld at %ld,%ld%s",
+                    (long)(out->right - out->left), (long)(out->bottom - out->top), (long)out->left, (long)out->top,
+                    *maximized ? ", maximized" : "");
+        return;
+    }
     {
         int x = (int)GetPrivateProfileIntA("window", "x", -100000, g_settings_path);
         int y = (int)GetPrivateProfileIntA("window", "y", -100000, g_settings_path);
@@ -515,6 +539,8 @@ static void settings_applied(void *user, const pvz2_settings *s)
     /* The startup preference only changes the current full-screen state when
      * that checkbox itself changes, not when an unrelated setting is applied. */
     int full_changed = g_start_fullscreen != s->start_fullscreen;
+    int shape_changed = g_settings.adapt_shape != s->adapt_shape ||
+                        strcmp(g_settings.fixed_aspect, s->fixed_aspect) != 0;
     g_start_fullscreen = s->start_fullscreen;
     g_settings = *s;
     g_show_keys = s->show_level_keys;
@@ -524,9 +550,11 @@ static void settings_applied(void *user, const pvz2_settings *s)
     view_layout();
     badges_apply_setting();
     pointer_apply_setting();
+    /* The window takes a new mode or shape at once; the game keeps the shape it started in. */
+    if (shape_changed) window_rules_changed();
     save_geometry();
     if (full_changed) toggle_fullscreen(g_settings.start_fullscreen ? 1 : 0);
-    tl_log_line("windows: the settings are applied; mode and aspect take effect at the next start");
+    tl_log_line("windows: the settings are applied; a new mode or aspect reaches the game at the next start (or with the restart button)");
 }
 
 static void open_settings(void)
@@ -610,6 +638,14 @@ static void parse_start_args(int *action, char *data, size_t n)
         } else if (!wcscmp(argv[i], L"--data") && i + 1 < argc && n) {
             WideCharToMultiByte(CP_ACP, 0, argv[i + 1], -1, data, (int)n, NULL, NULL);
             i++;
+        } else if (!wcscmp(argv[i], L"--relaunch")) {
+            g_relaunch = 1;
+        } else if (!wcscmp(argv[i], L"--maximized")) {
+            g_relaunch_maximized = 1;
+        } else if (!wcsncmp(argv[i], L"--frame=", 8)) {
+            long x, y, w, h;
+            if (swscanf(argv[i] + 8, L"%ld,%ld,%ld,%ld", &x, &y, &w, &h) == 4)
+                g_relaunch_frame = (RECT){ x, y, x + w, y + h };
         }
     }
     LocalFree(argv);
@@ -632,8 +668,10 @@ static unsigned long long instance_key(const char *path)
 }
 
 /* 1 when another game owns this data folder. The first game holds the mutex for
- * its whole life; an abandoned one from a crash is taken over. */
-static int instance_claim(void)
+ * its whole life; an abandoned one from a crash is taken over. A restart to fit
+ * the window waits for the copy that started it to leave (it saves first), so
+ * wait_ms is how long to wait for the owner; a normal start does not wait. */
+static int instance_claim(DWORD wait_ms)
 {
     wchar_t name[64];
     swprintf(name, 64, L"Local\\PvZ2Reflourished-%016llx", g_data_key);
@@ -643,7 +681,7 @@ static int instance_claim(void)
         return 0;
     }
     if (GetLastError() != ERROR_ALREADY_EXISTS) return 0;
-    DWORD wait = WaitForSingleObject(g_instance_mutex, 0);
+    DWORD wait = WaitForSingleObject(g_instance_mutex, wait_ms);
     if (wait == WAIT_TIMEOUT) return 1;
     if (wait == WAIT_FAILED) tl_log_line("windows: the instance mutex could not be read (%lu)", GetLastError());
     return 0;
@@ -873,6 +911,27 @@ static int make_request_window(HINSTANCE inst)
     return 1;
 }
 
+/* The Fixed mode's shape for a monitor, from the setting: a chosen ratio, the game's own, or the display's
+ * when the game can fill it (the game's own otherwise). */
+static void fixed_shape(HMONITOR mon, int *w, int *h)
+{
+    int numerator, denominator;
+    *w = DESIGN_W; *h = DESIGN_H;
+    if (sscanf(g_settings.fixed_aspect, "%d:%d", &numerator, &denominator) == 2) {
+        *w = numerator; *h = denominator;
+    } else if (!strcmp(g_settings.fixed_aspect, "game")) {
+        *w = DESIGN_W; *h = DESIGN_H;
+    } else {
+        MONITORINFO mi = { .cbSize = sizeof(mi) };
+        if (GetMonitorInfoW(mon, &mi)) {
+            int mw = mi.rcMonitor.right - mi.rcMonitor.left;
+            int mh = mi.rcMonitor.bottom - mi.rcMonitor.top;
+            double actual = (double)mw / mh;
+            if (actual >= 4.0 / 3.0 && actual <= 2.4) { *w = mw; *h = mh; }
+        }
+    }
+}
+
 /* The shape the game starts in. Fixed: the selected aspect. Adapt: the
  * window's shape, kept between 4:3 and 2.4:1 (the shapes the game fills). The
  * guest lays a screen out once, when it opens, so this is chosen at the start;
@@ -893,36 +952,27 @@ static void startup_layout_from_window(void)
     if (a > 2.4) a = 2.4;
     g_layout_w = cw;
     g_layout_h = (int)((double)cw / a + 0.5);
-    if (!g_adapt) {
-        int numerator, denominator;
-        if (sscanf(g_settings.fixed_aspect, "%d:%d", &numerator, &denominator) == 2) {
-            g_layout_w = numerator; g_layout_h = denominator;
-        } else if (!strcmp(g_settings.fixed_aspect, "game")) {
-            g_layout_w = DESIGN_W; g_layout_h = DESIGN_H;
-        } else {
-            MONITORINFO mi = { .cbSize = sizeof(mi) };
-            if (GetMonitorInfoW(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &mi)) {
-                int mw = mi.rcMonitor.right - mi.rcMonitor.left;
-                int mh = mi.rcMonitor.bottom - mi.rcMonitor.top;
-                double actual = (double)mw / mh;
-                if (actual >= 4.0 / 3.0 && actual <= 2.4) {
-                    g_layout_w = mw; g_layout_h = mh;
-                }
-            }
-        }
-    }
+    if (!g_adapt) fixed_shape(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &g_layout_w, &g_layout_h);
     tl_log_line("windows: the game starts in %s mode, aspect %s (%.3f:1)",
                 g_adapt ? "Adapt" : "Fixed", g_settings.fixed_aspect, a);
 }
 
-/* Keep the startup shape, never a newly selected setting: the game lays out
- * only once and must not be resized into a different shape during startup. */
+/* The shape the Fixed mode's window keeps: the game's own (its startup shape),
+ * or the one chosen in Settings since. The game itself never changes shape
+ * until it restarts. */
+static double window_lock_aspect(void)
+{
+    return g_lock_aspect > 0 ? g_lock_aspect : (double)g_layout_w / g_layout_h;
+}
+
+/* Keep the window's locked shape. The game lays out only once and must not be
+ * resized into a different shape during startup. */
 static void constrain_sizing(RECT *r, WPARAM edge)
 {
     RECT frame = { 0 };
     AdjustWindowRectExForDpi(&frame, WINDOW_STYLE, FALSE, 0, GetDpiForWindow(g_hwnd));
     int fw = frame.right - frame.left, fh = frame.bottom - frame.top;
-    double a = (double)g_layout_w / g_layout_h;
+    double a = window_lock_aspect();
     int w = r->right - r->left - fw, h = r->bottom - r->top - fh;
     if (edge == WMSZ_TOP || edge == WMSZ_BOTTOM) w = (int)(h * a + .5);
     int min_w = (int)(MIN_CLIENT_H * a + .5);
@@ -2553,6 +2603,437 @@ static void make_view(HINSTANCE inst)
     view_layout();
 }
 
+/* -------------------------------------------------------------- the fit buttons
+ *
+ * The game lays its screen out once, when it starts, in one shape. When the
+ * window's shape and that one stop matching (a resize in the Adapt mode, a
+ * window snapped or maximized, a new shape chosen in Settings) the picture
+ * keeps the game's shape with black bars. Two round buttons sit in the larger
+ * bar, as on the Mac: the first restarts the game in the window's shape (it
+ * saves first, and the new copy opens in the same place), the second puts the
+ * window back in the game's shape.
+ *
+ * They are drawn in the window's own paint, in the bars, with hit testing in
+ * the window's mouse messages: the picture is a child window, so a click in it
+ * never reaches them, and they never take a click from the game. In a bar too
+ * narrow for a full-size button they shrink a little, and below a small
+ * minimum they are left out (the picture could not be drawn under them).
+ */
+#define FIT_RESTART 0
+#define FIT_KEEP 1
+static HWND g_fit_tip;
+static int g_fit_shown;
+static int g_fit_cx[2], g_fit_cy[2], g_fit_d;
+static int g_fit_hot = -1, g_fit_down = -1, g_fit_tracking;
+/* The window's outer rectangle the last time it had the game's shape, for the second button. */
+static RECT g_good_frame;
+static int g_good_frame_set;
+static int g_in_sizemove;
+static const wchar_t *const g_fit_tips[2] = {
+    L"Restart the game in the window's shape (the game saves first)",
+    L"Put the window back in the game's shape"
+};
+
+static int shape_matches(int cw, int ch)
+{
+    return cw > 0 && ch > 0 && g_layout_w > 0 && g_layout_h > 0 &&
+           fabs(((double)cw / (double)ch) / ((double)g_layout_w / (double)g_layout_h) - 1.0) <= 0.02;
+}
+
+static void fit_tool_rects(void)
+{
+    if (!g_fit_tip) return;
+    for (int i = 0; i < 2; i++) {
+        TTTOOLINFOW ti;
+        memset(&ti, 0, sizeof ti);
+        ti.cbSize = (UINT)offsetof(TTTOOLINFOW, lParam);
+        ti.hwnd = g_hwnd;
+        ti.uId = (UINT_PTR)(i + 1);
+        if (g_fit_shown) {
+            ti.rect.left = g_fit_cx[i] - g_fit_d / 2;
+            ti.rect.top = g_fit_cy[i] - g_fit_d / 2;
+            ti.rect.right = ti.rect.left + g_fit_d;
+            ti.rect.bottom = ti.rect.top + g_fit_d;
+        }
+        SendMessageW(g_fit_tip, TTM_NEWTOOLRECTW, 0, (LPARAM)&ti);
+    }
+}
+
+static void fit_invalidate(int i)
+{
+    if (i < 0 || i > 1 || !g_hwnd) return;
+    RECT r = { g_fit_cx[i] - g_fit_d / 2 - 2, g_fit_cy[i] - g_fit_d / 2 - 2,
+               g_fit_cx[i] + g_fit_d / 2 + 2, g_fit_cy[i] + g_fit_d / 2 + 2 };
+    InvalidateRect(g_hwnd, &r, FALSE);
+}
+
+/* Whether the buttons show, and where. They show when the window's shape is not
+ * the game's (by more than 2%), never in full screen and not while the game
+ * starts. They sit in the larger bar (the two bars are the same size, so the
+ * right one or the bottom one): one above the other in a side bar, side by side
+ * in a bottom one. */
+static void fit_update(void)
+{
+    if (!g_hwnd) return;
+    int iconic = IsIconic(g_hwnd);
+    RECT cr = { 0 };
+    if (!iconic) GetClientRect(g_hwnd, &cr);
+    int cw = cr.right, ch = cr.bottom;
+    int same = shape_matches(cw, ch);
+    /* Where the window was the last time it had the game's shape. A window still being dragged is not settled. */
+    if (same && !g_fullscreen && !IsZoomed(g_hwnd) && !g_in_sizemove) {
+        GetWindowRect(g_hwnd, &g_good_frame);
+        g_good_frame_set = 1;
+    }
+    int shown = 0, cx[2] = { 0 }, cy[2] = { 0 }, d = 0;
+    RECT vr;
+    if (!same && cw > 0 && ch > 0 && !g_fullscreen && !g_starting && !g_restarting &&
+        g_gdiplus_started && g_view && GetWindowRect(g_view, &vr)) {
+        MapWindowPoints(NULL, g_hwnd, (POINT *)&vr, 2);
+        UINT dpi = GetDpiForWindow(g_hwnd);
+        int full = MulDiv(36, (int)dpi, 96), pad = MulDiv(10, (int)dpi, 96), gap = MulDiv(8, (int)dpi, 96);
+        int tight = MulDiv(4, (int)dpi, 96), least = MulDiv(20, (int)dpi, 96);
+        int sides = (vr.right - vr.left) < cw - 1;
+        int bar = sides ? cw - vr.right : ch - vr.bottom;
+        d = bar - 2 * tight < full ? bar - 2 * tight : full;
+        if (d >= least) {
+            shown = 1;
+            if (sides) {
+                /* Bars at the sides: in the right one, near the top, one above the other. */
+                cx[0] = cx[1] = vr.right + bar / 2;
+                cy[0] = pad + d / 2;
+                cy[1] = cy[0] + d + gap;
+                if (cy[1] + d / 2 + pad > ch) shown = 0;
+            } else {
+                /* Bars above and below: in the bottom one, at the right, side by side. */
+                cy[0] = cy[1] = vr.bottom + bar / 2;
+                cx[0] = cw - pad - d / 2;
+                cx[1] = cx[0] - d - gap;
+                if (cx[1] - d / 2 < 0) shown = 0;
+            }
+        }
+    }
+    if (!shown) { d = 0; cx[0] = cx[1] = cy[0] = cy[1] = 0; }
+    int changed = shown != g_fit_shown || d != g_fit_d || memcmp(cx, g_fit_cx, sizeof cx) || memcmp(cy, g_fit_cy, sizeof cy);
+    if (!changed) return;
+    if (g_fit_shown) { fit_invalidate(0); fit_invalidate(1); }
+    int flipped = shown != g_fit_shown;
+    g_fit_shown = shown;
+    g_fit_d = d;
+    memcpy(g_fit_cx, cx, sizeof cx);
+    memcpy(g_fit_cy, cy, sizeof cy);
+    if (!shown) { g_fit_hot = g_fit_down = -1; }
+    else { fit_invalidate(0); fit_invalidate(1); }
+    fit_tool_rects();
+    if (flipped)
+        tl_log_line("windows: the fit buttons are %s (window %dx%d client, the game's shape %d:%d)",
+                    shown ? "shown" : "hidden", cw, ch, g_layout_w, g_layout_h);
+}
+
+static void fit_init(HINSTANCE inst)
+{
+    g_fit_tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, NULL, WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
+                                CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                                g_hwnd, NULL, inst, NULL);
+    if (!g_fit_tip) {
+        tl_log_line("windows: no tooltips for the fit buttons (%lu)", GetLastError());
+        return;
+    }
+    SendMessageW(g_fit_tip, TTM_SETMAXTIPWIDTH, 0, MulDiv(320, (int)GetDpiForWindow(g_hwnd), 96));
+    for (int i = 0; i < 2; i++) {
+        TTTOOLINFOW ti;
+        memset(&ti, 0, sizeof ti);
+        ti.cbSize = (UINT)offsetof(TTTOOLINFOW, lParam);
+        ti.uFlags = TTF_SUBCLASS;
+        ti.hwnd = g_hwnd;
+        ti.uId = (UINT_PTR)(i + 1);
+        ti.lpszText = (LPWSTR)g_fit_tips[i];
+        SendMessageW(g_fit_tip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+    }
+}
+
+static int fit_hit(int x, int y)
+{
+    if (!g_fit_shown) return -1;
+    double r = g_fit_d / 2.0;
+    for (int i = 0; i < 2; i++) {
+        double dx = x - g_fit_cx[i], dy = y - g_fit_cy[i];
+        if (dx * dx + dy * dy <= r * r) return i;
+    }
+    return -1;
+}
+
+/* The window in a shape: its width kept where the display allows, its top left
+ * corner kept, and all of it on its monitor's work area. Nothing is done for a
+ * window in full screen, minimized or maximized (the caller restores it). */
+static void window_to_aspect(double a)
+{
+    if (!g_hwnd || a <= 0 || g_fullscreen || IsIconic(g_hwnd) || IsZoomed(g_hwnd)) return;
+    RECT wr, cr;
+    if (!GetWindowRect(g_hwnd, &wr) || !GetClientRect(g_hwnd, &cr)) return;
+    int fw = (wr.right - wr.left) - cr.right, fh = (wr.bottom - wr.top) - cr.bottom;
+    MONITORINFO mi = { .cbSize = sizeof(mi) };
+    if (!GetMonitorInfoW(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &mi)) return;
+    int w = cr.right, h = (int)(w / a + .5);
+    int room_w = mi.rcWork.right - mi.rcWork.left - fw, room_h = mi.rcWork.bottom - mi.rcWork.top - fh;
+    if (h > room_h) { h = room_h; w = (int)(h * a + .5); }
+    if (w > room_w) { w = room_w; h = (int)(w / a + .5); }
+    if (abs(w - cr.right) < 1 && abs(h - cr.bottom) < 1) return;
+    int x = wr.left, y = wr.top;
+    if (x + w + fw > mi.rcWork.right) x = mi.rcWork.right - (w + fw);
+    if (y + h + fh > mi.rcWork.bottom) y = mi.rcWork.bottom - (h + fh);
+    if (x < mi.rcWork.left) x = mi.rcWork.left;
+    if (y < mi.rcWork.top) y = mi.rcWork.top;
+    tl_log_line("windows: the window goes from %dx%d to %dx%d client (%.3f:1)", (int)cr.right, (int)cr.bottom, w, h, a);
+    SetWindowPos(g_hwnd, NULL, x, y, w + fw, h + fh, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+/* The mode or the Fixed mode's shape changed in Settings: the window takes the
+ * new rule at once; the game keeps the shape it started in until it restarts
+ * (the buttons say so). */
+static void window_rules_changed(void)
+{
+    g_win_adapt = g_settings.adapt_shape;
+    g_lock_aspect = 0;
+    tl_log_line("windows: the window's rule is now %s", g_win_adapt ? "Adapt" : "Fixed");
+    if (!g_win_adapt && g_hwnd) {
+        int lw, lh;
+        fixed_shape(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &lw, &lh);
+        g_lock_aspect = (double)lw / lh;
+        window_to_aspect(g_lock_aspect);
+    }
+    fit_update();
+}
+
+/* The second button: the window goes back to the game's shape, where it was the
+ * last time it had it, or else the same width in that shape. In the Fixed mode
+ * the window keeps the game's shape until the game restarts (the shape chosen
+ * in Settings is kept for then). */
+static void keep_game_shape(void)
+{
+    if (!g_hwnd || g_fullscreen || g_layout_h <= 0) return;
+    double a = (double)g_layout_w / g_layout_h;
+    tl_log_line("windows: the window goes back to the game's shape (%.3f:1)", a);
+    if (!g_win_adapt) g_lock_aspect = a;
+    if (IsZoomed(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
+    if (g_good_frame_set && rect_on_a_monitor(&g_good_frame))
+        SetWindowPos(g_hwnd, NULL, g_good_frame.left, g_good_frame.top,
+                     g_good_frame.right - g_good_frame.left, g_good_frame.bottom - g_good_frame.top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+    else
+        window_to_aspect(a);
+    fit_update();
+}
+
+/* One argument, quoted so that CommandLineToArgvW gives it back as it was. */
+static void quote_arg(wchar_t *out, size_t n, const wchar_t *a)
+{
+    size_t k = 0;
+    if (k + 1 < n) out[k++] = L'"';
+    for (const wchar_t *p = a; *p; p++) {
+        size_t slashes = 0;
+        while (*p == L'\\') { slashes++; p++; }
+        if (!*p) {
+            for (size_t i = 0; i < 2 * slashes && k + 1 < n; i++) out[k++] = L'\\';
+            break;
+        }
+        size_t copies = *p == L'"' ? 2 * slashes + 1 : slashes;
+        for (size_t i = 0; i < copies && k + 1 < n; i++) out[k++] = L'\\';
+        if (k + 1 < n) out[k++] = *p;
+    }
+    if (k + 1 < n) out[k++] = L'"';
+    out[k] = 0;
+}
+
+/* The first button: the game restarts in the window's shape. A new copy of this
+ * program starts with the same arguments (the data folder; a portable folder
+ * and TL_DATA carry over by themselves) and --relaunch with this window's
+ * place, and this copy closes the normal way, so the game saves. The new copy
+ * waits for this one to let go of the data folder, and opens where this window
+ * is. If the new process does not start, the game carries on. */
+static void restart_to_fit(void)
+{
+    if (!g_hwnd || g_restarting || g_fullscreen || g_starting) return;
+    WINDOWPLACEMENT wp = { .length = sizeof(wp) };
+    RECT cr;
+    if (!GetWindowPlacement(g_hwnd, &wp) || !GetClientRect(g_hwnd, &cr)) return;
+    RECT f = wp.rcNormalPosition;
+    int zoomed = wp.showCmd == SW_SHOWMAXIMIZED;
+    tl_log_line("windows: restarting the game in the window's shape (%dx%d client%s)",
+                (int)cr.right, (int)cr.bottom, zoomed ? ", maximized" : "");
+    wchar_t exe[MAX_PATH], dir[MAX_PATH], cmd[4096];
+    if (!GetModuleFileNameW(NULL, exe, MAX_PATH)) {
+        tl_log_line("windows: the restart did not start: no program path (%lu); the game carries on", GetLastError());
+        return;
+    }
+    MultiByteToWideChar(CP_ACP, 0, g_exe_dir, -1, dir, MAX_PATH);
+    quote_arg(cmd, 4096, exe);
+    size_t len = wcslen(cmd);
+    int argc = 0;
+    LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    /* This copy's own arguments, except what asks for a window (Settings, an update check) and what a
+     * restart adds: those must not run again, and a second restart must not stack a second frame. */
+    for (int i = 1; argv && i < argc; i++) {
+        if (!wcscmp(argv[i], L"--relaunch") || !wcscmp(argv[i], L"--maximized") ||
+            !wcsncmp(argv[i], L"--frame=", 8) || !wcscmp(argv[i], L"--settings") ||
+            !wcscmp(argv[i], L"--check-updates")) continue;
+        if (len + 2 + 2 * wcslen(argv[i]) + 2 > 4096 - 100) {
+            tl_log_line("windows: the restart did not start: the arguments are too long; the game carries on");
+            LocalFree(argv);
+            return;
+        }
+        cmd[len++] = L' ';
+        quote_arg(cmd + len, 4096 - len, argv[i]);
+        len += wcslen(cmd + len);
+    }
+    if (argv) LocalFree(argv);
+    swprintf(cmd + len, 4096 - len, L" --relaunch --frame=%ld,%ld,%ld,%ld%ls",
+             (long)f.left, (long)f.top, (long)(f.right - f.left), (long)(f.bottom - f.top),
+             zoomed ? L" --maximized" : L"");
+    STARTUPINFOW si = { .cb = sizeof(si) };
+    PROCESS_INFORMATION pi;
+    if (!CreateProcessW(exe, cmd, NULL, NULL, FALSE, 0, NULL, dir, &si, &pi)) {
+        tl_log_line("windows: the restart did not start (%lu); the game carries on", GetLastError());
+        return;
+    }
+    tl_log_line("windows: the new copy is pid %lu; this one saves and leaves", (unsigned long)pi.dwProcessId);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    g_restarting = 1;
+    fit_update();
+    PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
+}
+
+static void fit_action(int which)
+{
+    if (which == FIT_RESTART) restart_to_fit();
+    else if (which == FIT_KEEP) keep_game_shape();
+}
+
+/* One button: a dark disc, lighter under the pointer and pressed, and a white
+ * glyph drawn as paths. The arrow is an arc of 270 degrees with a head where it
+ * ends, pointing clockwise; the cross is two round-capped strokes. */
+static void fit_paint_button(GpGraphics *g, int which, double cx, double cy, double r)
+{
+    ARGB disc = g_fit_down == which ? 0xFF606060 : g_fit_hot == which ? 0xFF4C4C4C : 0xFF363636;
+    GpSolidFill *fill = NULL;
+    if (GdipCreateSolidFill(disc, &fill) == Ok) {
+        GdipFillEllipse(g, (GpBrush *)fill, (REAL)(cx - r), (REAL)(cy - r), (REAL)(2 * r), (REAL)(2 * r));
+        GdipDeleteBrush((GpBrush *)fill);
+    }
+    GpPen *pen = NULL;
+    if (GdipCreatePen1(0xFFFFFFFF, (REAL)(r * 0.12 < 1.5 ? 1.5 : r * 0.12), UnitPixel, &pen) != Ok) return;
+    GdipSetPenStartCap(pen, LineCapRound);
+    GdipSetPenEndCap(pen, LineCapRound);
+    if (which == FIT_KEEP) {
+        double e = r * 0.27;
+        GdipDrawLine(g, pen, (REAL)(cx - e), (REAL)(cy - e), (REAL)(cx + e), (REAL)(cy + e));
+        GdipDrawLine(g, pen, (REAL)(cx - e), (REAL)(cy + e), (REAL)(cx + e), (REAL)(cy - e));
+    } else {
+        /* GDI+ angles run clockwise from 3 o'clock: the arc starts at 1:30 and ends at 10:30, the
+         * gap is at the top, and the head at the end points clockwise, up and to the right. */
+        const double pi = 3.14159265358979323846;
+        double ar = r * 0.38, start = -45.0, sweep = 270.0, end = (start + sweep) * pi / 180.0;
+        GdipDrawArc(g, pen, (REAL)(cx - ar), (REAL)(cy - ar), (REAL)(2 * ar), (REAL)(2 * ar), (REAL)start, (REAL)(sweep - 8.0));
+        double px = cx + ar * cos(end), py = cy + ar * sin(end);
+        double tx = -sin(end), ty = cos(end), nx = cos(end), ny = sin(end);
+        double half = r * 0.21, len = r * 0.34;
+        GpPointF head[3] = {
+            { (REAL)(px + nx * half), (REAL)(py + ny * half) },
+            { (REAL)(px - nx * half), (REAL)(py - ny * half) },
+            { (REAL)(px + tx * len), (REAL)(py + ty * len) }
+        };
+        GpSolidFill *white = NULL;
+        if (GdipCreateSolidFill(0xFFFFFFFF, &white) == Ok) {
+            GdipFillPolygon(g, (GpBrush *)white, head, 3, FillModeWinding);
+            GdipDeleteBrush((GpBrush *)white);
+        }
+    }
+    GdipDeletePen(pen);
+}
+
+/* The window's paint: the bars are black; with the buttons showing, the dirty
+ * part is drawn off screen and copied in, so a button changing colour does not
+ * flicker. */
+static void fit_paint(HWND h, HDC dc, const RECT *r)
+{
+    int w = r->right - r->left, hgt = r->bottom - r->top;
+    if (w <= 0 || hgt <= 0) return;
+    if (g_fit_shown && g_gdiplus_started) {
+        HDC mem = CreateCompatibleDC(dc);
+        HBITMAP bm = mem ? CreateCompatibleBitmap(dc, w, hgt) : NULL;
+        if (mem && bm) {
+            HGDIOBJ old = SelectObject(mem, bm);
+            RECT all = { 0, 0, w, hgt };
+            FillRect(mem, &all, (HBRUSH)GetStockObject(BLACK_BRUSH));
+            GpGraphics *g = NULL;
+            if (GdipCreateFromHDC(mem, &g) == Ok) {
+                GdipSetSmoothingMode(g, SmoothingModeAntiAlias);
+                GdipTranslateWorldTransform(g, (REAL)-r->left, (REAL)-r->top, MatrixOrderPrepend);
+                for (int i = 0; i < 2; i++)
+                    fit_paint_button(g, i, g_fit_cx[i], g_fit_cy[i], g_fit_d / 2.0);
+                GdipDeleteGraphics(g);
+            }
+            BitBlt(dc, r->left, r->top, w, hgt, mem, 0, 0, SRCCOPY);
+            SelectObject(mem, old);
+            DeleteObject(bm);
+            DeleteDC(mem);
+            return;
+        }
+        if (bm) DeleteObject(bm);
+        if (mem) DeleteDC(mem);
+    }
+    (void)h;
+    FillRect(dc, r, (HBRUSH)GetStockObject(BLACK_BRUSH));
+}
+
+/* The window's mouse messages for the buttons; 1 when one was theirs. */
+static int fit_mouse(HWND h, UINT msg, LPARAM lp)
+{
+    int x = (int)(short)LOWORD(lp), y = (int)(short)HIWORD(lp);
+    switch (msg) {
+    case WM_LBUTTONDOWN: {
+        int hit = fit_hit(x, y);
+        if (hit < 0) return 0;
+        g_fit_down = hit;
+        SetCapture(h);
+        fit_invalidate(hit);
+        return 1;
+    }
+    case WM_LBUTTONUP: {
+        if (g_fit_down < 0) return 0;
+        int was = g_fit_down;
+        g_fit_down = -1;
+        ReleaseCapture();
+        fit_invalidate(was);
+        if (fit_hit(x, y) == was) fit_action(was);
+        return 1;
+    }
+    case WM_CAPTURECHANGED:
+        if (g_fit_down >= 0) { fit_invalidate(g_fit_down); g_fit_down = -1; }
+        return 0;
+    case WM_MOUSEMOVE: {
+        int hit = fit_hit(x, y);
+        if (hit != g_fit_hot) {
+            fit_invalidate(g_fit_hot);
+            g_fit_hot = hit;
+            fit_invalidate(hit);
+        }
+        if (!g_fit_tracking) {
+            TRACKMOUSEEVENT tm = { sizeof(tm), TME_LEAVE, h, 0 };
+            if (TrackMouseEvent(&tm)) g_fit_tracking = 1;
+        }
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        g_fit_tracking = 0;
+        if (g_fit_hot >= 0) { fit_invalidate(g_fit_hot); g_fit_hot = -1; }
+        return 0;
+    default: break;
+    }
+    return 0;
+}
+
 static ULONGLONG g_stats_time;
 static unsigned long g_stats_frames;
 static unsigned long long g_stats_pointer_ticks, g_stats_pointer_moves, g_stats_pointer_draws;
@@ -2684,6 +3165,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             view_layout();
             pointer_reposition();
             if (g_pointer_timer_wanted) pointer_timer_start();
+            fit_update();
             InvalidateRect(h, NULL, TRUE);
         }
         return 0;
@@ -2691,6 +3173,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         badges_reposition();
         pointer_reposition();
         refresh_update(false);
+        fit_update();
         return 0;
     case WM_WINDOWPOSCHANGED:
         refresh_update(false);
@@ -2726,6 +3209,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             KillTimer(h, START_TIMER);
             view_layout();
             tl_log_line("windows: the game is past its start (the driver says so); the surface is the window's size again");
+            fit_update();
             return 0;
         }
         break;
@@ -2743,11 +3227,16 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             g_pointer_handled++;
         }
         return 0;
+    case WM_ENTERSIZEMOVE:
+        g_in_sizemove = 1;
+        return 0;
     case WM_EXITSIZEMOVE:
+        g_in_sizemove = 0;
         if (!g_fullscreen) save_geometry();
+        fit_update();
         return 0;
     case WM_SIZING:
-        if (!g_fullscreen && !g_adapt) {
+        if (!g_fullscreen && !g_win_adapt) {
             constrain_sizing((RECT *)lp, wp);
             return TRUE;
         }
@@ -2759,12 +3248,12 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             AdjustWindowRectExForDpi(&r, WINDOW_STYLE, FALSE, 0, GetDpiForSystem());
             mm->ptMinTrackSize.x = r.right - r.left;
             mm->ptMinTrackSize.y = r.bottom - r.top;
-            if (!g_adapt) {
+            if (!g_win_adapt) {
                 MONITORINFO mi = { .cbSize = sizeof(mi) };
                 GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mi);
                 int fw = (r.right - r.left) - MIN_CLIENT_W;
                 int fh = (r.bottom - r.top) - MIN_CLIENT_H;
-                double a = (double)g_layout_w / g_layout_h;
+                double a = window_lock_aspect();
                 int w = mi.rcWork.right - mi.rcWork.left - fw;
                 int ch = (int)(w / a + .5);
                 int room = mi.rcWork.bottom - mi.rcWork.top - fh;
@@ -2800,20 +3289,32 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_LBUTTONDOWN:
         /* A click on a bar: the window takes the focus, the game gets no
-         * touch (the picture is the child window). */
+         * touch (the picture is the child window). On a fit button it is
+         * the button's. */
         SetFocus(h);
+        fit_mouse(h, msg, lp);
         return 0;
-    case WM_ERASEBKGND:
-    case WM_PAINT: {
-        /* The bars are the window's own background: black, and repainted when
-         * the window changes size, never the game's stale pixels. */
-        PAINTSTRUCT ps;
-        HDC dc = msg == WM_PAINT ? BeginPaint(h, &ps) : (HDC)wp;
+    case WM_LBUTTONUP:
+    case WM_CAPTURECHANGED:
+    case WM_MOUSEMOVE:
+    case WM_MOUSELEAVE:
+        fit_mouse(h, msg, lp);
+        return 0;
+    case WM_ERASEBKGND: {
         RECT r;
         GetClientRect(h, &r);
-        FillRect(dc, &r, (HBRUSH)GetStockObject(BLACK_BRUSH));
-        if (msg == WM_PAINT) EndPaint(h, &ps);
+        FillRect((HDC)wp, &r, (HBRUSH)GetStockObject(BLACK_BRUSH));
         return 1;
+    }
+    case WM_PAINT: {
+        /* The bars are the window's own background: black, and repainted when
+         * the window changes size, never the game's stale pixels. The fit
+         * buttons are drawn on them. */
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        fit_paint(h, dc, &ps.rcPaint);
+        EndPaint(h, &ps);
+        return 0;
     }
     case WM_CLOSE: {
         static int asking;
@@ -2822,9 +3323,12 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
          * program's update closes a running game - must not wait for an answer:
          * the game saves and goes, as the updater's own close does. */
         int from_player = GetForegroundWindow() == h;
-        if (g_settings.confirm_quit && !from_player)
+        /* A restart to fit the window closes this copy for its own reasons: no question. */
+        if (g_restarting)
+            tl_log_line("windows: closing to restart in the window's shape; no confirmation for this one");
+        else if (g_settings.confirm_quit && !from_player)
             tl_log_line("windows: closed from another program; no confirmation for this one");
-        if (g_settings.confirm_quit && from_player) {
+        if (g_settings.confirm_quit && from_player && !g_restarting) {
             asking = 1;
             int quit = tl_win_darkmode_confirm_quit(h);
             asking = 0;
@@ -2867,7 +3371,9 @@ static HWND make_window(HINSTANCE inst)
         RECT frame = { 0 };
         AdjustWindowRectExForDpi(&frame, WINDOW_STYLE, FALSE, 0, GetDpiForSystem());
         int fw = frame.right - frame.left, fh = frame.bottom - frame.top;
-        double a = pvz2_settings_aspect(&g_settings, mon);
+        int lw, lh;
+        fixed_shape(mon, &lw, &lh);
+        double a = (double)lw / lh;
         int w = wr.right - wr.left - fw;
         int h = (int)(w / a + .5);
         int room_h = mi.rcWork.bottom - mi.rcWork.top - fh;
@@ -3322,7 +3828,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     tl_win_mkdirs(g_saves);
     /* Before the log is opened: a second start must not truncate the running
      * game's pvz2.log, and must not reach the OBB, ANGLE or the translation. */
-    if (instance_claim()) {
+    if (instance_claim(g_relaunch ? 30000 : 0)) {
+        /* A restart to fit the window is no second start: the copy that started it is leaving, and if it has
+         * not let go in 30 s there is nothing to hand over to, so this one just ends. */
+        if (g_relaunch) return 0;
         set_app_id();
         if (!instance_send(start_action))
             MessageBoxW(NULL, L"This copy is already starting, but has not answered yet.\nPlease try its taskbar action again in a moment.",
@@ -3332,8 +3841,15 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     {
         char logp[MAX_PATH + 16];
         join(logp, sizeof(logp), g_data, "pvz2.log");
-        tl_win_log_open(logp);
+        /* A restart to fit the window is the same session: it keeps appending to the log. */
+        tl_win_log_open_mode(logp, g_relaunch);
     }
+    if (g_relaunch)
+        tl_log_line("windows: restarted to fit the window (the frame %ld,%ld %ldx%ld%s)",
+                    (long)g_relaunch_frame.left, (long)g_relaunch_frame.top,
+                    (long)(g_relaunch_frame.right - g_relaunch_frame.left),
+                    (long)(g_relaunch_frame.bottom - g_relaunch_frame.top),
+                    g_relaunch_maximized ? ", maximized" : "");
     /* The guest resolves relative storage paths ("sdcard/Android/...") against
      * the current folder, as it does on the Mac and iPad, where the process
      * runs in the data folder. A start from the Start menu would otherwise put
@@ -3380,6 +3896,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     pvz2_settings_load(g_settings_path, &g_settings);
     g_start_fullscreen = g_settings.start_fullscreen;
     g_adapt = g_settings.adapt_shape;
+    g_win_adapt = g_adapt;
     g_show_keys = g_settings.show_level_keys;
     g_show_cursor_plant = g_settings.show_cursor_plant;
     g_cross_brightness = g_settings.cursor_cross_brightness;
@@ -3437,6 +3954,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
      * maximized start): the shape the game starts in is chosen from it. */
     startup_layout_from_window();
     view_layout();
+    fit_init(inst);
+    fit_update();
     RECT rc; GetClientRect(g_hwnd, &rc);
     int cw = (int)(rc.right - rc.left), ch = (int)(rc.bottom - rc.top);
     tl_log_line("windows: window %dx%d client, the game draws at %dx%d", cw, ch, g_sw, g_sh);

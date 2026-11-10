@@ -15,6 +15,7 @@ enum { G_EPERM = 1, G_ENOENT = 2, G_EINTR = 4, G_EIO = 5, G_EBADF = 9, G_ECHILD 
        G_ENAMETOOLONG = 36, G_ENOSYS = 38, G_ENOTEMPTY = 39, G_ETIMEDOUT = 110, G_ENOTSUP = 95, G_EAFNOSUPPORT = 97 };
 
 void tl_win_log_open(const char *path);
+void tl_win_log_open_mode(const char *path, int append);
 void tl_win_mkdirs(const char *path);
 const char *tl_data_dir(void);
 const char *tl_path_resolve(const char *path, char *buf, size_t n);

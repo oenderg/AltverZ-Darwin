@@ -35,12 +35,18 @@ static SRWLOCK g_log_lock = SRWLOCK_INIT;
 static FILE *g_log_file;
 static LARGE_INTEGER g_log_t0, g_log_freq;
 
-void tl_win_log_open(const char *path)
+/* Each start begins its own log; a restart to fit the window is the same session and appends to it. */
+void tl_win_log_open_mode(const char *path, int append)
 {
     AcquireSRWLockExclusive(&g_log_lock);
     if (g_log_file) fclose(g_log_file);
-    g_log_file = path ? fopen(path, "w") : NULL;
+    g_log_file = path ? fopen(path, append ? "a" : "w") : NULL;
     ReleaseSRWLockExclusive(&g_log_lock);
+}
+
+void tl_win_log_open(const char *path)
+{
+    tl_win_log_open_mode(path, 0);
 }
 
 void tl_log_line(const char *fmt, ...)

@@ -162,8 +162,9 @@ Settings has four tabs: General, Gameplay, Keyboard and About. General selects F
 or Adapt mode and, in Fixed, the startup aspect (`display`, `game`, `16:9`, `16:10`,
 `3:2`, `4:3`, `21:9`). Fixed constrains interactive resizing to the startup aspect;
 Adapt starts in the window's shape, between 4:3 and 2.4:1. Changing mode or aspect
-takes effect next start. Current display uses that monitor's shape, without bars
-in full screen on supported display shapes. The game's own aspect keeps bars on
+moves the window's rule at once (Fixed resizes the window to the new shape), but the game
+keeps the shape it started in until it restarts. Current display uses that monitor's shape,
+without bars in full screen on supported display shapes. The game's own aspect keeps bars on
 a differently shaped monitor. Size, place and full-screen state are always saved.
 The game picks its art once, at start-up, so its surface starts at least the design's
 804 lines tall even in a smaller window; the picture is stretched into the window
@@ -173,6 +174,27 @@ migrates to Adapt when there is no `resizeMode`. The older keys and pointer
 preferences keep their meanings. Pages scroll when the DPI leaves too little room.
 Ask before quitting is on by default. Close, Alt+F4 and the system menu's Close
 share a Quit/Cancel prompt; only Quit runs the existing background-and-save path.
+
+### The fit buttons
+
+The game lays its screen out once, when it starts. When the window's client shape differs from
+that layout by more than 2% (a resize in Adapt, a snapped or maximized window, a new shape
+chosen in Settings) the picture keeps the game's shape with black bars, and two round buttons
+appear in the larger bar, as on the Mac: never in full screen and not while the game starts.
+They are drawn in the window's own paint, with hit testing in its mouse messages (the picture is
+a child window, so they never take a click from the game), at 36 px at 100% DPI scaled with the
+window's DPI, and they shrink in a narrow bar and disappear below about 20 px.
+
+- **Restart (clockwise arrow).** Starts a new copy of the same program with the same arguments
+  (`--data` and so on; the portable folder and `TL_DATA` carry over by themselves) plus
+  `--relaunch --frame=x,y,w,h` (and `--maximized`), then closes this copy the normal way, so the
+  game saves, without the quit confirmation. The new copy waits up to 30 s for the instance
+  mutex instead of handing over to the old copy, opens at that frame, takes its startup shape
+  from it and appends to the same `pvz2.log`. If the new process does not start, the line
+  `windows: the restart did not start` is logged and the game carries on.
+- **Put back (cross).** Resizes the window to the last frame that had the game's shape, or else
+  the same width in that shape. In Fixed the window keeps the game's shape until the next start
+  (the shape chosen in Settings is kept for then).
 
 `runtime/win/build-win.sh settings-test` builds `out/win/rfl-settings-test.exe`,
 a native Windows test of defaults, old INI migration and round-trip persistence.
