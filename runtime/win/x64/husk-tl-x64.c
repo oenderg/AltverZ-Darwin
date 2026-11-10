@@ -700,14 +700,17 @@ static void remove_stale_copies(void)
     if (removed) tl_log_line("x64: removed %d translation copies earlier runs left in %s", removed, tmp);
 }
 
-/* ScarletNX's invalidator lines go to the driver's log when TL_X64_CODE_TRACE is set: they say which translated
- * functions a code change retired and which dispatch slots it cleared, the difference between a hook running and a
- * stale function still being reached. A hooking game changes code many times, so the lines are off by default. */
+/* ScarletNX's lines go to the driver's log when asked for: the invalidator's (TL_X64_CODE_TRACE) say which
+ * translated functions a code change retired and which dispatch slots it cleared, the difference between a hook
+ * running and a stale function still being reached; a hooking game changes code many times, so those are off by
+ * default. The profile lines (TL_X64_PROFILE) time the translation's phases. */
 static void snx_log(const char *text)
 {
-    static int on = -1;
-    if (on < 0) on = getenv("TL_X64_CODE_TRACE") ? 1 : 0;
-    if (on) tl_log_line("%s", text);
+    static int trace = -1, profile = -1;
+    if (trace < 0) trace = getenv("TL_X64_CODE_TRACE") ? 1 : 0;
+    if (profile < 0) profile = getenv("TL_X64_PROFILE") ? 1 : 0;
+    if ((profile && !strncmp(text, "profile:", 8)) || (trace && strncmp(text, "profile:", 8)))
+        tl_log_line("%s", text);
 }
 
 bool tl_x64_translate(const char *cache_dir, char *err, size_t errlen)
@@ -730,14 +733,28 @@ bool tl_x64_translate(const char *cache_dir, char *err, size_t errlen)
          * translated function checks whether its code changed, and IC IVAU reports the change (on_code_changed) */
         snx_recompiler_set_live_code(g_rec, 1);
         snx_recompiler_set_hook_direct_calls(g_rec, 1);
+        const char *jobs = getenv("TL_X64_JOBS");
+        if (jobs) snx_recompiler_set_jobs(g_rec, (unsigned)strtoul(jobs, NULL, 10));
+        const char *opt = getenv("TL_X64_OPT");
+        if (opt && opt[0] >= '0' && opt[0] <= '3') snx_recompiler_set_optimization(g_rec, opt[0]);
         if (cache_dir) snx_recompiler_set_cache(g_rec, cache_dir);
     }
     tl_log_line("x64: translating %zu code ranges with %zu function starts", R.n, nh);
+    FILETIME created, exited, kernel, user;
+    GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
+    ULONGLONG cpu0 = ((ULONGLONG)kernel.dwHighDateTime << 32 | kernel.dwLowDateTime) +
+                     ((ULONGLONG)user.dwHighDateTime << 32 | user.dwLowDateTime);
     ULONGLONG t0 = GetTickCount64();
     g_mod = snx_recompile_ranges(g_rec, R.r, R.n, hints, nh);
     free(hints);
     if (!g_mod) { snprintf(err, errlen, "%s", snx_recompiler_error(g_rec)); return false; }
-    tl_log_line("x64: %zu functions translated in %.1f s", snx_recompiled_functions(g_mod), (double)(GetTickCount64() - t0) / 1000.0);
+    ULONGLONG wall = GetTickCount64() - t0;
+    GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
+    ULONGLONG cpu = ((ULONGLONG)kernel.dwHighDateTime << 32 | kernel.dwLowDateTime) +
+                    ((ULONGLONG)user.dwHighDateTime << 32 | user.dwLowDateTime) - cpu0;
+    tl_log_line("x64: %zu functions translated in %.1f s", snx_recompiled_functions(g_mod), (double)wall / 1000.0);
+    tl_log_line("x64: translation used %.1f s CPU over %.1f s wall (%.1f cores)", (double)cpu / 10000000.0,
+                (double)wall / 1000.0, wall ? (double)cpu / 10000.0 / (double)wall : 0.0);
     if (t_th) snx_recompiled_bind(g_mod, &t_th->cpu);
     return true;
 }
