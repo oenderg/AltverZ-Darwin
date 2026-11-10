@@ -2919,9 +2919,10 @@ static LRESULT CALLBACK progress_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_TIMER:
         progress_tick(h);
-        if (g_progress_preview_until && GetTickCount64() >= g_progress_preview_until) {
-            /* A UI-only preview has no game state to save or confirm. */
-            DestroyWindow(g_hwnd);
+        if (g_progress_preview_until) {
+            /* A preview runs against a warm cache, so the game begins drawing behind it in seconds. It is a UI
+             * test and stays up for its whole span; only the deadline ends it. */
+            if (GetTickCount64() >= g_progress_preview_until) DestroyWindow(g_hwnd);
             return 0;
         }
         if (tl_pvz2_frames() > 0 || atomic_load(&g_driver_done)) {
