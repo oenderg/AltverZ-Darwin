@@ -89,10 +89,12 @@ int tl_win_obb_ensure(const char *data_dir, const char *exe_dir);
 static int g_sw = DESIGN_W, g_sh = DESIGN_H;
 /* The game starts at the design height whatever the window size, so that it
  * picks its HD art; the picture is stretched into the window until the game is
- * past its start. Then the surface follows the window again. */
+ * past its start. Then the surface follows the window again. The driver's
+ * signal is the only way out: a cold translation keeps the game before its
+ * start for minutes, and ending the boost early leaves the guest's layout and
+ * its touch mapping at the boosted size, so clicks miss in a small window. */
 static int g_starting = 1;
 static int g_surface_locked;
-static ULONGLONG g_start_ticks;
 static HWND g_hwnd;
 /* The picture: the game is a child window, the largest rectangle of the game's
  * shape that fits, centred. See "the picture" below. */
@@ -2551,13 +2553,11 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                 KillTimer(h, START_TIMER);
                 return 0;
             }
-            int done = tl_pvz2_started();
-            if (!done && GetTickCount64() - g_start_ticks < 20000) return 0;
+            if (!tl_pvz2_started()) return 0;
             g_starting = 0;
             KillTimer(h, START_TIMER);
             view_layout();
-            tl_log_line("windows: the game is past its start (%s); the surface is the window's size again",
-                        done ? "the driver says so" : "the 20 s limit");
+            tl_log_line("windows: the game is past its start (the driver says so); the surface is the window's size again");
             return 0;
         }
         break;
@@ -3121,7 +3121,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     /* The game starts at the surface chosen above; a window resize cannot
      * change it until the game is past its start. */
     g_surface_locked = 1;
-    g_start_ticks = GetTickCount64();
     SetTimer(g_hwnd, START_TIMER, 250, NULL);
 #if defined(__x86_64__)
     if (!g_progress_preview_until)
