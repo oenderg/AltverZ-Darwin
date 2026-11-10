@@ -1,7 +1,7 @@
 # ScarletNX cold translation: schedule the code units by size, largest first
 
-Draft for an upstream change; the manager decides whether to open it. The numbers are from the Windows x86-64
-PvZ2 run in the VM (6 emulated cores), not from the 24-thread PC that judges the final result.
+Draft for an upstream change; not sent to ScarletNX yet. The numbers are from the Windows x86-64
+PvZ2 run in the VM (6 emulated cores), not from the 24-thread desktop PC that judges the final result.
 
 ## What
 
@@ -56,9 +56,9 @@ not found on another, and copying it there does not help. A warm start loads it 
 
 ## The PC
 
-The user's 24-thread i7-13700K did the same 100,308 functions in 289.5 s with the old units, and a mid-run sample
+A 24-thread desktop PC (8 performance and 8 efficiency cores) did the same 100,308 functions in 289.5 s with the old units, and a mid-run sample
 averaged about one core: most workers had finished and a few units were still running. That is the tail this
-change targets. The manager will test 24 jobs, 30k and 45k chunks, instruction and leader weight, and the sort on
+change targets. The next test on that PC: 24 jobs, 30k and 45k chunks, instruction and leader weight, and the sort on
 the PC. The VM cannot show the PC's P-core/E-core balance.
 
 ## Upstream

@@ -6,7 +6,7 @@ name: ANGLE for Windows
 # uploads one artifact per architecture with the DLLs, d3dcompiler_47.dll, commit.txt,
 # gn-args.txt, run.txt and ANGLE's LICENSE.
 #
-# The manager runs it from the branch ci/angle-windows before the change reaches main,
+# A maintainer runs it from the branch ci/angle-windows before the change reaches main,
 # then copies the two artifacts into prebuilt/win-x64 and prebuilt/win-arm64
 # (docs/windows-shipping.md, "Refreshing ANGLE", says exactly what to copy).
 

@@ -1,6 +1,6 @@
 # ScarletNX cold translation: a progress callback for the caller's window
 
-Draft for an upstream change; the manager decides whether to open it.
+Draft for an upstream change; not sent to ScarletNX yet.
 
 ## What
 

@@ -85,8 +85,7 @@ int main(void) {
 }
 """
 
-temp_root = Path(tempfile.gettempdir()) / "opencode"
-with tempfile.TemporaryDirectory(dir=temp_root if temp_root.is_dir() else None) as tmp:
+with tempfile.TemporaryDirectory() as tmp:
     c = Path(tmp) / "progress.c"
     exe = Path(tmp) / "progress-test"
     c.write_text(harness)
