@@ -713,8 +713,39 @@ static void snx_log(const char *text)
         tl_log_line("%s", text);
 }
 
+/* The cold translation's progress, for the preparing window: the workers report each finished unit's weight, and the
+ * UI thread reads the last values. The weight is what the units were sized by, so the bar follows the work. */
+static atomic_ullong g_progress_weight, g_progress_weight_total;
+static atomic_ullong g_progress_functions, g_progress_functions_total;
+static atomic_int g_progress_running;
+
+static void x64_progress(void *user, unsigned long long weight_done, unsigned long long weight_total,
+                         unsigned long long functions_done, unsigned long long functions_total)
+{
+    (void)user;
+    atomic_store_explicit(&g_progress_weight, weight_done, memory_order_relaxed);
+    atomic_store_explicit(&g_progress_weight_total, weight_total, memory_order_relaxed);
+    atomic_store_explicit(&g_progress_functions, functions_done, memory_order_relaxed);
+    atomic_store_explicit(&g_progress_functions_total, functions_total, memory_order_relaxed);
+}
+
+void tl_x64_progress(unsigned long long *weight_done, unsigned long long *weight_total,
+                     unsigned long long *functions_done, unsigned long long *functions_total, int *running)
+{
+    if (weight_done) *weight_done = atomic_load_explicit(&g_progress_weight, memory_order_relaxed);
+    if (weight_total) *weight_total = atomic_load_explicit(&g_progress_weight_total, memory_order_relaxed);
+    if (functions_done) *functions_done = atomic_load_explicit(&g_progress_functions, memory_order_relaxed);
+    if (functions_total) *functions_total = atomic_load_explicit(&g_progress_functions_total, memory_order_relaxed);
+    if (running) *running = atomic_load_explicit(&g_progress_running, memory_order_relaxed);
+}
+
 bool tl_x64_translate(const char *cache_dir, char *err, size_t errlen)
 {
+    atomic_store(&g_progress_weight, 0);
+    atomic_store(&g_progress_weight_total, 0);
+    atomic_store(&g_progress_functions, 0);
+    atomic_store(&g_progress_functions_total, 0);
+    atomic_store(&g_progress_running, 1);
     remove_stale_copies();
     ranges R = { 0 };
     tl_ld_iterate(add_lib, &R);
@@ -725,6 +756,7 @@ bool tl_x64_translate(const char *cache_dir, char *err, size_t errlen)
         g_rec = snx_recompiler_new(SNX_RECOMPILER_FLAG_LLVM);
         if (!g_rec) { snprintf(err, errlen, "the recompiler cannot target this computer"); return false; }
         snx_recompiler_set_log(snx_log);
+        snx_recompiler_set_progress(g_rec, x64_progress, NULL);
         /* the default target, an Armv8.0 CPU: pointer authentication and BTI (libRFLib's PACIASP) are hints there and run
          * as no-ops; the MAX target decodes them as the real instructions, which the backend has no code for */
         snx_recompiler_set_a64_target(g_rec, SNX_RECOMPILER_A64_SWITCH);
@@ -747,7 +779,17 @@ bool tl_x64_translate(const char *cache_dir, char *err, size_t errlen)
     ULONGLONG t0 = GetTickCount64();
     g_mod = snx_recompile_ranges(g_rec, R.r, R.n, hints, nh);
     free(hints);
-    if (!g_mod) { snprintf(err, errlen, "%s", snx_recompiler_error(g_rec)); return false; }
+    if (!g_mod) {
+        atomic_store(&g_progress_running, 0);
+        snprintf(err, errlen, "%s", snx_recompiler_error(g_rec));
+        return false;
+    }
+    /* The units are all in the module, descriptor, link and load included: what is left is the guest's start. */
+    unsigned long long total = atomic_load(&g_progress_weight_total);
+    if (total) atomic_store(&g_progress_weight, total);
+    total = atomic_load(&g_progress_functions_total);
+    if (total) atomic_store(&g_progress_functions, total);
+    atomic_store(&g_progress_running, 0);
     ULONGLONG wall = GetTickCount64() - t0;
     GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
     ULONGLONG cpu = ((ULONGLONG)kernel.dwHighDateTime << 32 | kernel.dwLowDateTime) +

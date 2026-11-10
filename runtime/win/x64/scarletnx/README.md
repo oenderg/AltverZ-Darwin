@@ -22,6 +22,9 @@ What the patch adds to `src/common/cpu/recompiler/library.c` and `snx_recompiler
   `TL_X64_UNIT_SORT=0` measure other values. `upstream-unit-schedule.md` has the cold-run numbers.
 - **Profile** (`TL_X64_PROFILE`): the phase times (codegen, unit compile, descriptor, link, load, save) and each
   unit's function range, weight and seconds, through the driver's log callback.
+- **Progress** (`snx_recompiler_set_progress`): a callback with the units' weight and functions done and total,
+  once with the totals and then after each unit finishes; the Windows preparing window uses it for its bar and
+  estimate. `upstream-progress.md` has the numbers.
 
 The leader fix that used to be in the patch is upstream as `5b9c0fab` ("Clear every leader's dispatch slot on
 invalidation", https://github.com/scarletnx/ScarletNX/pull/1449, merged 2026-11-08), so the patch no longer

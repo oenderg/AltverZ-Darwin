@@ -50,7 +50,7 @@
 #include "../win/pvz2-obb-win.h"
 #if defined(__x86_64__)
 /* A bounded preview proves the first-start UI without translating the game. */
-static ULONGLONG g_progress_preview_until;
+static ULONGLONG g_progress_preview_until, g_progress_preview_start, g_progress_preview_ms;
 #include "husk-tl-x64.h"
 #endif
 
@@ -136,7 +136,21 @@ static WINDOWPLACEMENT g_windowed_placement;
 static int g_start_fullscreen;
 
 static HWND g_progress;
-static HFONT g_progress_font;
+static HWND g_progress_bar, g_progress_status;
+static HFONT g_progress_font, g_progress_title_font;
+static UINT g_progress_dpi;
+/* The bar's samples: 5 s at the timer's 100 ms, and the same for the functions, so both rates are a moving average
+ * instead of the jump of a single unit. */
+#define PROGRESS_SAMPLES 51
+static unsigned long long g_progress_hist_weight[PROGRESS_SAMPLES], g_progress_hist_functions[PROGRESS_SAMPLES];
+static ULONGLONG g_progress_hist_time[PROGRESS_SAMPLES];
+static int g_progress_hist_next, g_progress_hist_count;
+static ULONGLONG g_progress_shown, g_progress_last_log;
+static unsigned long long g_progress_base_weight;
+static ULONGLONG g_progress_base_time;
+static int g_progress_have_base;
+static double g_progress_estimate;
+static int g_progress_have_estimate;
 
 static void keyboard_shown(int show) { tl_log_line("windows: the game %s the keyboard", show ? "shows" : "hides"); }
 
@@ -2754,14 +2768,157 @@ static int translation_needed(void)
     return !found;
 }
 
+/* "about 2 minutes left", or "estimating..." when the rate is not known yet or the guess is past half an hour (a
+ * cold start's first units are the slowest, so their rate alone would promise hours). */
+static void progress_estimate_text(wchar_t *out, size_t n, int valid, double seconds)
+{
+    if (!valid || seconds > 1800.0) {
+        wcsncpy(out, L"estimating...", n);
+        out[n - 1] = 0;
+        return;
+    }
+    if (seconds < 60.0) {
+        wcsncpy(out, L"less than a minute left", n);
+        out[n - 1] = 0;
+        return;
+    }
+    int minutes = (int)((seconds + 30.0) / 60.0);
+    if (minutes < 1) minutes = 1;
+    swprintf(out, n, L"about %d minute%s left", minutes, minutes == 1 ? L"" : L"s");
+}
+
+static void progress_tick(HWND h)
+{
+    unsigned long long weight_done = 0, weight_total = 0, functions_done = 0, functions_total = 0;
+    int running = 0;
+    tl_x64_progress(&weight_done, &weight_total, &functions_done, &functions_total, &running);
+    ULONGLONG now = GetTickCount64();
+    if (g_progress_preview_until) {
+        /* The preview runs the same window from a made-up clock: it has no translation to watch. */
+        ULONGLONG ms = g_progress_preview_ms ? g_progress_preview_ms : 1;
+        ULONGLONG elapsed = now - g_progress_preview_start;
+        if (elapsed > ms) elapsed = ms;
+        weight_total = 1000000;
+        weight_done = weight_total * elapsed / ms;
+        functions_total = 100308;
+        functions_done = functions_total * elapsed / ms;
+        running = 1;
+    }
+    if (!g_progress_bar || !g_progress_status) return;
+    if (weight_total == 0) {
+        SetWindowTextW(g_progress_status, L"Starting...");
+        return;
+    }
+    if (weight_done > weight_total) weight_done = weight_total;
+    SendMessageW(g_progress_bar, PBM_SETPOS, (WPARAM)((weight_done * 1000 + weight_total / 2) / weight_total), 0);
+
+    /* The rate is a five-second moving average of the weight and the functions. A single finished unit is a jump;
+     * the window should not turn that jump into a one-second estimate. */
+    g_progress_hist_weight[g_progress_hist_next] = weight_done;
+    g_progress_hist_functions[g_progress_hist_next] = functions_done;
+    g_progress_hist_time[g_progress_hist_next] = now;
+    g_progress_hist_next = (g_progress_hist_next + 1) % PROGRESS_SAMPLES;
+    if (g_progress_hist_count < PROGRESS_SAMPLES) g_progress_hist_count++;
+    int oldest = (g_progress_hist_next - g_progress_hist_count + PROGRESS_SAMPLES) % PROGRESS_SAMPLES;
+    double seconds = (double)(now - g_progress_hist_time[oldest]) / 1000.0;
+    double weight_rate = 0.0, function_rate = 0.0;
+    if (seconds >= 1.0) {
+        weight_rate = (double)(weight_done - g_progress_hist_weight[oldest]) / seconds;
+        function_rate = (double)(functions_done - g_progress_hist_functions[oldest]) / seconds;
+        if (weight_rate < 0.0) weight_rate = 0.0;
+        if (function_rate < 0.0) function_rate = 0.0;
+    }
+    double percent = (double)weight_done * 100.0 / (double)weight_total;
+    /* The first units are the largest and the slowest per weight, so a rate taken from the start promises far too
+     * long. Take the estimate's rate from the 10% mark: by then the units flow, and the average over everything since
+     * is stable enough not to jump with each completion. */
+    if (!g_progress_have_base && weight_total && weight_done * 10 >= weight_total) {
+        g_progress_base_weight = weight_done;
+        g_progress_base_time = now;
+        g_progress_have_base = 1;
+    }
+    int estimate_valid = 0;
+    if (g_progress_have_base && weight_done < weight_total) {
+        double span = (double)(now - g_progress_base_time) / 1000.0;
+        /* Twenty seconds is long enough that a stall between two units does not double the estimate. */
+        double rate = span >= 20.0 ? (double)(weight_done - g_progress_base_weight) / span : 0.0;
+        if (rate > 1.0) {
+            double left = (double)(weight_total - weight_done) / rate;
+            if (!g_progress_have_estimate) {
+                g_progress_estimate = left;
+                g_progress_have_estimate = 1;
+            } else {
+                g_progress_estimate = g_progress_estimate * 0.8 + left * 0.2;
+            }
+            estimate_valid = 1;
+        }
+    }
+    wchar_t estimate[96], number[32], status[160];
+    if (weight_done >= weight_total) wcscpy(estimate, L"Finishing up...");
+    else progress_estimate_text(estimate, 96, estimate_valid, g_progress_estimate);
+    if (percent < 10.0) swprintf(number, 32, L"%.1f%%", percent);
+    else swprintf(number, 32, L"%.0f%%", percent);
+    swprintf(status, 160, L"%ls \u00b7 %ls", number, estimate);
+    SetWindowTextW(g_progress_status, status);
+
+    /* Every five seconds in the log, so a run can be followed without the window. */
+    if (now - g_progress_last_log >= 5000 || g_progress_last_log == 0) {
+        char estimate8[96];
+        if (weight_done >= weight_total) {
+            snprintf(estimate8, sizeof(estimate8), "finishing up");
+        } else if (estimate_valid && g_progress_estimate <= 1800.0) {
+            if (g_progress_estimate < 60.0) snprintf(estimate8, sizeof(estimate8), "less than a minute left");
+            else {
+                int minutes = (int)((g_progress_estimate + 30.0) / 60.0);
+                if (minutes < 1) minutes = 1;
+                snprintf(estimate8, sizeof(estimate8), "about %d minute%s left", minutes, minutes == 1 ? "" : "s");
+            }
+        } else {
+            snprintf(estimate8, sizeof(estimate8), "estimating");
+        }
+        tl_log_line("windows: preparing %.1f%% (%.2fM of %.2fM weight, %llu of %llu functions), %.0f weight/s, %.0f functions/s, %s",
+                    percent, (double)weight_done / 1e6, (double)weight_total / 1e6, functions_done,
+                    functions_total, weight_rate, function_rate, estimate8);
+        g_progress_last_log = now;
+    }
+}
+
 static LRESULT CALLBACK progress_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     (void)wp;
     switch (msg) {
-    case WM_CREATE:
+    case WM_CREATE: {
+        UINT dpi = g_progress_dpi;
+        if (!dpi) dpi = GetDpiForWindow(h);
+        if (!dpi) dpi = GetDpiForSystem();
+        int margin = MulDiv(20, dpi, 96), width = MulDiv(520, dpi, 96);
+        HWND title = CreateWindowExW(0, L"STATIC", L"Getting the game ready for your PC",
+                                     WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+                                     margin, MulDiv(16, dpi, 96), width, MulDiv(28, dpi, 96), h, NULL,
+                                     GetModuleHandleW(NULL), NULL);
+        HWND body = CreateWindowExW(0, L"STATIC",
+                                    L"Plants vs. Zombies 2 was made for phones, which use a different kind of "
+                                    L"processor than your PC. This one-time step translates the game so your PC can "
+                                    L"run it. It takes a few minutes and won't happen again.",
+                                    WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+                                    margin, MulDiv(48, dpi, 96), width, MulDiv(86, dpi, 96), h, NULL,
+                                    GetModuleHandleW(NULL), NULL);
+        g_progress_bar = CreateWindowExW(0, PROGRESS_CLASSW, NULL, WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
+                                         margin, MulDiv(144, dpi, 96), width, MulDiv(20, dpi, 96), h, NULL,
+                                         GetModuleHandleW(NULL), NULL);
+        g_progress_status = CreateWindowExW(0, L"STATIC", L"Starting...", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+                                            margin, MulDiv(172, dpi, 96), width, MulDiv(22, dpi, 96), h, NULL,
+                                            GetModuleHandleW(NULL), NULL);
+        SendMessageW(title, WM_SETFONT, (WPARAM)g_progress_title_font, TRUE);
+        SendMessageW(body, WM_SETFONT, (WPARAM)g_progress_font, TRUE);
+        SendMessageW(g_progress_bar, WM_SETFONT, (WPARAM)g_progress_font, TRUE);
+        SendMessageW(g_progress_status, WM_SETFONT, (WPARAM)g_progress_font, TRUE);
+        SendMessageW(g_progress_bar, PBM_SETRANGE32, 0, 1000);
         SetTimer(h, 1, 100, NULL);
         return 0;
+    }
     case WM_TIMER:
+        progress_tick(h);
         if (g_progress_preview_until && GetTickCount64() >= g_progress_preview_until) {
             /* A UI-only preview has no game state to save or confirm. */
             DestroyWindow(g_hwnd);
@@ -2780,7 +2937,9 @@ static LRESULT CALLBACK progress_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_DESTROY:
         if (g_progress == h) g_progress = NULL;
+        g_progress_bar = g_progress_status = NULL;
         if (g_progress_font) { DeleteObject(g_progress_font); g_progress_font = NULL; }
+        if (g_progress_title_font) { DeleteObject(g_progress_title_font); g_progress_title_font = NULL; }
         tl_log_line("windows: the game is drawing; the preparing window is gone");
         return 0;
     default: break;
@@ -2798,35 +2957,50 @@ static void show_progress_window(HINSTANCE inst)
     wc.lpszClassName = L"PvZ2ReflourishedPrepare";
     RegisterClassExW(&wc);
 
-    UINT dpi = GetDpiForSystem();
-    RECT r = { 0, 0, MulDiv(460, dpi, 96), MulDiv(120, dpi, 96) };
+    UINT dpi = g_hwnd ? GetDpiForWindow(g_hwnd) : 0;
+    if (!dpi) dpi = GetDpiForSystem();
+    if (!dpi) dpi = 96;
+    /* A preview on a display whose scale cannot be changed (the VM's virtual one) lays the window out at the DPI a
+     * real 150% or 200% display would use. It only ever applies to the preview: a real first start uses the display. */
+    const char *preview_dpi = getenv("TL_PVZ2_PREVIEW_DPI");
+    if (g_progress_preview_until && preview_dpi) {
+        int forced = atoi(preview_dpi);
+        if (forced >= 96 && forced <= 480) dpi = (UINT)forced;
+    }
+    g_progress_dpi = dpi;
+    RECT r = { 0, 0, MulDiv(560, dpi, 96), MulDiv(216, dpi, 96) };
     AdjustWindowRectExForDpi(&r, WS_CAPTION | WS_SYSMENU, FALSE, 0, dpi);
     int w = r.right - r.left, h = r.bottom - r.top;
     RECT game;
     GetWindowRect(g_hwnd, &game);
     int x = game.left + ((game.right - game.left) - w) / 2;
     int y = game.top + ((game.bottom - game.top) - h) / 2;
-    HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, L"PvZ2ReflourishedPrepare", L"PvZ2 Reflourished",
-                                WS_CAPTION | WS_SYSMENU, x, y, w, h, g_hwnd, NULL, inst, NULL);
-    if (!hwnd) return;
+    MONITORINFO mi = { .cbSize = sizeof(mi) };
+    if (GetMonitorInfoW(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &mi)) {
+        if (x < mi.rcWork.left) x = mi.rcWork.left;
+        if (y < mi.rcWork.top) y = mi.rcWork.top;
+        if (x + w > mi.rcWork.right) x = mi.rcWork.right - w;
+        if (y + h > mi.rcWork.bottom) y = mi.rcWork.bottom - h;
+    }
     NONCLIENTMETRICSW ncm = { .cbSize = sizeof(ncm) };
     if (!SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0, dpi))
         SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
-    HFONT font = CreateFontIndirectW(&ncm.lfMessageFont);
-    g_progress_font = font;
-    HWND text = CreateWindowExW(0, L"STATIC", L"Preparing the game for this PC. This happens once.",
-                                WS_CHILD | WS_VISIBLE, MulDiv(16, dpi, 96), MulDiv(16, dpi, 96),
-                                MulDiv(420, dpi, 96), MulDiv(22, dpi, 96), hwnd, NULL, inst, NULL);
-    HWND bar = CreateWindowExW(0, PROGRESS_CLASSW, NULL, WS_CHILD | WS_VISIBLE | PBS_MARQUEE,
-                               MulDiv(16, dpi, 96), MulDiv(52, dpi, 96), MulDiv(420, dpi, 96), MulDiv(20, dpi, 96),
-                               hwnd, NULL, inst, NULL);
-    HWND note = CreateWindowExW(0, L"STATIC", L"It can take several minutes.", WS_CHILD | WS_VISIBLE,
-                                MulDiv(16, dpi, 96), MulDiv(80, dpi, 96), MulDiv(420, dpi, 96), MulDiv(20, dpi, 96),
-                                hwnd, NULL, inst, NULL);
-    SendMessageW(text, WM_SETFONT, (WPARAM)font, TRUE);
-    SendMessageW(bar, WM_SETFONT, (WPARAM)font, TRUE);
-    SendMessageW(note, WM_SETFONT, (WPARAM)font, TRUE);
-    SendMessageW(bar, PBM_SETMARQUEE, TRUE, 30);
+    g_progress_font = CreateFontIndirectW(&ncm.lfMessageFont);
+    LOGFONTW title = ncm.lfMessageFont;
+    title.lfWeight = FW_SEMIBOLD;
+    title.lfHeight = -MulDiv(14, dpi, 96);
+    g_progress_title_font = CreateFontIndirectW(&title);
+    g_progress_shown = GetTickCount64();
+    g_progress_last_log = 0;
+    g_progress_hist_next = g_progress_hist_count = 0;
+    g_progress_have_base = 0;
+    g_progress_base_weight = 0;
+    g_progress_base_time = 0;
+    g_progress_estimate = 0.0;
+    g_progress_have_estimate = 0;
+    HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, L"PvZ2ReflourishedPrepare", L"PvZ2 Reflourished",
+                                WS_CAPTION | WS_SYSMENU, x, y, w, h, g_hwnd, NULL, inst, NULL);
+    if (!hwnd) return;
     tl_win_darkmode_window(hwnd);
     /* Theme before the first paint, including the labels' parent colours. A
      * visible creation paints the light class brush before subclassing. */
@@ -3111,7 +3285,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     if (preview && atoi(preview) > 0) {
         int seconds = atoi(preview);
         if (seconds > 120) seconds = 120;
-        g_progress_preview_until = GetTickCount64() + seconds * 1000;
+        g_progress_preview_start = GetTickCount64();
+        g_progress_preview_ms = (ULONGLONG)seconds * 1000;
+        g_progress_preview_until = g_progress_preview_start + g_progress_preview_ms;
         show_progress_window(inst);
     } else {
     if (translation_needed()) show_progress_window(inst);

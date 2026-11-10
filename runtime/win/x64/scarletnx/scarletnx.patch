@@ -1,5 +1,5 @@
 diff --git a/src/common/cpu/recompiler/library.c b/src/common/cpu/recompiler/library.c
-index c2f7281..5c15b8f 100644
+index c2f7281..1207f11 100644
 --- a/src/common/cpu/recompiler/library.c
 +++ b/src/common/cpu/recompiler/library.c
 @@ -52,7 +52,7 @@ extern const unsigned long snx_rtlib_bitcode_size;
@@ -11,18 +11,25 @@ index c2f7281..5c15b8f 100644
  #endif
  /* the dispatch table holds a pointer per instruction slot of the code range: a range this wide is not a program */
  #define MAX_CODE_SPAN ((uint64_t)1 << 30)
-@@ -78,6 +78,7 @@ struct snx_recompiler {
+@@ -78,6 +78,9 @@ struct snx_recompiler {
      unsigned jobs;
      int verbose;
      int hook_direct_calls;
 +    int live_code; /* the JIT reads the caller's ranges in place (code patched later is compiled as it is then) */
++    snx_progress_fn progress; /* a caller's window: the units' weight as they finish */
++    void* progress_user;
      char* keep_ir;
      char* cache; /* folder of linked modules by the hash of what they were made from (LLVM), NULL for none */
      char error[1024];
-@@ -228,6 +229,10 @@ int snx_recompiler_set_a64_target(struct snx_recompiler* r, int target) {
+@@ -228,6 +231,15 @@ int snx_recompiler_set_a64_target(struct snx_recompiler* r, int target) {
  }
  
  void snx_recompiler_set_jobs(struct snx_recompiler* r, unsigned jobs) { r->jobs = jobs; }
++void snx_recompiler_set_progress(struct snx_recompiler* r, snx_progress_fn fn, void* user) {
++    if (!r) return;
++    r->progress = fn;
++    r->progress_user = user;
++}
 +void snx_recompiler_set_live_code(struct snx_recompiler* r, int enabled) {
 +    if (r) r->live_code = enabled != 0;
 +}
@@ -30,7 +37,7 @@ index c2f7281..5c15b8f 100644
  void snx_recompiler_set_hook_direct_calls(struct snx_recompiler* r, int enabled) {
      if (r) r->hook_direct_calls = enabled != 0;
  }
-@@ -388,25 +393,54 @@ static SnxCodeImage* images(struct snx_recompiler* r, const struct snx_code_rang
+@@ -388,25 +400,54 @@ static SnxCodeImage* images(struct snx_recompiler* r, const struct snx_code_rang
      return views;
  }
  
@@ -92,7 +99,7 @@ index c2f7281..5c15b8f 100644
          units[n++] = first;
      }
      units[n] = codegen->function_count;
-@@ -597,10 +631,19 @@ static int load_descriptor(struct snx_recompiler* r, struct snx_recompiled* m, c
+@@ -597,15 +638,26 @@ static int load_descriptor(struct snx_recompiler* r, struct snx_recompiled* m, c
  
  typedef struct {
      size_t first, last; /* functions */
@@ -112,7 +119,14 @@ index c2f7281..5c15b8f 100644
  typedef struct {
      struct snx_recompiler* r;
      SnxCodegen* codegen;
-@@ -629,6 +672,8 @@ static int llvm_unit(Queue* q, size_t index, char* error, size_t error_size) {
+     Unit* units;
+     size_t count, next, done;
++    unsigned long long weight_done, weight_total;
++    unsigned long long functions_done, functions_total;
+     int failed;
+     char error[1024];
+     SnxWorkLock lock;
+@@ -629,6 +681,8 @@ static int llvm_unit(Queue* q, size_t index, char* error, size_t error_size) {
      return rc;
  }
  
@@ -121,17 +135,28 @@ index c2f7281..5c15b8f 100644
  static void worker(void* arg) {
      Queue* q = (Queue*)arg;
      char error[1024];
-@@ -653,6 +698,9 @@ static void worker(void* arg) {
+@@ -649,10 +703,19 @@ static void worker(void* arg) {
+             q->failed = 1;
+             snprintf(q->error, sizeof(q->error), "%s", error);
+         }
+-        if (!rc)
++        if (!rc) {
++            q->weight_done += q->units[i].weight;
++            q->functions_done += q->units[i].last - q->units[i].first;
++            if (q->r->progress)
++                q->r->progress(q->r->progress_user, q->weight_done, q->weight_total, q->functions_done,
++                               q->functions_total);
              report(q->r, "  compiled unit %lu/%lu: functions %lu-%lu (%.1f s)\n", (unsigned long)q->done,
                     (unsigned long)q->count, (unsigned long)q->units[i].first, (unsigned long)q->units[i].last,
                     snx_seconds() - start);
++        }
 +        profile_log("unit %lu/%lu: functions %lu-%lu, %lu weight, %.1f s", (unsigned long)q->done,
 +                    (unsigned long)q->count, (unsigned long)q->units[i].first, (unsigned long)q->units[i].last,
 +                    (unsigned long)q->units[i].weight, snx_seconds() - start);
          snx_work_unlock(&q->lock);
      }
  }
-@@ -937,6 +985,9 @@ done:
+@@ -937,6 +1000,9 @@ done:
  }
  #endif
  
@@ -141,7 +166,7 @@ index c2f7281..5c15b8f 100644
  static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, SnxCodegen* codegen) {
      Queue q;
      SnxIr* ir = NULL;
-@@ -949,10 +1000,12 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+@@ -949,10 +1015,12 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
      char* cached = NULL;
      memset(&q, 0, sizeof(q));
      error[0] = 0;
@@ -154,7 +179,7 @@ index c2f7281..5c15b8f 100644
      if (r->cache) {
          cached = cache_path(r, codegen);
  #if defined(__powerpc64__)
-@@ -964,6 +1017,7 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+@@ -964,6 +1032,7 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
              return 0;
          }
      }
@@ -162,7 +187,7 @@ index c2f7281..5c15b8f 100644
      units = chunks(codegen, r->jobs, &count);
      if (!units) {
          fail(r, "out of memory");
-@@ -978,12 +1032,23 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+@@ -978,12 +1047,26 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
      for (i = 0; i < count; ++i) {
          q.units[i].first = units[i];
          q.units[i].last = units[i + 1];
@@ -176,6 +201,9 @@ index c2f7281..5c15b8f 100644
      q.count = count;
      q.r = r;
      q.codegen = codegen;
++    for (i = 0; i < count; ++i) q.weight_total += q.units[i].weight;
++    q.functions_total = codegen->function_count;
++    if (r->progress) r->progress(r->progress_user, 0, q.weight_total, 0, q.functions_total);
 +    profile_mark("chunks", &t);
 +    profile_log("chunks: %lu units, %u jobs, %s, %s", (unsigned long)count,
 +                r->jobs ? r->jobs : (unsigned)snx_cpu_count(), sort_units ? "largest first" : "code order",
@@ -186,7 +214,7 @@ index c2f7281..5c15b8f 100644
      if (q.failed) {
          fail(r, "LLVM backend: %s", q.error);
          goto done;
-@@ -995,12 +1060,14 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+@@ -995,12 +1078,14 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
          fail(r, "LLVM backend: %s", error[0] ? error : "cannot save the descriptor's IR");
          goto done;
      }
@@ -201,7 +229,7 @@ index c2f7281..5c15b8f 100644
      /* link: runtime library, descriptor, units */
      inputs = (SnxLinkInput*)calloc(count + 2, sizeof(*inputs));
      if (!inputs) {
-@@ -1041,9 +1108,12 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+@@ -1041,9 +1126,12 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
          fail(r, "linking the recompiled module failed: %s", error);
          goto done;
      }
@@ -214,7 +242,7 @@ index c2f7281..5c15b8f 100644
      {
          DescriptorFn describe = (DescriptorFn)(uintptr_t)image_symbol(m, DESCRIPTOR_SYMBOL);
          if (!describe) {
-@@ -1052,6 +1122,7 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+@@ -1052,6 +1140,7 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
          }
          if (load_descriptor(r, m, describe())) goto done;
      }
@@ -222,7 +250,7 @@ index c2f7281..5c15b8f 100644
      rc = 0;
  done:
      for (i = 0; i < count; ++i) free(q.units[i].object);
-@@ -1062,6 +1133,7 @@ done:
+@@ -1062,6 +1151,7 @@ done:
      free(linked.data);
      free(cached);
      snx_ir_free(ir);
@@ -230,7 +258,7 @@ index c2f7281..5c15b8f 100644
      return rc;
  }
  
-@@ -1082,6 +1154,7 @@ static int keep_code(struct snx_recompiler* r, struct snx_recompiled* m, const s
+@@ -1082,6 +1172,7 @@ static int keep_code(struct snx_recompiler* r, struct snx_recompiled* m, const s
          fail(r, "the code ranges are too large");
          return -1;
      }
@@ -238,7 +266,7 @@ index c2f7281..5c15b8f 100644
      m->views = (SnxCodeImage*)calloc(1, count * sizeof(SnxCodeImage) + total);
      if (!m->views) {
          fail(r, "out of memory for a copy of the code");
-@@ -1090,12 +1163,16 @@ static int keep_code(struct snx_recompiler* r, struct snx_recompiled* m, const s
+@@ -1090,12 +1181,16 @@ static int keep_code(struct snx_recompiler* r, struct snx_recompiled* m, const s
      unsigned char* bytes = (unsigned char*)(m->views + count);
      size_t at = 0;
      for (size_t i = 0; i < count; ++i) {
@@ -258,7 +286,7 @@ index c2f7281..5c15b8f 100644
      }
      m->view_count = count;
      return 0;
-@@ -1200,8 +1277,11 @@ static struct snx_recompiled* recompile(struct snx_recompiler* r, struct snx_rec
+@@ -1200,8 +1295,11 @@ static struct snx_recompiled* recompile(struct snx_recompiler* r, struct snx_rec
         processes using the folder share. Without the memory for the path there is no file, and the JIT still works */
      if (r->cache && m->view_count) m->jit_cache_path = snx_path_join(r->cache, "library-jit.cache");
      m->hook_direct_calls = codegen->hook_direct_calls;
@@ -270,7 +298,7 @@ index c2f7281..5c15b8f 100644
      snx_codegen_free(codegen);
      if (rc) {
          snx_recompiled_free(m);
-@@ -1222,8 +1302,10 @@ struct snx_recompiled* snx_recompile_ranges(struct snx_recompiler* r, const stru
+@@ -1222,8 +1320,10 @@ struct snx_recompiled* snx_recompile_ranges(struct snx_recompiler* r, const stru
                                              size_t range_count, const uint64_t* hints, size_t hint_count) {
      uint64_t lo, hi;
      r->error[0] = 0;
@@ -281,7 +309,7 @@ index c2f7281..5c15b8f 100644
      struct snx_recompiled* m = (struct snx_recompiled*)calloc(1, sizeof(*m));
      if (!m) {
          fail(r, "out of memory");
-@@ -1240,6 +1322,7 @@ struct snx_recompiled* snx_recompile_ranges(struct snx_recompiler* r, const stru
+@@ -1240,6 +1340,7 @@ struct snx_recompiled* snx_recompile_ranges(struct snx_recompiler* r, const stru
          free(m);
          return NULL;
      }
@@ -289,7 +317,7 @@ index c2f7281..5c15b8f 100644
      SnxCodegen codegen = {0};
      if (snx_codegen_analyze(&codegen, views, range_count, hints, hint_count, !r->verbose, r->features)) {
          fail(r, "function discovery failed in 0x%llx-0x%llx", (unsigned long long)ranges[0].address,
-@@ -1249,11 +1332,15 @@ struct snx_recompiled* snx_recompile_ranges(struct snx_recompiler* r, const stru
+@@ -1249,11 +1350,15 @@ struct snx_recompiled* snx_recompile_ranges(struct snx_recompiler* r, const stru
          free(m);
          return NULL;
      }
@@ -306,7 +334,7 @@ index c2f7281..5c15b8f 100644
  }
  
  struct snx_recompiled* snx_recompile_from(struct snx_recompiler* r, const struct snx_code_range* ranges,
-@@ -1341,6 +1428,90 @@ GuestFn snx_recompiled_function(const struct snx_recompiled* m, uint64_t pc) {
+@@ -1341,6 +1446,90 @@ GuestFn snx_recompiled_function(const struct snx_recompiled* m, uint64_t pc) {
      return o < m->code_hi - m->code_lo && !(pc & 3) ? __atomic_load_n(&m->dispatch[o >> 2], __ATOMIC_ACQUIRE) : NULL;
  }
  
@@ -397,7 +425,7 @@ index c2f7281..5c15b8f 100644
  void snx_recompiled_set_fallback(struct snx_recompiled* m, GuestFn fallback) {
      __atomic_store_n(&m->fallback, fallback, __ATOMIC_RELEASE);
  }
-@@ -1371,22 +1542,31 @@ size_t snx_recompiled_invalidate(struct snx_recompiled* m, uint64_t addr, uint64
+@@ -1371,22 +1560,31 @@ size_t snx_recompiled_invalidate(struct snx_recompiled* m, uint64_t addr, uint64
              else
                  alias_hi = mid;
          }
@@ -432,20 +460,27 @@ index c2f7281..5c15b8f 100644
          ++count;
      }
 diff --git a/src/common/cpu/recompiler/snx_recompiler.h b/src/common/cpu/recompiler/snx_recompiler.h
-index a1c107c..e5bc109 100644
+index a1c107c..5841ca5 100644
 --- a/src/common/cpu/recompiler/snx_recompiler.h
 +++ b/src/common/cpu/recompiler/snx_recompiler.h
-@@ -80,6 +80,9 @@ SNX_RECOMPILER_API int snx_recompiler_set_optimization(struct snx_recompiler* r,
+@@ -80,6 +80,16 @@ SNX_RECOMPILER_API int snx_recompiler_set_optimization(struct snx_recompiler* r,
  SNX_RECOMPILER_API int snx_recompiler_set_a64_target(struct snx_recompiler* r, int target);
  /* Code units compiled at once, on host threads; 0, the default, uses one per processor */
  SNX_RECOMPILER_API void snx_recompiler_set_jobs(struct snx_recompiler* r, unsigned jobs);
++/* Progress of a recompile, for a caller's window: called once with the totals and no work done, then by the worker
++   thread that finished each unit. The weight is the unit's instructions plus four per basic-block leader, so a bar
++   weighted by it follows the work and not the unit count. The callback must be thread-safe and quick. Set before the
++   recompile; NULL (the default) reports nothing */
++typedef void (*snx_progress_fn)(void* user, unsigned long long weight_done, unsigned long long weight_total,
++                                unsigned long long functions_done, unsigned long long functions_total);
++SNX_RECOMPILER_API void snx_recompiler_set_progress(struct snx_recompiler* r, snx_progress_fn fn, void* user);
 +/* The module's JIT reads the code ranges where the caller has them instead of a copy, so code the guest patches after
 +   recompiling (and reports with IC IVAU, RtAPI.code_changed) is compiled as it then is. The ranges must outlive it */
 +SNX_RECOMPILER_API void snx_recompiler_set_live_code(struct snx_recompiler* r, int enabled);
  /* Route calls between recompiled functions through CPU.disp so code invalidation can retire callees safely */
  SNX_RECOMPILER_API void snx_recompiler_set_hook_direct_calls(struct snx_recompiler* r, int enabled);
  /* Progress lines on stdout, as the scarletnx command prints them; off by default */
-@@ -161,6 +164,17 @@ SNX_RECOMPILER_API int snx_recompiled_bind(struct snx_recompiled* m, CPU* cpu);
+@@ -161,6 +171,17 @@ SNX_RECOMPILER_API int snx_recompiled_bind(struct snx_recompiled* m, CPU* cpu);
  SNX_RECOMPILER_API GuestFn snx_recompiled_lookup(struct snx_recompiled* m, uint64_t pc);
  /* The recompiled function entered at pc (a leader), NULL for any other pc */
  SNX_RECOMPILER_API GuestFn snx_recompiled_function(const struct snx_recompiled* m, uint64_t pc);

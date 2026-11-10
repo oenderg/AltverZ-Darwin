@@ -45,6 +45,12 @@ void *tl_x64_import(const char *name, void *host);
  * keeps the result: the next start with the same libraries at the same addresses loads it instead. */
 bool tl_x64_translate(const char *cache_dir, char *err, size_t errlen);
 
+/* The progress of the cold translation: the units' weight (instructions plus basic-block leaders) done and total, the
+ * functions done and total, and whether a translation is running. Written by the workers, safe to read from the UI
+ * thread. The totals are 0 until the units are made; a caller's bar should wait for them. */
+void tl_x64_progress(unsigned long long *weight_done, unsigned long long *weight_total,
+                     unsigned long long *functions_done, unsigned long long *functions_total, int *running);
+
 /* Calls guest function `pc` with arguments laid out by `sig` (the return type's letter, then one per argument) from
  * `args` (integers as they are, a float or double as its bits), on this thread's CPU, and returns x0 (or the bits of
  * v0's low 64 for f or d). Reentrant: a guest call inside a host function the guest called nests. */
