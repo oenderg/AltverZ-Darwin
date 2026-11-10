@@ -31,8 +31,10 @@ a log line every 5 s.
 The percentage is the completed unit weight, capped at 100%: 0.0% at the start, 11.19M of 11.19M at the end of the
 units. With 30,000-instruction units that is 0.3% per unit, small enough for a smooth bar. The first units are the
 largest and the slowest per weight. The window now reveals its first estimate after at least 5 s and 5% of the
-weight, using average completed weight per second since sampling began and an 80/20 EWMA. Early estimates can be
-conservative; a five-second log and the bounds keep that visible without promising hours.
+weight, bootstrapping from the recent completed-weight rate, then using the average rate since that mark and an
+elapsed-time smoothing (nominally 80/20 per five seconds) once twenty seconds of post-mark samples exist. The first
+estimate is already visible during that sample.
+Early estimates can be conservative; a five-second log and the bounds keep that visible without promising hours.
 
 Measured in the original VM cold run with this callback and the former 10% plus 20 s estimate rule: the window logged
 1.5% at 18 s, 10.3% at 78 s, 42.4% at

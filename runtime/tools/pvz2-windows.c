@@ -148,8 +148,11 @@ static int g_progress_hist_next, g_progress_hist_count;
 static ULONGLONG g_progress_shown, g_progress_last_log;
 static unsigned long long g_progress_base_weight;
 static ULONGLONG g_progress_base_time;
+static ULONGLONG g_progress_samples_start;
+static ULONGLONG g_progress_estimate_updated;
 static int g_progress_have_base;
 static double g_progress_estimate;
+static double g_progress_bootstrap;
 static int g_progress_have_estimate;
 
 static void keyboard_shown(int show) { tl_log_line("windows: the game %s the keyboard", show ? "shows" : "hides"); }
@@ -2866,6 +2869,7 @@ static void progress_tick(HWND h)
         SetWindowTextW(g_progress_status, L"Starting...");
         return;
     }
+    if (!g_progress_samples_start) g_progress_samples_start = now;
     if (weight_done > weight_total) weight_done = weight_total;
     SendMessageW(g_progress_bar, PBM_SETPOS, (WPARAM)((weight_done * 1000 + weight_total / 2) / weight_total), 0);
 
@@ -2886,26 +2890,31 @@ static void progress_tick(HWND h)
         if (function_rate < 0.0) function_rate = 0.0;
     }
     double percent = (double)weight_done * 100.0 / (double)weight_total;
-    /* Start the clock when work is known, not after a tenth of the run. Five percent and five seconds give the
-     * first estimate enough completions to average; the cumulative rate then bridges stalls between units. */
-    if (!g_progress_have_base && weight_total) {
+    /* The largest first units include the workers' start-up cost, so extrapolating from zero badly overstates the
+     * remainder. Bootstrap from the recent completed-weight rate at five percent, then use the steady cumulative
+     * rate after that mark. The bootstrap counts down while that longer sample fills, never hiding the estimate. */
+    if (!g_progress_have_base && percent >= 5.0 && now - g_progress_samples_start >= 5000 && weight_rate > 1.0) {
         g_progress_base_weight = weight_done;
         g_progress_base_time = now;
         g_progress_have_base = 1;
+        g_progress_bootstrap = (double)(weight_total - weight_done) / weight_rate;
+        g_progress_estimate = g_progress_bootstrap;
+        g_progress_estimate_updated = now;
+        g_progress_have_estimate = 1;
     }
-    int estimate_valid = 0;
+    int estimate_valid = g_progress_have_estimate;
     if (g_progress_have_base && weight_done < weight_total) {
         double span = (double)(now - g_progress_base_time) / 1000.0;
-        double rate = span >= 5.0 && percent >= 5.0
-                          ? (double)(weight_done - g_progress_base_weight) / span : 0.0;
+        double rate = span >= 20.0 ? (double)(weight_done - g_progress_base_weight) / span : 0.0;
+        double elapsed = (double)(now - g_progress_estimate_updated) / 1000.0;
+        g_progress_estimate_updated = now;
+        g_progress_estimate = g_progress_estimate > elapsed ? g_progress_estimate - elapsed : 0.0;
         if (rate > 1.0) {
             double left = (double)(weight_total - weight_done) / rate;
-            if (!g_progress_have_estimate) {
-                g_progress_estimate = left;
-                g_progress_have_estimate = 1;
-            } else {
-                g_progress_estimate = g_progress_estimate * 0.8 + left * 0.2;
-            }
+            /* An 80/20 update every 100 ms reacts almost instantly to a slow unit. Scale smoothing by elapsed
+             * time instead: nominally 80/20 per five seconds, with an ordinary countdown between samples. */
+            double mix = elapsed / (20.0 + elapsed);
+            g_progress_estimate += mix * (left - g_progress_estimate);
             estimate_valid = 1;
         }
     }
@@ -3054,6 +3063,9 @@ static void show_progress_window(HINSTANCE inst)
     g_progress_have_base = 0;
     g_progress_base_weight = 0;
     g_progress_base_time = 0;
+    g_progress_samples_start = 0;
+    g_progress_estimate_updated = 0;
+    g_progress_bootstrap = 0.0;
     g_progress_estimate = 0.0;
     g_progress_have_estimate = 0;
     HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, L"PvZ2ReflourishedPrepare", L"PvZ2 Reflourished",

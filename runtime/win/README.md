@@ -233,8 +233,13 @@ percentage therefore follow completed work even with the largest units scheduled
 
 The status reads, for example, "42% · about 2 minutes left". It starts with "estimating..."
 until at least five seconds of samples and 5% of the weight are available, whichever comes
-later. The estimate uses average completed weight per second since sampling began, smoothed
-with an 80/20 EWMA. The largest first units can make the first estimate conservative. It
+later. The first estimate uses the recent five-second completed-weight rate, avoiding the
+workers' initial warm-up cost. It counts down while a twenty-second post-5% sample fills,
+then uses average completed weight per second since the 5% mark. Smoothing is elapsed-time
+based (nominally 80/20 per five seconds), with a countdown between samples, so the 100 ms UI
+timer cannot make it jump to a new guess almost instantly. There is no additional
+twenty-second delay before showing the first estimate.
+The largest first units can still make the first estimate conservative. It
 never shows a negative estimate or one beyond half an hour; the final units show "Finishing
 up..." while linking and loading complete. Every five seconds the log records percentage,
 weight, completed functions, short-window weight/function rates, and the estimate.
@@ -252,6 +257,9 @@ The preview feeds synthetic progress through the same estimator. With the previe
 changing the display's scale. Outside the preview this override is ignored. The window
 measures its actual client area after creation so a display/layout DPI mismatch cannot
 clip the status line.
+
+`python3 runtime/win/test-progress.py` exercises the production estimator block without
+Windows or game data, including 100/120/540-second synthetic runs, gating, stalls and completion.
 
 ## Pointer overlay measurements
 
