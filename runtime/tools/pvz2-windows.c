@@ -1479,6 +1479,12 @@ static int g_pointer_fallback;
 static int g_pointer_timer_wanted;
 static int g_pointer_timer_armed;   /* the timer is armed; the UI thread owns this */
 static int g_pointer_timer_logged;
+static atomic_ullong g_pointer_wakes, g_pointer_coalesced, g_pointer_skipped;
+static atomic_ullong g_pointer_schedule_epoch;
+static atomic_llong g_pointer_posted_at;
+static ULONGLONG g_pointer_active_start, g_pointer_active_ms;
+static unsigned long long g_pointer_handled, g_pointer_work_us;
+static unsigned long long g_pointer_queue_us;
 
 static unsigned long long g_pointer_ticks, g_pointer_moves, g_pointer_draws;
 
@@ -1715,21 +1721,36 @@ static DWORD WINAPI pointer_timer_worker(void *arg)
     (void)arg;
     HANDLE waits[2] = { g_pointer_timer_stop, g_pointer_timer };
     LONGLONG next = pointer_clock_100ns();
+    unsigned long long epoch = 0;
     for (;;) {
         DWORD wait = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
         if (wait != WAIT_OBJECT_0 + 1) break;
         if (!atomic_load(&g_pointer_timer_active)) continue;
-        if (!atomic_exchange(&g_pointer_tick_pending, 1))
-            PostMessageW(g_hwnd, WM_APP_POINTER_TICK, 0, 0);
+        atomic_fetch_add(&g_pointer_wakes, 1);
+        if (!atomic_exchange(&g_pointer_tick_pending, 1)) {
+            atomic_store(&g_pointer_posted_at, pointer_clock_100ns());
+            if (!PostMessageW(g_hwnd, WM_APP_POINTER_TICK, 0, 0))
+                atomic_store(&g_pointer_tick_pending, 0);
+        } else atomic_fetch_add(&g_pointer_coalesced, 1);
         if (!atomic_load(&g_pointer_timer_active)) continue;
         LONGLONG period = atomic_load(&g_pointer_period_100ns);
         if (period < 1000) period = 1000;
+        unsigned long long current_epoch = atomic_load(&g_pointer_schedule_epoch);
+        if (epoch != current_epoch) {
+            /* A resumed timer starts a new schedule; hidden time is not missed display slots. */
+            epoch = current_epoch;
+            next = pointer_clock_100ns();
+        }
         LARGE_INTEGER due;
         /* Absolute deadlines keep wake-up and PostMessage latency out of the
          * period. Skip missed slots rather than sending a burst of old ticks. */
         next += period;
         LONGLONG now = pointer_clock_100ns();
-        if (next <= now) next += ((now - next) / period + 1) * period;
+        if (next <= now) {
+            LONGLONG missed = (now - next) / period + 1;
+            atomic_fetch_add(&g_pointer_skipped, (unsigned long long)missed);
+            next += missed * period;
+        }
         due.QuadPart = next;
         if (!SetWaitableTimer(g_pointer_timer, &due, 0, NULL, NULL, FALSE)) break;
     }
@@ -1741,6 +1762,10 @@ static DWORD WINAPI pointer_timer_worker(void *arg)
  * the worker waiting, and the next start arms the timer again. */
 static void pointer_timer_suspend(void)
 {
+    if (g_pointer_active_start) {
+        g_pointer_active_ms += GetTickCount64() - g_pointer_active_start;
+        g_pointer_active_start = 0;
+    }
     if (g_pointer_fallback) {
         if (g_pointer_timer_armed) {
             KillTimer(g_hwnd, CURSOR_TIMER);
@@ -1765,6 +1790,8 @@ static int pointer_timer_start(void)
     int fps = g_refresh_fps > 0 ? g_refresh_fps : display_refresh_rate();
     LONGLONG period = pointer_period_100ns(fps);
     atomic_store(&g_pointer_period_100ns, period);
+    if (!g_pointer_timer_armed) atomic_fetch_add(&g_pointer_schedule_epoch, 1);
+    if (!g_pointer_active_start) g_pointer_active_start = GetTickCount64();
     if (g_pointer_fallback) {
         if (!g_pointer_timer_armed) {
             if (!SetTimer(g_hwnd, CURSOR_TIMER, 16, NULL)) return 0;
@@ -1829,6 +1856,10 @@ static int pointer_timer_start(void)
 
 static void pointer_timer_stop(void)
 {
+    if (g_pointer_active_start) {
+        g_pointer_active_ms += GetTickCount64() - g_pointer_active_start;
+        g_pointer_active_start = 0;
+    }
     atomic_store(&g_pointer_timer_active, 0);
     if (g_pointer_timer_thread) {
         SetEvent(g_pointer_timer_stop);
@@ -2425,6 +2456,8 @@ static unsigned long long g_stats_pointer_ticks, g_stats_pointer_moves, g_stats_
  * frame count says what the host actually presented, not what it asked for. */
 static void stats_tick(void)
 {
+    static unsigned long long last_wakes, last_coalesced, last_skipped, last_handled, last_work_us, last_queue_us;
+    static ULONGLONG last_active_ms;
     unsigned long frames = tl_pvz2_frames();
     ULONGLONG now = GetTickCount64();
     double since = g_stats_time ? (now - g_stats_time) / 1000.0 : 0.0;
@@ -2436,6 +2469,23 @@ static void stats_tick(void)
                     since > 0 ? (double)(g_pointer_moves - g_stats_pointer_moves) / since : 0.0,
                     since > 0 ? (double)(g_pointer_draws - g_stats_pointer_draws) / since : 0.0);
     }
+    unsigned long long wakes = atomic_load(&g_pointer_wakes);
+    unsigned long long coalesced = atomic_load(&g_pointer_coalesced);
+    unsigned long long skipped = atomic_load(&g_pointer_skipped);
+    ULONGLONG active_ms = g_pointer_active_ms +
+                         (g_pointer_active_start ? now - g_pointer_active_start : 0);
+    double active = (active_ms - last_active_ms) / 1000.0;
+    if (active > 0.0) {
+        unsigned long long handled = g_pointer_handled - last_handled;
+        tl_log_line("windows: pointer pacing: target %d Hz, active %.2f s, wakes %.1f Hz, UI %.1f Hz, coalesced %llu, skipped %llu, queue %.0f us/tick, work %.0f us/tick",
+                    g_refresh_fps, active, (wakes - last_wakes) / active, handled / active,
+                    coalesced - last_coalesced, skipped - last_skipped,
+                    handled ? (double)(g_pointer_queue_us - last_queue_us) / handled : 0.0,
+                    handled ? (double)(g_pointer_work_us - last_work_us) / handled : 0.0);
+    }
+    last_wakes = wakes; last_coalesced = coalesced; last_skipped = skipped;
+    last_handled = g_pointer_handled; last_work_us = g_pointer_work_us; last_active_ms = active_ms;
+    last_queue_us = g_pointer_queue_us;
     g_stats_time = now;
     g_stats_frames = frames;
     g_stats_pointer_ticks = g_pointer_ticks;
@@ -2579,8 +2629,15 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         pointer_art_done((pointer_art_result *)lp);
         return 0;
     case WM_APP_POINTER_TICK:
-        atomic_store(&g_pointer_tick_pending, 0);
-        pointer_tick();
+        {
+            LONGLONG began = pointer_clock_100ns();
+            LONGLONG posted = atomic_load(&g_pointer_posted_at);
+            atomic_store(&g_pointer_tick_pending, 0);
+            if (began > posted) g_pointer_queue_us += (began - posted) / 10;
+            pointer_tick();
+            g_pointer_work_us += (pointer_clock_100ns() - began) / 10;
+            g_pointer_handled++;
+        }
         return 0;
     case WM_EXITSIZEMOVE:
         if (!g_fullscreen) save_geometry();
