@@ -24,6 +24,7 @@
 
 #include "pvz2-windows-settings.h"
 #include "pvz2-windows-darkmode.h"
+#include "pvz2-windows-identity.h"
 #include "pvz2-windows-updates.h"
 
 #pragma comment(lib, "comctl32.lib")
@@ -1165,9 +1166,10 @@ void pvz2_settings_open(HWND owner, pvz2_settings *live, const pvz2_settings_hos
     if (y + h > mi.rcWork.bottom) y = mi.rcWork.bottom - h;
 
     HWND win = CreateWindowExW(0, L"PvZ2ReflourishedSettings", L"PvZ2 Reflourished Settings",
-                               SETTINGS_STYLE | WS_CLIPCHILDREN | WS_VISIBLE, x, y, w, h,
+                               SETTINGS_STYLE | WS_CLIPCHILDREN, x, y, w, h,
                                owner, NULL, GetModuleHandleW(NULL), NULL);
     if (!win) return;
+    pvz2_window_app_id(win);
     ShowWindow(win, SW_SHOW);
     SetForegroundWindow(win);
 }

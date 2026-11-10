@@ -138,6 +138,20 @@ list, a double click or a shortcut, hands its request to the running game and qu
 loads anything. The named mutex is keyed by the data folder's lowercased absolute path, so a
 TL_DATA or portable folder is a different game and can run beside the normal one.
 
+The normal installed process, its windows and its Start menu/desktop shortcuts use
+`io.github.oenderg.reflourished`. Portable builds and explicit `--data`/`TL_DATA` runs append
+the data-folder key to that identity; the download, preparing, game and Settings windows
+explicitly keep it. Each identity has its own taskbar group and jump list, whose task links
+name that executable and data folder. The list is committed once at startup, before the OBB
+download can show a button, so it cannot expose a previous copy's Settings task while downloading.
+
+A hidden startup receiver holds the handover endpoint before the game window exists. A
+Settings or Check for Updates request during download shows a closable acknowledgement and
+is remembered until host initialization is complete. No Settings callbacks run against an
+uninitialized host. Requests during translation open their windows immediately; they do not
+wait for the game's first frame. Repeating a request does not start another game or truncate
+the owner's log. Cancelling the download cancels that launch and its queued requests.
+
 The Settings window can be resized by its edges and corners (no maximize button). It never gets
 smaller than the size it opens at, at the window's DPI: `WM_GETMINMAXINFO` holds the edges and
 `WM_WINDOWPOSCHANGING` holds `SetWindowPos`/`MoveWindow` callers such as AltSnap. The tab area fills

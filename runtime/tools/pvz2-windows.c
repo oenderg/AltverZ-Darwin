@@ -46,6 +46,7 @@
 #include "pvz2-keys.h"
 #include "pvz2-windows-settings.h"
 #include "pvz2-windows-darkmode.h"
+#include "pvz2-windows-identity.h"
 #include "pvz2-windows-updates.h"
 #include "../win/pvz2-obb-win.h"
 #if defined(__x86_64__)
@@ -80,7 +81,7 @@ int tl_win_obb_ensure(const char *data_dir, const char *exe_dir);
 /* The taskbar's identity for the game. The installer gives its shortcuts the
  * same string, so a pinned or Start menu button shows this jump list too. */
 #define PVZ2_APP_USER_MODEL_ID L"io.github.oenderg.reflourished"
-#define PVZ2_APP_USER_MODEL_ID_A "io.github.oenderg.reflourished"
+#define PVZ2_REQUEST_WINDOW_CLASS L"PvZ2ReflourishedRequests"
 #define PVZ2_WINDOW_CLASS L"PvZ2Reflourished"
 /* A second start asks the running game to do one of these. */
 #define PVZ2_WM_START_ACTION (WM_APP + 19)
@@ -124,6 +125,11 @@ static char g_settings_path[MAX_PATH];
 static HANDLE g_instance_mutex;
 static unsigned long long g_data_key;
 static int g_explicit_data;
+static wchar_t g_app_id[128];
+static HWND g_request_window, g_request_text;
+static HFONT g_request_font;
+static unsigned g_pending_requests;
+static int g_actions_ready;
 static pvz2_settings g_settings;
 static tl_ga_config g_cfg;
 static atomic_int g_ready;
@@ -657,8 +663,14 @@ typedef struct {
 static BOOL CALLBACK send_request(HWND h, LPARAM lp)
 {
     wchar_t cls[64];
-    if (!GetClassNameW(h, cls, 64) || wcscmp(cls, PVZ2_WINDOW_CLASS)) return TRUE;
+    if (!GetClassNameW(h, cls, 64) ||
+        (wcscmp(cls, PVZ2_REQUEST_WINDOW_CLASS) && wcscmp(cls, PVZ2_WINDOW_CLASS))) return TRUE;
     PvZ2Send *ctx = (PvZ2Send *)lp;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    /* The user invoked this start from a taskbar task; let the process that answers show the requested window.
+     * This precedes the send: the answer may post its window open before this call returns. */
+    if (pid) AllowSetForegroundWindow(pid);
     DWORD_PTR result = 0;
     if (SendMessageTimeoutW(h, WM_COPYDATA, 0, (LPARAM)ctx->cds,
                             SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &result) && result == 1)
@@ -683,9 +695,13 @@ static int instance_send(int action)
 
 static void set_app_id(void)
 {
-    HRESULT hr = SetCurrentProcessExplicitAppUserModelID(PVZ2_APP_USER_MODEL_ID);
+    if (g_explicit_data || !pvz2_updates_built_in())
+        swprintf(g_app_id, 128, L"%ls.%016llx", PVZ2_APP_USER_MODEL_ID, g_data_key);
+    else
+        wcscpy(g_app_id, PVZ2_APP_USER_MODEL_ID);
+    HRESULT hr = SetCurrentProcessExplicitAppUserModelID(g_app_id);
     if (SUCCEEDED(hr))
-        tl_log_line("windows: app user model id %s", PVZ2_APP_USER_MODEL_ID_A);
+        tl_log_line("windows: app user model id %ls", g_app_id);
     else
         tl_log_line("windows: could not set the app user model id (%08lx)", (unsigned long)hr);
 }
@@ -709,6 +725,8 @@ static void jump_task(IObjectCollection *tasks, const wchar_t *exe, const wchar_
         pv.vt = VT_LPWSTR;
         pv.pwszVal = (LPWSTR)title;
         store->lpVtbl->SetValue(store, &PKEY_Title, &pv);
+        pv.pwszVal = g_app_id;
+        store->lpVtbl->SetValue(store, &PKEY_AppUserModel_ID, &pv);
         store->lpVtbl->Release(store);
     }
     tasks->lpVtbl->AddObject(tasks, (IUnknown *)link);
@@ -732,7 +750,7 @@ static void install_jump_list(void)
         tl_log_line("windows: no jump list (%08lx)", (unsigned long)hr);
         return;
     }
-    hr = list->lpVtbl->SetAppID(list, PVZ2_APP_USER_MODEL_ID);
+    hr = list->lpVtbl->SetAppID(list, g_app_id);
     if (FAILED(hr)) tl_log_line("windows: the jump list kept another app id (%08lx)", (unsigned long)hr);
 
     UINT max_slots = 0;
@@ -764,11 +782,95 @@ static void install_jump_list(void)
         if (removed) removed->lpVtbl->Release(removed);
         hr = list->lpVtbl->CommitList(list);
         if (FAILED(hr)) tl_log_line("windows: could not commit the jump list (%08lx)", (unsigned long)hr);
-        else tl_log_line("windows: jump list tasks installed (Settings%s)", pvz2_updates_built_in() ? ", Check for Updates" : "");
+        else tl_log_line("windows: jump list tasks installed (Settings%s), app id %ls, exe %ls, data %s",
+                         pvz2_updates_built_in() ? ", Check for Updates" : "", g_app_id, exe, g_data);
     } else {
         tl_log_line("windows: could not start the jump list (%08lx)", (unsigned long)hr);
     }
     list->lpVtbl->Release(list);
+}
+
+/* The download runs its own UI loop before the game window exists. Keep a top-level, normally hidden receiver
+ * throughout startup so a taskbar task can always reach the mutex owner, even in that nested message loop. */
+static void startup_request(int action)
+{
+    if (g_actions_ready) {
+        PostMessageW(g_hwnd, PVZ2_WM_START_ACTION, (WPARAM)action, 0);
+        return;
+    }
+    g_pending_requests |= action == 1 ? 1u : action == 2 ? 2u : 4u;
+    tl_log_line("windows: startup request queued: %s; showing an acknowledgement while game data is prepared",
+                action == 1 ? "settings" : action == 2 ? "updates" : "the front");
+    const wchar_t *text = (g_pending_requests & 3) == 3
+        ? L"Settings and Check for Updates will open when the game data is ready.\nYou can close this message; your requests are remembered."
+        : (g_pending_requests & 1)
+        ? L"Settings will open when the game data is ready.\nYou can close this message; your request is remembered."
+        : (g_pending_requests & 2)
+        ? L"Check for Updates will open when the game data is ready.\nYou can close this message; your request is remembered."
+        : L"This copy is already starting.\nIts game window will open when the game data is ready.";
+    SetWindowTextW(g_request_text, text);
+    ShowWindow(g_request_window, SW_SHOWNORMAL);
+    SetForegroundWindow(g_request_window);
+}
+
+static LRESULT CALLBACK request_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_COPYDATA) {
+        const COPYDATASTRUCT *cds = (const COPYDATASTRUCT *)lp;
+        if (cds && cds->dwData == PVZ2_REQUEST_MAGIC && cds->lpData && cds->cbData == sizeof(PvZ2Request)) {
+            const PvZ2Request *req = (const PvZ2Request *)cds->lpData;
+            if (req->size == sizeof(*req) && req->key == g_data_key && req->action <= 2) {
+                if (PostMessageW(h, PVZ2_WM_START_ACTION, req->action, 0)) {
+                    tl_log_line("windows: startup receiver accepted %s for key %016llx",
+                                req->action == 1 ? "settings" : req->action == 2 ? "updates" : "the front", g_data_key);
+                    return 1;
+                }
+            }
+        }
+        return 0;
+    }
+    if (msg == PVZ2_WM_START_ACTION) { startup_request((int)wp); return 0; }
+    if (msg == WM_CLOSE) { ShowWindow(h, SW_HIDE); return 0; }
+    if (msg == WM_SETTINGCHANGE) {
+        if (tl_win_darkmode_system_changed(lp)) tl_win_darkmode_redraw(h);
+        return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+static int make_request_window(HINSTANCE inst)
+{
+    WNDCLASSEXW wc = { sizeof(wc) };
+    wc.lpfnWndProc = request_proc;
+    wc.hInstance = inst;
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = PVZ2_REQUEST_WINDOW_CLASS;
+    RegisterClassExW(&wc);
+    UINT dpi = GetDpiForSystem();
+    RECT r = { 0, 0, MulDiv(500, dpi, 96), MulDiv(110, dpi, 96) };
+    DWORD style = WS_CAPTION | WS_SYSMENU;
+    AdjustWindowRectExForDpi(&r, style, FALSE, 0, dpi);
+    int w = r.right - r.left, h = r.bottom - r.top;
+    g_request_window = CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", style,
+                                      (GetSystemMetrics(SM_CXSCREEN) - w) / 2,
+                                      (GetSystemMetrics(SM_CYSCREEN) - h) / 2,
+                                      w, h, NULL, NULL, inst, NULL);
+    if (!g_request_window) return 0;
+    pvz2_window_app_id(g_request_window);
+    g_request_text = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
+                                    MulDiv(20, dpi, 96), MulDiv(20, dpi, 96),
+                                    MulDiv(460, dpi, 96), MulDiv(80, dpi, 96),
+                                    g_request_window, NULL, inst, NULL);
+    NONCLIENTMETRICSW ncm = { .cbSize = sizeof(ncm) };
+    if (SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0, dpi))
+        g_request_font = CreateFontIndirectW(&ncm.lfMessageFont);
+    SendMessageW(g_request_text, WM_SETFONT,
+                 (WPARAM)(g_request_font ? g_request_font : (HFONT)GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+    tl_win_darkmode_window(g_request_window);
+    tl_win_darkmode_page(g_request_window);
+    tl_log_line("windows: startup request receiver is ready for key %016llx", g_data_key);
+    return 1;
 }
 
 /* The shape the game starts in. Fixed: the selected aspect. Adapt: the
@@ -2538,14 +2640,13 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_COPYDATA: {
         const COPYDATASTRUCT *cds = (const COPYDATASTRUCT *)lp;
-        if (cds && cds->dwData == PVZ2_REQUEST_MAGIC && cds->cbData >= sizeof(PvZ2Request)) {
+        if (cds && cds->dwData == PVZ2_REQUEST_MAGIC && cds->lpData && cds->cbData == sizeof(PvZ2Request)) {
             const PvZ2Request *req = (const PvZ2Request *)cds->lpData;
-            if (req->size == sizeof(PvZ2Request) && req->key == g_data_key) {
+            if (req->size == sizeof(PvZ2Request) && req->key == g_data_key && req->action <= 2) {
                 int action = (int)req->action;
                 tl_log_line("windows: another start asks for %s",
                             action == 1 ? "settings" : action == 2 ? "updates" : "the front");
-                PostMessageW(h, PVZ2_WM_START_ACTION, (WPARAM)action, 0);
-                return 1;
+                return PostMessageW(h, PVZ2_WM_START_ACTION, (WPARAM)action, 0) ? 1 : 0;
             }
         }
         break;
@@ -3071,6 +3172,7 @@ static void show_progress_window(HINSTANCE inst)
     HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, L"PvZ2ReflourishedPrepare", L"PvZ2 Reflourished",
                                 WS_CAPTION | WS_SYSMENU, x, y, w, h, g_hwnd, NULL, inst, NULL);
     if (!hwnd) return;
+    pvz2_window_app_id(hwnd);
     /* The frame belongs to the display, whose DPI can differ from the layout's in a preview: at a 96 layout on
      * this 200% display the frame is larger than AdjustWindowRectExForDpi allowed for, and the client lost the
      * bottom of the status line. Measure the client that was made and grow the window by the difference. */
@@ -3208,6 +3310,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     }
     slashes(g_data);
     slashes(g_saves);
+    /* GetFullPathName keeps a trailing separator. It must not give the same folder a second mutex or app id. */
+    size_t len = strlen(g_data);
+    while (len > 3 && g_data[len - 1] == '/') g_data[--len] = 0;
+    len = strlen(g_saves);
+    while (len > 3 && g_saves[len - 1] == '/') g_saves[--len] = 0;
     join(g_settings_path, sizeof(g_settings_path), g_saves, "settings.ini");
     slashes(g_settings_path);
     g_data_key = instance_key(g_data);
@@ -3216,7 +3323,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     /* Before the log is opened: a second start must not truncate the running
      * game's pvz2.log, and must not reach the OBB, ANGLE or the translation. */
     if (instance_claim()) {
-        (void)instance_send(start_action);
+        set_app_id();
+        if (!instance_send(start_action))
+            MessageBoxW(NULL, L"This copy is already starting, but has not answered yet.\nPlease try its taskbar action again in a moment.",
+                        L"PvZ2 Reflourished", MB_OK | MB_ICONINFORMATION);
         return 0;
     }
     {
@@ -3252,6 +3362,13 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     /* Windows' own light or dark preference, before any host window: the
      * download window, the preparing window and the game window follow it. */
     tl_win_darkmode_init();
+    if (!make_request_window(inst)) {
+        tl_log_line("windows: the startup request receiver could not be made (%lu)", GetLastError());
+        return 1;
+    }
+    /* Commit this copy's paths before any taskbar button appears. The OBB download may take minutes. */
+    if (com_ready) install_jump_list();
+    if (start_action) startup_request(start_action);
 
     /* The game's data before the game: a slim copy carries no OBB and fetches
      * it on the first start, as the Mac and iPad do. */
@@ -3303,6 +3420,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 
     g_hwnd = make_window(inst);
     if (!g_hwnd) { tl_log_line("windows: CreateWindow failed (%lu)", GetLastError()); return 1; }
+    pvz2_window_app_id(g_hwnd);
     tl_win_darkmode_title(g_hwnd);
     /* The updater, in the installed build only, after the settings say whether
      * it checks by itself. */
@@ -3314,8 +3432,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
      * game never sees a different size while it starts. */
     ShowWindow(g_hwnd, g_fullscreen ? SW_SHOW : (g_windowed_placement.showCmd == SW_SHOWMAXIMIZED ? SW_SHOWMAXIMIZED : show));
     UpdateWindow(g_hwnd);
-    if (com_ready) install_jump_list();
-    if (start_action) PostMessageW(g_hwnd, PVZ2_WM_START_ACTION, (WPARAM)start_action, 0);
     overlays_above_game();
     /* The shown window can be a different size than the created one (a
      * maximized start): the shape the game starts in is chosen from it. */
@@ -3383,6 +3499,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 #endif
     CloseHandle(CreateThread(NULL, 8 << 20, launch_game, NULL, 0, NULL));
 
+    g_actions_ready = 1;
+    if (g_pending_requests) {
+        unsigned pending = g_pending_requests;
+        g_pending_requests = 0;
+        ShowWindow(g_request_window, SW_HIDE);
+        tl_log_line("windows: the game window is ready; delivering queued startup requests (%u)", pending);
+        if (pending & 1) PostMessageW(g_hwnd, PVZ2_WM_START_ACTION, 1, 0);
+        if (pending & 2) PostMessageW(g_hwnd, PVZ2_WM_START_ACTION, 2, 0);
+        if (pending == 4) PostMessageW(g_hwnd, PVZ2_WM_START_ACTION, 0, 0);
+    }
     MSG m;
     while (GetMessageW(&m, NULL, 0, 0) > 0) {
         HWND settings = pvz2_settings_window();
@@ -3394,6 +3520,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     g_pointer_timer_wanted = 0;
     pointer_timer_stop();
     pvz2_updates_shutdown();
+    DestroyWindow(g_request_window);
+    if (g_request_font) DeleteObject(g_request_font);
     if (SUCCEEDED(com)) CoUninitialize();
     ExitProcess(0);
 }

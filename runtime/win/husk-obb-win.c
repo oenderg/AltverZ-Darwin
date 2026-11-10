@@ -27,6 +27,7 @@
 #include "husk-obb-win.h"
 #include "pvz2-obb-win.h"
 #include "pvz2-windows-darkmode.h"
+#include "pvz2-windows-identity.h"
 
 void tl_log_line(const char *fmt, ...);
 void tl_win_mkdirs(const char *path);
@@ -402,6 +403,7 @@ static void build_window(void)
     D.win = CreateWindowExW(0, OBB_CLASS, L"PvZ2 Reflourished", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
                             x, y, w, h, NULL, NULL, inst, NULL);
     if (!D.win) return;
+    pvz2_window_app_id(D.win);
     HFONT font = CreateFontW(-MulDiv(9, (int)GetDpiForSystem(), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                              DEFAULT_PITCH, L"Segoe UI");

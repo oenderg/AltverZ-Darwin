@@ -57,7 +57,7 @@ for f in $SRCS; do
             flags="-DPVZ2_APP_VERSION=\"$VERSION\""
             ;;
     esac
-    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$REPO/VERSION" -nt "$o" ] || [ "$H/../tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$H/../tools/pvz2-windows-updates.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ]; then
+    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$REPO/VERSION" -nt "$o" ] || [ "$H/../tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$H/../tools/pvz2-windows-updates.h" -nt "$o" ] || [ "$H/../tools/pvz2-windows-identity.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ]; then
         "$H/cc.sh" "$f" $flags -c -o "$o"
     fi
     OBJS="$OBJS $o"

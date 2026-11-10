@@ -53,7 +53,7 @@ for f in $SRCS; do
         *)  o="$OBJ/$(basename "$f" | sed 's/\.c$//').o"
             flags="-DPVZ2_APP_VERSION=\"$VERSION\"" ;;
     esac
-    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$R/../VERSION" -nt "$o" ] || [ "$R/tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$R/tools/pvz2-windows-updates.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ] || [ "$X/sigs-tables.inc" -nt "$o" ]; then
+    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$R/../VERSION" -nt "$o" ] || [ "$R/tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$R/tools/pvz2-windows-updates.h" -nt "$o" ] || [ "$R/tools/pvz2-windows-identity.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ] || [ "$X/sigs-tables.inc" -nt "$o" ]; then
         echo "  cc $(basename "$f")"
         $CC $CFLAGS $flags -c "$f" -o "$o"
     fi
