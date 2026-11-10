@@ -134,6 +134,29 @@ returns.
   `UIShovel`, `UIFastForwardButton`, `UIPlantfood`, `UIPowerupHolder` and `UIPowerup`. The
   power-up count comes from the holder's width against one button's (1.5, 2.9 or 4.2 buttons).
   A rectangle with no size or no part on the surface is not published.
+- **A hidden control publishes no badge and refuses its key.** A level can leave a HUD widget in
+  the tree with a normal rectangle and simply not show it (Ancient Egypt - Day 23 hides the
+  shovel, plant food and power-up bar). `UIWidget` keeps the state in `m_flags`, the 32-bit field
+  at `+0x90` that its class registration names (the registration function at `0x5bc2b4` passes
+  `m_flags` at `w3 = 0x90`; the base constructor `0x5bcd64` starts it at `-1`). Bit 0 is the
+  widget's own visible switch: the small setter at `0x5bfbbc` loads `[x0,#0x90]`, sets or clears
+  bit 0 with `and w10,w8,#0xfffffffe` / `orr w8,w8,#1`, stores it back and tail-calls vtable
+  `+0xd8`. Bit 3 makes the widget answer from its own bit 0 and ignore its parent (a popup shown over a
+  hidden parent). `UIWidget::IsVisible` is vtable slot `+0xa8` (`0x5c1a18`):
+  `ldr w8,[x0,#0x90]; and w19,w8,#1; tbnz w8,#3,hidden; cbz w19,hidden` -- the `hidden` label
+  returns `w19 & 1`, so bit 3 skips the parent check rather than forcing hidden. Without bit 3 it
+  resolves the parent from `m_parentPtr` at `+0x70` (an `RtWeakPtr<UIWidget>`; `UIWidget::AddWidget`
+  writes it at `0x5be3c0`) through the UI registry (`0x14ead90`, `0x14f39cc`, `0x14f31a4`,
+  `0x14ede00`) and calls the same `+0xa8` slot on it, so a hidden parent hides its children
+  unless the child has bit 3. The hit test at `0x5c16c4` calls `+0xa8` before its rectangle test.
+  The driver calls the
+  same vtable slot in `guest_widget_shown` (`husk-tl-pvz2.c`), fail closed, for every published
+  badge rectangle and before every keyboard shortcut. Measured on egypt23: `UIShovel` flags
+  `0x00000004`, `UIPlantfood` `0x00000004`, `UIPowerupHolder` `0x0000000c`, `UIPowerup`
+  `0x00000005` (visible itself, but its holder is not), `UIFastForwardButton` `0x00000005`
+  (shown, so its badge and key stay). On egypt2 (a normal level) the shovel, fast-forward, plant
+  food and power-up button read `0x00000005` (visible and input-enabled) and the holder reads
+  `0x0000000d` (bit 3, visible on its own); egypt4 reads the same, so its badges stay.
 - **Cost.** The probe and all rectangle reads share one guest-call guard per frame: the per-call
   guard is four `sigaction` calls, and a dozen of those cost more than the reads. The board's
   fields are read directly inside that guard, the design height is cached, and the HUD widget

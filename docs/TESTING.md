@@ -220,6 +220,10 @@ names each action and why it was refused:
   and then `the touch was let go`; with plant food in stock the cursor carries one.
 - `press:z`, `press:x`, `press:c` log `pvz2: the power-up shortcut: selected power-up N of M`
   and then `the touch was let go`; click the lawn to use it.
+- A control the level hides publishes no badge and its key logs `ignored: ...` instead: for
+  example `ignored: the shovel is hidden` on Ancient Egypt - Day 23, whose HUD leaves the shovel,
+  plant food and power-up bar in the tree without showing them. The fast-forward button is shown
+  there, so its badge and key stay.
 - Outside a level, paused or behind a popup, each logs `ignored: ...` and does nothing.
 
 ## Reading the result
@@ -316,3 +320,8 @@ Worth checking after a change that touches iOS: the first launch (OBB download, 
 level with touch, the hardware keyboard (1-4, Q W E R, S, Space, Tab, Esc), going to the Home Screen and back
 (the game shows its pause menu), and the frame rate in the game's own performance overlay
 (Settings in the game).
+
+On an iPad, also drag the window through a few shapes. The log's `ios: geometry WxH` line (once a
+second) should follow the drag; a build that only ever reports the full screen (1376x1032 or 1032x1376
+on a 13-inch iPad) is being scaled by the system, not resized. Check this on a build from CI as well
+as a local one: the two can use different SDKs, and iPadOS treats an older SDK's app differently.
