@@ -1,7 +1,7 @@
 <h1 align="center">Reflourished-Darwin</h1>
 
 <p align="center">
-  <img src="docs/banner/banner-night-corner.webp" alt="PvZ2: Reflourished on iPhone, iPad, Mac and Windows" width="100%">
+  <img src="docs/banner/banner-temp-windows.png" alt="PvZ2: Reflourished on iPhone, iPad, Mac and Windows" width="100%">
 </p>
 
 <p align="center"><b>PvZ2: Reflourished natively on iPhone, iPad, Mac and Windows.</b><br>No jailbreak, no JIT, no emulator.</p>
