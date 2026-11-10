@@ -225,15 +225,52 @@ the saved copy atomically. A failed fetch answers with the saved archive dated n
 
 ## The first x64 start
 
-The x86-64 build translates the game before its first frame. The host shows a small window
-("Preparing the game for this PC. This happens once.") with a marquee bar while
-`tl_x64_translate` runs, and closes it when the first frame is drawn. A start with the
-translation already in `<data>/translated` does not show it. ScarletNX has no progress
-callback, so the bar is a marquee, not a percentage.
+The x86-64 build translates the game before its first frame. The host shows a DPI-scaled,
+light/dark window titled "Getting the game ready for your PC", explaining the one-time
+translation. Our ScarletNX progress callback reports completed and total unit weight
+(instructions plus four per basic-block leader), not just the number of units. The bar and
+percentage therefore follow completed work even with the largest units scheduled first.
+
+The status reads, for example, "42% · about 2 minutes left". It starts with "estimating..."
+until at least five seconds of samples and 5% of the weight are available, whichever comes
+later. The estimate uses average completed weight per second since sampling began, smoothed
+with an 80/20 EWMA. The largest first units can make the first estimate conservative. It
+never shows a negative estimate or one beyond half an hour; the final units show "Finishing
+up..." while linking and loading complete. Every five seconds the log records percentage,
+weight, completed functions, short-window weight/function rates, and the estimate.
+
+The window closes when the game draws its first frame. A warm start with the translation
+already in `<data>/translated` does not show it. A scheduled-task launch may be covered by
+the foreground application because Windows prevents background apps from stealing focus;
+a normal user launch is in front. The host does not override that foreground lock.
 
 For a bounded UI test without translation, set `TL_PVZ2_PREVIEW_PREPARE=60`
 in the x64 build's environment. It shows the same preparing window for 60
 seconds, skips the game thread, then exits (maximum 120 seconds).
+The preview feeds synthetic progress through the same estimator. With the preview enabled,
+`TL_PVZ2_PREVIEW_DPI=96`, `144` or `192` tests the 100%, 150% or 200% content layout without
+changing the display's scale. Outside the preview this override is ignored. The window
+measures its actual client area after creation so a display/layout DPI mismatch cannot
+clip the status line.
+
+## Pointer overlay measurements
+
+The overlay timer follows the display independently of the game's FPS and input rate. Its
+worker uses a high-resolution waitable timer with absolute deadlines, skips missed slots,
+and allows at most one pending UI message. Resuming after the pointer leaves the game starts
+a fresh schedule rather than counting hidden time as missed slots.
+
+`windows: pointer overlay:` counts visible updates, actual plant-window moves, and bitmap
+rebuilds over the entire five-second sample. A partly visible sample understates the active
+tick rate. `draws/s` includes crosshair-band changes and plant image/size changes, not moving
+an unchanged plant bitmap: 28 input positions/s and 8 bitmap rebuilds/s can be normal.
+
+`windows: pointer pacing:` separates target Hz, active timer seconds, timer wakes and UI
+service Hz (normalized to active time), coalesced messages, skipped deadlines, average queue
+latency and work time per tick. On a 175 Hz PC, inspect a full active sample: low wakes with
+skips means timer/scheduler lateness; wakes near 175 but lower UI Hz with coalescing means UI
+backpressure. Low moves/s alone means sparse or unchanged input, not a slow timer. No redraws
+are forced merely to inflate a counter.
 
 ## The installer
 

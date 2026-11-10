@@ -30,10 +30,12 @@ a log line every 5 s.
 
 The percentage is the completed unit weight, capped at 100%: 0.0% at the start, 11.19M of 11.19M at the end of the
 units. With 30,000-instruction units that is 0.3% per unit, small enough for a smooth bar. The first units are the
-largest and the slowest per weight; the window hides the estimate until 10% of the weight is done and then uses the
-average weight per second since that mark, over at least 20 s, so one slow unit does not promise hours.
+largest and the slowest per weight. The window now reveals its first estimate after at least 5 s and 5% of the
+weight, using average completed weight per second since sampling began and an 80/20 EWMA. Early estimates can be
+conservative; a five-second log and the bounds keep that visible without promising hours.
 
-Measured in the VM's cold run with this callback: the preparing window logged 1.5% at 18 s, 10.3% at 78 s, 42.4% at
+Measured in the original VM cold run with this callback and the former 10% plus 20 s estimate rule: the window logged
+1.5% at 18 s, 10.3% at 78 s, 42.4% at
 250 s, 73.1% at 396 s, 100.0% at 517 s, and the game drew its first frame at 530 s. The estimate said about 5 minutes
 at 41%, about 2 minutes at 71%, and less than a minute at 88%. The log's lines are in the task report.
 
