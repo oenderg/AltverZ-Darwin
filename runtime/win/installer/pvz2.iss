@@ -21,6 +21,9 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+#ifndef GameVersion
+  #error GameVersion must name the game version (game-version.txt in the staged tree)
+#endif
 #ifndef OutDir
   #define OutDir "."
 #endif
@@ -57,7 +60,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible arm64
 ArchitecturesInstallIn64BitMode=x64compatible arm64
 OutputDir={#OutDir}
-OutputBaseFilename=PvZ2Reflourished-{#AppVersion}-windows-setup
+OutputBaseFilename=PvZ2-Reflourished-{#GameVersion}-Darwin-{#AppVersion}-Windows-Setup
 SetupIconFile={#SetupIcon}
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}

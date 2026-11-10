@@ -121,11 +121,12 @@ mkdir -p "$OUT"
 stage_arm64 "$OUT"
 stage_x64 "$OUT"
 printf '%s\n' "$VERSION" > "$OUT/version.txt"
+python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$REPO/data/game-1.4.2.json" > "$OUT/game-version.txt"
 printf '%s\n' "$(cat "$REPO/prebuilt/winsparkle/.zip-sha256" 2>/dev/null)" > "$OUT/winsparkle-sha256.txt"
 
 if [ "$MAKE_ZIP" = 1 ]; then
     rm -f "$OUT/stage.zip"
-    (cd "$OUT" && zip -q -r -9 stage.zip arm64 x64 version.txt winsparkle-sha256.txt)
+    (cd "$OUT" && zip -q -r -9 stage.zip arm64 x64 version.txt game-version.txt winsparkle-sha256.txt)
     echo "staged $OUT and $OUT/stage.zip"
 else
     echo "staged $OUT (arm64 and x64)"

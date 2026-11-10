@@ -296,7 +296,7 @@ are forced merely to inflate a counter.
 
 ## The installer
 
-`out/win-installer/PvZ2Reflourished-<version>-windows-setup.exe` is the setup program: one
+`out/win-installer/PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe` is the setup program: one
 file for both architectures. On ARM64 Windows it installs the ARM64 program, everywhere else
 the x64 one. It is made with Inno Setup 7 on a Windows PC: `runtime/win/installer/build-installer.sh`
 stages both trees and (with `--zip`) writes the file to carry them there, and
@@ -321,7 +321,7 @@ running, Setup offers to close it, and a close from another program skips the ga
 ## Zips
 
 `runtime/win/package-zip.sh --arch all --apk <apk> [--tar <1.4.2.main.tar>]` makes
-`out/zips/PvZ2Reflourished-<version>-windows-{arm64,x64}.zip`: the portable program, ANGLE and
+`out/zips/PvZ2-Reflourished-<game>-Darwin-<version>-Windows-{ARM64,x64}.zip`: the portable program, ANGLE and
 its license, `Game/` (the APK and the CDN archive), a `portable` file and a README. The
 `portable` file is what makes the program keep everything in `data\` beside the .exe (saves,
 settings, the OBB, the x64 translation cache and the log), so deleting the folder removes all

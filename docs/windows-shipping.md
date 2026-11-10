@@ -3,8 +3,8 @@
 Two zips come out of `runtime/win/package-zip.sh`:
 
 ```
-PvZ2Reflourished-<version>-windows-arm64.zip
-PvZ2Reflourished-<version>-windows-x64.zip
+PvZ2-Reflourished-<game>-Darwin-<version>-Windows-ARM64.zip
+PvZ2-Reflourished-<game>-Darwin-<version>-Windows-x64.zip
 ```
 
 Each holds the program, ANGLE (`libEGL.dll`, `libGLESv2.dll` and `d3dcompiler_47.dll`),
@@ -79,7 +79,7 @@ dynamic library is what the build uses now.
 architecture trees in `out/win-installer/` and zips them for a Windows PC;
 `runtime/win/installer/build-installer.cmd <staged folder> [version] [output folder]` compiles
 `pvz2.iss` with Inno Setup 7 (7.1.1 while this was written; it also runs on ARM64 Windows,
-through emulation) into `PvZ2Reflourished-<version>-windows-setup.exe`. Both are per user, with
+through emulation) into `PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe`. Both are per user, with
 no administrator prompt, and install to `%LOCALAPPDATA%\Programs\PvZ2 Reflourished`; a fixed
 AppId ties the versions together.
 
@@ -135,12 +135,12 @@ way.)
       <sparkle:shortVersionString>1.3.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <description><![CDATA[<p>What's new...</p>]]></description>
-      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.3.1/PvZ2Reflourished-1.3.1-windows-setup.exe"
+      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.3.1/PvZ2-Reflourished-1.4.2-Darwin-1.3.1-Windows-Setup.exe"
                  length="120182790" type="application/octet-stream"
                  sparkle:edSignature="..."
                  sparkle:os="windows-x64"
                  sparkle:installerArguments="/SILENT /SP- /NOICONS"/>
-      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.3.1/PvZ2Reflourished-1.3.1-windows-setup.exe"
+      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.3.1/PvZ2-Reflourished-1.4.2-Darwin-1.3.1-Windows-Setup.exe"
                  length="120182790" type="application/octet-stream"
                  sparkle:edSignature="..."
                  sparkle:os="windows-arm64"
@@ -166,7 +166,7 @@ key is in the owner's login keychain and in the Actions secret `SPARKLE_PRIVATE_
 Signing on a Mac, with the Sparkle build the Mac app already fetches:
 
 ```sh
-sig="$(<sparkle>/bin/sign_update --ed-key-file <key file> PvZ2Reflourished-1.3.1-windows-setup.exe)"
+sig="$(<sparkle>/bin/sign_update --ed-key-file <key file> PvZ2-Reflourished-1.4.2-Darwin-1.3.1-Windows-Setup.exe)"
 ```
 
 Signing on Windows, with `winsparkle-tool` from the release (`bin\winsparkle-tool.exe sign
@@ -182,7 +182,7 @@ release exists (docs/RELEASING.md, "Windows updates"):
 
 1. Build the setup with `runtime/win/installer/build-installer.sh` and `build-installer.cmd`
    from the release's APK, with `VERSION` as its version.
-2. On the Mac: `scripts/publish-windows-setup.sh PvZ2Reflourished-<version>-windows-setup.exe
+2. On the Mac: `scripts/publish-windows-setup.sh PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe
    --tag <tag> --upload --commit`. It signs the setup with the Mac app's key from the login
    keychain (Sparkle's `sign_update`; `--key-file` takes the exported key instead), checks the
    signature against `sparkle/public-key`, the key the Windows program carries, attaches the

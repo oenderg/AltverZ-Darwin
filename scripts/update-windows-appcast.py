@@ -7,7 +7,7 @@
 
 The first form writes sparkle/windows-appcast.xml with that release as the one update on
 offer: WinSparkle, like Sparkle, only needs the newest. The setup's file name gives the
-version (PvZ2Reflourished-<version>-windows-setup.exe, as build-installer.cmd names it) and
+version (PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe, as build-installer.cmd names it) and
 must match VERSION; the build number, which WinSparkle compares with the running app's, is
 major*10000 + minor*100 + patch, as the app computes it (runtime/tools/pvz2-windows-updates.c).
 
@@ -34,7 +34,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RELEASES = "https://github.com/oenderg/Reflourished-Darwin/releases"
 DEFAULT_APPCAST = os.path.join(ROOT, "sparkle", "windows-appcast.xml")
 SPARKLE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
-SETUP_NAME = re.compile(r"PvZ2Reflourished-(\d+)\.(\d+)\.(\d+)-windows-setup\.exe")
+SETUP_NAME = re.compile(r"PvZ2-Reflourished-\d+\.\d+\.\d+-Darwin-(\d+)\.(\d+)\.(\d+)-Windows-Setup\.exe")
 SYSTEMS = ("windows-x64", "windows-arm64")
 INSTALLER_ARGUMENTS = "/SILENT /SP- /NOICONS"
 MINIMUM_WINDOWS = "10.0"
@@ -50,7 +50,7 @@ def write(args):
     name = os.path.basename(args.setup)
     m = SETUP_NAME.fullmatch(name)
     if not m:
-        sys.exit(f"{name}: expected PvZ2Reflourished-<version>-windows-setup.exe")
+        sys.exit(f"{name}: expected PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe")
     major, minor, patch = map(int, m.groups())
     version = f"{major}.{minor}.{patch}"
     with open(os.path.join(ROOT, "VERSION")) as f:

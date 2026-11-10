@@ -60,7 +60,9 @@ if [ -z "$ANGLE_GIVEN" ]; then "$H/fetch-angle.sh" "$ARCH" || exit 1; fi
 [ -n "$APK" ] || { echo "package-zip: --apk is required" >&2; exit 2; }
 [ -f "$APK" ] || { echo "package-zip: no APK at $APK" >&2; exit 2; }
 
-stamp="PvZ2Reflourished-$VERSION"
+GAME_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$REPO/data/game-1.4.2.json")"
+# The same pattern as the Apple files: PvZ2-Reflourished-<game>-Darwin-<version>-<platform>.
+stamp="PvZ2-Reflourished-$GAME_VERSION-Darwin-$VERSION"
 work="$REPO/out/zip-work"
 mkdir -p "$OUT"
 
@@ -130,7 +132,7 @@ if [ "$ARCH" = arm64 ] || [ "$ARCH" = all ]; then
         echo "package-zip: no libEGL.dll and libGLESv2.dll in $ANGLE_ARM (runtime/win/build-angle.cmd makes them, or pass --angle)" >&2; exit 2; }
     cp "$ANGLE_ARM"/*.dll "$dir/" 2>/dev/null || true
     [ -f "$ANGLE_ARM/LICENSE" ] && cp "$ANGLE_ARM/LICENSE" "$dir/LICENSE-ANGLE.txt" || true
-    make_zip "$dir" "$stamp-windows-arm64"
+    make_zip "$dir" "$stamp-Windows-ARM64"
 fi
 
 if [ "$ARCH" = x64 ] || [ "$ARCH" = all ]; then
@@ -143,7 +145,7 @@ if [ "$ARCH" = x64 ] || [ "$ARCH" = all ]; then
     cp "$ANGLE_X64"/*.dll "$dir/" 2>/dev/null || true
     [ -f "$ANGLE_X64/LICENSE" ] && cp "$ANGLE_X64/LICENSE" "$dir/LICENSE-ANGLE.txt" || true
     if [ -n "$X64_RUNTIME" ]; then cp "$X64_RUNTIME"/*.dll "$dir/" 2>/dev/null || true; fi
-    make_zip "$dir" "$stamp-windows-x64"
+    make_zip "$dir" "$stamp-Windows-x64"
 fi
 
 echo "zips are in $OUT"

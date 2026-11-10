@@ -4,7 +4,7 @@
 # in GitHub Actions (the x86-64 one needs MSYS2), so this runs on the release Mac after
 # build-installer.sh and build-installer.cmd made the setup (docs/RELEASING.md, "Windows").
 #
-#   scripts/publish-windows-setup.sh <PvZ2Reflourished-<version>-windows-setup.exe> --tag <tag>
+#   scripts/publish-windows-setup.sh <PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe> --tag <tag>
 #       [--key-file <file>]   the EdDSA private key file (default: the Mac app's key in the
 #                             login keychain, where sign_update looks by itself)
 #       [--notes-html <html>] what the update window shows (default: the CHANGELOG's entry

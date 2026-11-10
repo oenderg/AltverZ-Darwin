@@ -17,6 +17,11 @@ if "%2"=="" (
 ) else (
     set VER=%2
 )
+if not exist "%STAGE%\game-version.txt" (
+    echo build-installer: no game-version.txt in %STAGE% ^(build-installer.sh writes it^)
+    exit /b 2
+)
+for /f "usebackq delims=" %%g in ("%STAGE%\game-version.txt") do set GAMEVER=%%g
 if "%3"=="" (set OUT=%STAGE%\out) else (set OUT=%~3)
 if not exist "%OUT%" mkdir "%OUT%"
 
@@ -27,6 +32,6 @@ if not exist "%ISCC%" (
     exit /b 2
 )
 
-"%ISCC%" /Qp /DStageDir="%STAGE%" /DOutDir="%OUT%" /DAppVersion="%VER%" /DSetupIcon="%~dp0..\pvz2.ico" "%~dp0pvz2.iss"
+"%ISCC%" /Qp /DStageDir="%STAGE%" /DOutDir="%OUT%" /DAppVersion="%VER%" /DGameVersion="%GAMEVER%" /DSetupIcon="%~dp0..\pvz2.ico" "%~dp0pvz2.iss"
 if errorlevel 1 exit /b 1
-echo built %OUT%\PvZ2Reflourished-%VER%-windows-setup.exe
+echo built %OUT%\PvZ2-Reflourished-%GAMEVER%-Darwin-%VER%-Windows-Setup.exe
