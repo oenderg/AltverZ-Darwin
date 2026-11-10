@@ -65,6 +65,8 @@ GAME_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[
 stamp="PvZ2-Reflourished-$GAME_VERSION-Darwin-$VERSION"
 work="$REPO/out/zip-work"
 mkdir -p "$OUT"
+# make_zip writes from inside the staging folder, so the output folder must be absolute
+OUT="$(cd "$OUT" && pwd)"
 
 stage_common() {
     dir="$1"
@@ -120,7 +122,7 @@ stage_licenses() {
     lic="$1/licenses"
     mkdir -p "$lic"
     cp "$REPO/LICENSE" "$lic/PvZ2-Reflourished.txt"
-    cp "$REPO/runtime/win/licenses/README.txt" "$REPO/runtime/win/licenses/"*.txt "$lic/"
+    cp "$REPO/runtime/win/licenses/"*.txt "$lic/"   # README.txt and the shared texts
     if [ "$2" = x64 ]; then cp "$REPO/runtime/win/licenses/x64/"*.txt "$lic/"; fi
 }
 
