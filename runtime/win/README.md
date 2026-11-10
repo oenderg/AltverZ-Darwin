@@ -322,7 +322,7 @@ running, Setup offers to close it, and a close from another program skips the ga
 
 `runtime/win/package-zip.sh --arch all --apk <apk> [--tar <1.4.2.main.tar>]` makes
 `out/zips/PvZ2-Reflourished-<game>-Darwin-<version>-Windows-{ARM64,x64}.zip`: the portable program, ANGLE and
-its license, `Game/` (the APK and the CDN archive), a `portable` file and a README. The
+its license, a `licenses` folder (below), `Game/` (the APK and the CDN archive), a `portable` file and a README. The
 `portable` file is what makes the program keep everything in `data\` beside the .exe (saves,
 settings, the OBB, the x64 translation cache and the log), so deleting the folder removes all
 of it, and the zip has no updater: its "Check for Updates..." opens the releases page. The
@@ -336,6 +336,16 @@ imports `libLLVM-23.dll`, `libwinpthread-1.dll`, `libc++.dll`, `libffi-8.dll`, `
 `libzstd.dll`, `libxml2-16.dll` and `libiconv-2.dll` from MSYS2's clang64 (LLVM 23); they go
 in the zip beside the program, and Windows' own DLLs come from the system. See
 `docs/windows-shipping.md` for where the ANGLE copies come from and how to refresh them.
+
+## Licenses
+
+Both the setup's trees and the zips carry a `licenses` folder from `runtime/win/licenses`:
+`README.txt` (what each part is, its license and where its source is), our `LICENSE` as
+`PvZ2-Reflourished.txt`, darkmodelib's MPL-2.0 and MIT texts and Zstandard's (both built into
+the program), and for x64 also ScarletNX's GPLv3 (the x64 program as a whole is distributed
+under GPLv3) and the licenses of the MSYS2 DLLs beside it. ANGLE's and WinSparkle's stay beside
+the program as `LICENSE-ANGLE.txt` and `LICENSE-WinSparkle.txt`. When the x64 program's DLL list
+changes, update `runtime/win/licenses/x64` (the texts are in MSYS2's `/clang64/share/licenses`).
 
 ## Build
 

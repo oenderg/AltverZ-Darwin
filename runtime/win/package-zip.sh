@@ -114,6 +114,16 @@ content.
 EOF
 }
 
+# The licenses folder: our GPL, what both programs build in, and (x64) ScarletNX and the DLLs
+# beside it (runtime/win/licenses/README.txt lists them and where their sources are).
+stage_licenses() {
+    lic="$1/licenses"
+    mkdir -p "$lic"
+    cp "$REPO/LICENSE" "$lic/PvZ2-Reflourished.txt"
+    cp "$REPO/runtime/win/licenses/README.txt" "$REPO/runtime/win/licenses/"*.txt "$lic/"
+    if [ "$2" = x64 ]; then cp "$REPO/runtime/win/licenses/x64/"*.txt "$lic/"; fi
+}
+
 make_zip() {
     dir="$1"; name="$2"
     # zip updates an existing archive instead of replacing it, so a file that
@@ -132,6 +142,7 @@ if [ "$ARCH" = arm64 ] || [ "$ARCH" = all ]; then
         echo "package-zip: no libEGL.dll and libGLESv2.dll in $ANGLE_ARM (runtime/win/build-angle.cmd makes them, or pass --angle)" >&2; exit 2; }
     cp "$ANGLE_ARM"/*.dll "$dir/" 2>/dev/null || true
     [ -f "$ANGLE_ARM/LICENSE" ] && cp "$ANGLE_ARM/LICENSE" "$dir/LICENSE-ANGLE.txt" || true
+    stage_licenses "$dir" arm64
     make_zip "$dir" "$stamp-Windows-ARM64"
 fi
 
@@ -145,6 +156,7 @@ if [ "$ARCH" = x64 ] || [ "$ARCH" = all ]; then
     cp "$ANGLE_X64"/*.dll "$dir/" 2>/dev/null || true
     [ -f "$ANGLE_X64/LICENSE" ] && cp "$ANGLE_X64/LICENSE" "$dir/LICENSE-ANGLE.txt" || true
     if [ -n "$X64_RUNTIME" ]; then cp "$X64_RUNTIME"/*.dll "$dir/" 2>/dev/null || true; fi
+    stage_licenses "$dir" x64
     make_zip "$dir" "$stamp-Windows-x64"
 fi
 

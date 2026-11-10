@@ -96,6 +96,16 @@ EOF
 
 # The x64 program is built with its own name in the zip; the installer has one folder per
 # PC, so both programs are "PvZ2 Reflourished.exe" there.
+# The licenses folder: our GPL, what both programs build in, and (x64) ScarletNX and the DLLs
+# beside it (runtime/win/licenses/README.txt lists them and where their sources are).
+stage_licenses() {
+    lic="$1/licenses"
+    mkdir -p "$lic"
+    cp "$REPO/LICENSE" "$lic/PvZ2-Reflourished.txt"
+    cp "$REPO/runtime/win/licenses/README.txt" "$REPO/runtime/win/licenses/"*.txt "$lic/"
+    if [ "$2" = x64 ]; then cp "$REPO/runtime/win/licenses/x64/"*.txt "$lic/"; fi
+}
+
 stage_arm64() {
     dir="$1/arm64"
     stage_common "$dir"
@@ -104,6 +114,7 @@ stage_arm64() {
     [ -f "$ANGLE/win-arm64/LICENSE" ] && cp "$ANGLE/win-arm64/LICENSE" "$dir/LICENSE-ANGLE.txt" || true
     cp "$REPO/prebuilt/winsparkle/arm64/WinSparkle.dll" "$dir/"
     cp "$REPO/prebuilt/winsparkle/COPYING" "$dir/LICENSE-WinSparkle.txt"
+    stage_licenses "$dir" arm64
 }
 
 stage_x64() {
@@ -115,6 +126,7 @@ stage_x64() {
     cp "$REPO/prebuilt/winsparkle/x64/WinSparkle.dll" "$dir/"
     cp "$REPO/prebuilt/winsparkle/COPYING" "$dir/LICENSE-WinSparkle.txt"
     [ -d "$X64_RUNTIME" ] && cp "$X64_RUNTIME"/*.dll "$dir/" 2>/dev/null || true
+    stage_licenses "$dir" x64
 }
 
 mkdir -p "$OUT"
