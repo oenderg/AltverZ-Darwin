@@ -440,6 +440,8 @@ jobs:
 
       - name: Keep the logs and screenshots
         if: always()
+        # A failed upload (GitHub's storage) must not fail a test that passed
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: smoke-${{ matrix.arch }}
