@@ -32,6 +32,7 @@ on:
 
 permissions:
   contents: write
+  actions: read  # the Windows publish job downloads this run's artifacts through the API
 
 jobs:
   build:
@@ -444,11 +445,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: PvZ2-Reflourished-*-Windows-*
-          path: win-release
-          merge-multiple: true
+      # The three files are single-file artifacts (archive: false). download-artifact unpacks a
+      # .zip one, so the zips would arrive as their contents; the API hands each back as it is.
+      - name: Download the Windows files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p win-release
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name | test("^PvZ2-Reflourished-.*-Windows-(Setup[.]exe|x64[.]zip|ARM64[.]zip)$")) | "\(.id) \(.name)"' |
+          while read -r id name; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "win-release/$name"
+          done
+          ls -l win-release
+          [ "$(ls win-release | wc -l | tr -d ' ')" = 3 ] || { echo "expected the setup and two zips" >&2; exit 1; }
 
       - name: Release metadata
         id: metadata
@@ -472,10 +483,10 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$TAG" win-release/* --repo "$REPOSITORY" --clobber
+            gh release upload "$TAG" win-release/PvZ2-Reflourished-*-Windows-* --repo "$REPOSITORY" --clobber
           else
             # A Windows-only run with no release yet: make it, then write its text below.
-            gh release create "$TAG" win-release/* --repo "$REPOSITORY" --target "$GITHUB_SHA" \
+            gh release create "$TAG" win-release/PvZ2-Reflourished-*-Windows-* --repo "$REPOSITORY" --target "$GITHUB_SHA" \
               --title "Reflourished-Darwin $VERSION · PvZ2: Reflourished $GAME" --notes "…"
           fi
           gh release view "$TAG" --repo "$REPOSITORY" --json assets > "$RUNNER_TEMP/assets.json"
