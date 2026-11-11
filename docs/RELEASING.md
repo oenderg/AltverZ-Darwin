@@ -76,6 +76,10 @@ game's art and UI font in `scripts/dmg/art/` (decoded from the OBB, never commit
 `render.sh preview.png` draws the icons in to judge the layout. Finder counts the title bar in the
 window height and draws the labels black: check a changed layout in a real Finder window.
 
+Every push to main and every release run first runs `scripts/check-repo.sh` (seconds, no build): the release
+notes for `VERSION`, the game version everywhere it is written, the x64 DLLs' licenses, the update key
+and the release text. A release run stops there, before building, if anything is off.
+
 The release's text is `scripts/release-notes.py`'s: a **Download:** line with one direct link per
 platform (the small IPA, the small DMG, the Windows setup; a platform without a file is left out),
 What's new from `release-notes/<version>.md`,

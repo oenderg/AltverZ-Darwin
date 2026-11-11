@@ -15,7 +15,7 @@ mod's own content built in.
 <p align="center">
   <a href="https://github.com/oenderg/Reflourished-Darwin/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/oenderg/Reflourished-Darwin?label=latest&color=8a3ffc"></a>
   <a href="https://github.com/oenderg/Reflourished-Darwin/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/oenderg/Reflourished-Darwin/total?color=e0702c"></a>
-  <img alt="Game version" src="https://img.shields.io/badge/PvZ2%20Reflourished-1.4.2-2ea44f">
+  <a href="https://reflourished.fandom.com/wiki/Changelogs/Version_1.4.x"><img alt="Game version" src="https://img.shields.io/badge/PvZ2%20Reflourished-1.4.2-2ea44f"></a>
   <a href="https://github.com/oenderg/Reflourished-Darwin/releases/latest"><img alt="iPhone and iPad" src="https://img.shields.io/badge/iOS%20%26%20iPadOS-15.5%2B-0a84ff?logo=apple&logoColor=white"></a>
   <a href="https://github.com/oenderg/Reflourished-Darwin/releases/latest"><img alt="Mac" src="https://img.shields.io/badge/macOS-14%2B%20·%20Apple%20silicon-0a84ff?logo=apple&logoColor=white"></a>
   <a href="https://github.com/oenderg/Reflourished-Darwin/releases/latest"><img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%26%2011%20·%20x64%20%26%20ARM64-0078d4?logo=windows&logoColor=white"></a>

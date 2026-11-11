@@ -33,6 +33,11 @@ The version is also written in these places (search for `1.4.2`):
   `runtime/tools/pvz2-ios.m`, `runtime/tools/regress/build-*-app.sh`: the CDN archive's file name
   (`<version>.main.tar`) and the default app version;
 - `.github/workflows/build.yml`: the input descriptions and the release text.
+- `README.md`: the game badge, its link to the mod's changelog (`Changelogs/Version_<major>.<minor>.x`)
+  and the APK's name in the build steps.
+
+`scripts/check-repo.sh` (run on every push and before a release builds) says which of these still
+name another version.
 
 ## 3. The hook table
 

@@ -35,8 +35,18 @@ permissions:
   actions: read  # the Windows publish job downloads this run's artifacts through the API
 
 jobs:
+  # scripts/check-repo.sh first: it takes seconds, so a mismatch stops the run before any build.
+  check:
+    name: Check the repo
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/check-repo.sh
+
   build:
     name: iPhone, iPad and Mac
+    needs: check
     if: github.event.inputs.platforms != 'Windows'
     # The Xcode 27 image, so the release is built with the same SDK as a local build
     # (Xcode 27). An app built with an older SDK is treated differently by iPadOS 27:
@@ -254,6 +264,7 @@ jobs:
   # with the package versions runtime/win/x64/msys2-clang64.txt pins (docs/windows-shipping.md).
   windows-arm64:
     name: Windows ARM64 programs
+    needs: check
     if: github.event.inputs.platforms == 'All' || github.event.inputs.platforms == 'Windows'
     runs-on: macos-15
     timeout-minutes: 45
