@@ -165,20 +165,30 @@ downloads:
 A slim app downloads the game's data (1.3 GB) the first time it opens and checks it, so keep
 it open on Wi-Fi until the game starts.
 
-**iPhone / iPad** (iOS 15.5 or later) - install the IPA with SideStore, AltStore,
-Sideloadly or LiveContainer.
+### iPhone / iPad
+
+iOS 15.5 or later.
+
+Install the IPA with SideStore, AltStore, Sideloadly or LiveContainer.
 
 **AltStore / SideStore source** - add
 `https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/altstore/source.json`
 (Sources → +) and install the game from it; new releases then show up as updates.
 
-**Mac** (Apple silicon, macOS 14 or later) - open the DMG and drag the app onto
-Applications. The app is not notarized, so the first time macOS refuses to open it:
-click **Done**, then in **System Settings → Privacy & Security** click **Open Anyway**.
-After that the app updates itself.
+### Mac
 
-**Windows** (Windows 10 or 11, 64-bit) - run the setup. It is not signed, so Windows shows
-"Windows protected your PC" the first time: click **More info**, then **Run anyway**.
+Apple silicon, macOS 14 or later.
+
+Open the DMG and drag the app onto Applications. The app is not notarized, so the first time
+macOS refuses to open it: click **Done**, then in **System Settings → Privacy & Security** click
+**Open Anyway**. After that the app updates itself.
+
+### Windows
+
+Windows 10 or 11, 64-bit.
+
+Run the setup. It is not signed, so Windows shows "Windows protected your PC" the first time:
+click **More info**, then **Run anyway**.
 
 <details>
 <summary>What the two screens look like</summary>
