@@ -109,6 +109,9 @@ static int g_adapt;
  * window shape when it is not the game's own (a new shape chosen in Settings): 0 = the game's shape. */
 static int g_win_adapt;
 static double g_lock_aspect;
+/* The Fixed shape the window's rule follows. Settings writes g_settings itself before it tells the host,
+ * so a change is found against this copy, not against g_settings. */
+static char g_win_aspect[16];
 static int g_show_keys;
 static int g_show_cursor_plant = 1;
 static int g_cross_brightness = 45;
@@ -539,8 +542,7 @@ static void settings_applied(void *user, const pvz2_settings *s)
     /* The startup preference only changes the current full-screen state when
      * that checkbox itself changes, not when an unrelated setting is applied. */
     int full_changed = g_start_fullscreen != s->start_fullscreen;
-    int shape_changed = g_settings.adapt_shape != s->adapt_shape ||
-                        strcmp(g_settings.fixed_aspect, s->fixed_aspect) != 0;
+    int shape_changed = g_win_adapt != s->adapt_shape || strcmp(g_win_aspect, s->fixed_aspect) != 0;
     g_start_fullscreen = s->start_fullscreen;
     g_settings = *s;
     g_show_keys = s->show_level_keys;
@@ -2785,6 +2787,7 @@ static void window_to_aspect(double a)
 static void window_rules_changed(void)
 {
     g_win_adapt = g_settings.adapt_shape;
+    snprintf(g_win_aspect, sizeof(g_win_aspect), "%s", g_settings.fixed_aspect);
     g_lock_aspect = 0;
     tl_log_line("windows: the window's rule is now %s", g_win_adapt ? "Adapt" : "Fixed");
     if (!g_win_adapt && g_hwnd) {
@@ -2811,6 +2814,16 @@ static void trim_bars(void)
     if (w < 1 || h < 1) return;
     double a = (double)g_layout_w / g_layout_h;
     if (!g_win_adapt) g_lock_aspect = a;
+    /* A picture smaller than the window's minimum size (a tall window turned wide, say) cannot be the
+     * window: it becomes the smallest window of the game's shape instead, around the picture's middle. */
+    int min_w = (int)(MIN_CLIENT_H * a + .5);
+    if (min_w < MIN_CLIENT_W) min_w = MIN_CLIENT_W;
+    if (w < min_w) {
+        int nh = (int)(min_w / a + .5);
+        pic.left -= (min_w - w) / 2;
+        pic.top -= (nh - h) / 2;
+        w = min_w; h = nh;
+    }
     if (IsZoomed(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
     RECT wr, cr;
     POINT origin = { 0, 0 };
@@ -2820,6 +2833,13 @@ static void trim_bars(void)
     int x = pic.left - (origin.x - wr.left), y = pic.top - (origin.y - wr.top);
     MONITORINFO mi = { .cbSize = sizeof(mi) };
     if (GetMonitorInfoW(MonitorFromRect(&pic, MONITOR_DEFAULTTONEAREST), &mi)) {
+        /* A maximized window's picture fills the work area under a thinner title bar: with the restored
+         * window's frame around it, it would not fit, so it shrinks to fit (still the game's shape). */
+        int room_w = mi.rcWork.right - mi.rcWork.left - fw, room_h = mi.rcWork.bottom - mi.rcWork.top - fh;
+        int ow = w;
+        if (h > room_h) { h = room_h; w = (int)(h * a + .5); }
+        if (w > room_w) { w = room_w; h = (int)(w / a + .5); }
+        x += (ow - w) / 2;
         if (x + w + fw > mi.rcWork.right) x = mi.rcWork.right - (w + fw);
         if (y + h + fh > mi.rcWork.bottom) y = mi.rcWork.bottom - (h + fh);
         if (x < mi.rcWork.left) x = mi.rcWork.left;
@@ -3897,6 +3917,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     g_start_fullscreen = g_settings.start_fullscreen;
     g_adapt = g_settings.adapt_shape;
     g_win_adapt = g_adapt;
+    snprintf(g_win_aspect, sizeof(g_win_aspect), "%s", g_settings.fixed_aspect);
     g_show_keys = g_settings.show_level_keys;
     g_show_cursor_plant = g_settings.show_cursor_plant;
     g_cross_brightness = g_settings.cursor_cross_brightness;
