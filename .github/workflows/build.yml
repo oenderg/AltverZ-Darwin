@@ -369,6 +369,81 @@ jobs:
           retention-days: ${{ github.event.inputs.publish == 'true' && 1 || 14 }}
           if-no-files-found: error
 
+  # Each portable zip started twice on a runner of its own CPU, as a new player would
+  # (runtime/win/smoke-test.ps1): the first start must translate (x64) and draw, the second
+  # must find the translation and draw again. The runners have no GPU, so ANGLE draws through
+  # Windows' software renderer: the frames count, the frame rate does not. The logs and
+  # screenshots are kept as the smoke-<arch> artifact.
+  smoke:
+    name: Windows smoke test (${{ matrix.arch }})
+    needs: windows
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+            zip: Windows-x64.zip
+          - arch: ARM64
+            runner: windows-11-arm
+            zip: Windows-ARM64.zip
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      # A single-file artifact that is a .zip arrives unpacked: the portable copy itself
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "*-${{ matrix.zip }}"
+          path: game
+          merge-multiple: true
+
+      - name: The OBB's name
+        id: obb
+        run: |
+          $j = Get-Content (Get-ChildItem data/game-*.json | Select-Object -First 1) | ConvertFrom-Json
+          "name=$($j.obb_name)" >> $env:GITHUB_OUTPUT
+          "sha=$($j.obb_sha256)" >> $env:GITHUB_OUTPUT
+          "url=$($j.obb_urls[0])" >> $env:GITHUB_OUTPUT
+
+      - name: OBB cache
+        id: obb-cache
+        uses: actions/cache@v6
+        with:
+          path: obb
+          key: obb-${{ steps.obb.outputs.sha }}
+
+      - name: The OBB
+        if: steps.obb-cache.outputs.cache-hit != 'true'
+        env:
+          NAME: ${{ steps.obb.outputs.name }}
+          SHA: ${{ steps.obb.outputs.sha }}
+          URL: ${{ steps.obb.outputs.url }}
+        run: |
+          New-Item -ItemType Directory -Force -Path obb | Out-Null
+          curl.exe -fL --retry 3 -o "obb/$env:NAME" $env:URL
+          if ($LASTEXITCODE) { throw "the OBB download failed" }
+          $sum = (Get-FileHash "obb/$env:NAME" -Algorithm SHA256).Hash.ToLower()
+          if ($sum -ne $env:SHA) { throw "the OBB has sha256 $sum, not $env:SHA" }
+
+      - name: Start the game twice
+        env:
+          NAME: ${{ steps.obb.outputs.name }}
+        run: ./runtime/win/smoke-test.ps1 -Game game -Obb "obb/$env:NAME" -Out smoke
+
+      - name: Keep the logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-${{ matrix.arch }}
+          path: smoke
+          retention-days: 14
+          if-no-files-found: ignore
+
   # One job publishes everything, once every build the run asked for has passed: the release
   # (made as a draft, filled, then made public), its text, the AltStore source and both update
   # feeds. A failed or cancelled build publishes nothing. On a Mac, for Sparkle's sign_update.
