@@ -424,21 +424,29 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
           GAME: ${{ steps.metadata.outputs.game }}
           TAG: ${{ steps.metadata.outputs.tag }}
+          PREFIX: ${{ steps.metadata.outputs.prefix }}
         run: |
           set -euo pipefail
+          # The release page lists the files in the order they were uploaded: one at a time, this order.
+          files=()
+          for end in iOS.ipa Mac.dmg Windows-Setup.exe iOS-Full.ipa Mac-Full.dmg Windows-x64.zip Windows-ARM64.zip; do
+            if [ -f "release/$PREFIX-$end" ]; then files+=("release/$PREFIX-$end"); fi
+          done
+          [ "${#files[@]}" -eq "$(ls release | wc -l)" ] || { echo "release/ has files outside the list" >&2; ls release >&2; exit 1; }
           python3 scripts/release-notes.py release --version "$VERSION" --tag "$TAG" --repo "$GITHUB_REPOSITORY" > release-notes.md
           cat release-notes.md
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             # A run that adds files to a release that is out already (another platform, a rebuild).
-            gh release upload "$TAG" release/* --repo "$GITHUB_REPOSITORY" --clobber
+            for f in "${files[@]}"; do gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY" --clobber; done
             gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/assets.json"
             python3 scripts/release-notes.py --assets "$RUNNER_TEMP/assets.json" --version "$VERSION" \
               --tag "$TAG" --repo "$GITHUB_REPOSITORY" > release-notes.md
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
           else
             # A draft until every file is attached, so nobody sees a release with some of them.
-            gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft \
               --title "Reflourished-Darwin $VERSION · PvZ2: Reflourished $GAME" --notes-file release-notes.md
+            for f in "${files[@]}"; do gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY"; done
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
           fi
 
