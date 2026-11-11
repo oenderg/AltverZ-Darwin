@@ -116,7 +116,8 @@ function Read-Log {
 # closest one as <name>.png; true when it matches, or when there is no baseline to match.
 function Test-Picture([string]$name, $p) {
     $path = Join-Path $Out "$name.png"
-    if (-not $Baseline) { Save-Screen $path $p; return $true }
+    # Without a baseline, the picture that will become one: past the loading screen
+    if (-not $Baseline) { Start-Sleep -Seconds 10; Save-Screen $path $p; return $true }
     $try = Join-Path $Out "$name-try.png"
     $best = -1
     $until = (Get-Date).AddSeconds(30)
