@@ -46,19 +46,23 @@ PvZ2-Reflourished-<game>-Darwin-<version>-Windows-ARM64.zip
 **Windows** runs beside the Apple job, in three jobs: `windows-arm64` (macOS) cross-builds the
 ARM64 programs with llvm-mingw; `windows` (`windows-2025`) installs MSYS2's CLANG64 at the
 versions `runtime/win/x64/msys2-clang64.txt` pins, builds ScarletNX with our patch (cached
-between runs), the x86-64 programs, the setup with Inno Setup 7.1.1 and both portable zips;
-`windows-publish` waits for the Apple job, attaches the three files to its release, rewrites the
-release text so the table lists them (`release-notes.py --assets`), signs the setup and commits
-the Windows update feed (below). The Windows files have no Full variant: the setup and the zips
-download the game's data on first start. A Windows-only run with Publish creates the release
-when it does not exist yet.
+between runs), the x86-64 programs, the setup with Inno Setup 7.1.1 and both portable zips.
+The Windows files have no Full variant: the setup and the zips download the game's data on first
+start.
+
+**Publishing** is one job, `publish`, at the end. Every build job only keeps its files as run files;
+`publish` starts once every build the run asked for has passed (a failed or cancelled build publishes
+nothing). It fetches the files, makes the release as a draft with all of them, then makes it public,
+then commits the AltStore source and both update feeds and pushes them. A run for a release that is
+out already (one platform rebuilt, say) adds or replaces its files and rewrites the release text
+(`release-notes.py --assets`).
 
 For example: `PvZ2-Reflourished-1.4.2-Darwin-1.0.0-iOS.ipa`. Slim is a small download; the app
 downloads the game's data on first launch. Full has the data inside, for an offline first launch.
 Selecting one platform or variant publishes just those files.
 
-A run with **Publish** off creates no release, AltStore entry or Mac feed item: it keeps the same files
-as artifacts of the run for 14 days instead, unzipped, so anyone signed in to GitHub can download a test
+A run with **Publish** off creates no release, AltStore entry or feed item: it keeps the same files
+as artifacts of the run for 14 days (a publishing run keeps them for a day), unzipped, so anyone signed in to GitHub can download a test
 build from the run's page (for example for the reporter of an issue to check a fix).
 
 `build.sh` keeps its plain local names in `out/`. After each build,
@@ -86,9 +90,10 @@ What's new from `release-notes/<version>.md`,
 the feat/fix/perf commits since the previous tag (folded, with the compare link; the checkout fetches
 the tags for this), and `release-notes/footer.md` with a table of the files the run built. The same
 What's new is the AltStore changelog (`--format text`) and the Mac update window's notes
-(`--format html`). The workflow uploads the files, then runs `scripts/update-altstore-source.py` and commits the
-updated `altstore/source.json` (`chore(altstore): ...`) to the default branch, then signs the slim
-Mac DMG and commits the Mac update feed `sparkle/appcast.xml` (`chore(sparkle): ...`).
+(`--format html`). The publish job uploads the files, then runs `scripts/update-altstore-source.py` and
+commits the updated `altstore/source.json` (`chore(altstore): ...`), signs the slim Mac DMG and commits
+the Mac update feed `sparkle/appcast.xml` (`chore(sparkle): ...`), and does the same for Windows
+(below); it pushes the three commits to the default branch at the end.
 
 ## Versions
 
@@ -156,10 +161,10 @@ and WinSparkle's window, which asks before it installs. docs/windows-shipping.md
   installs either build). `scripts/update-windows-appcast.py` writes it; `--check` validates it.
 - **The key** is the Mac app's: the Windows program carries the same `sparkle/public-key`, so
   one private key signs both platforms. Nothing new to keep safe.
-- **Publishing.** The release workflow's `windows-publish` job runs
+- **Publishing.** The release workflow's `publish` job runs
   `scripts/publish-windows-setup.sh` with the `SPARKLE_PRIVATE_KEY` secret on stdin: it signs
   the setup, refuses a signature that does not verify with `sparkle/public-key`, writes the feed
-  and commits it (`chore(sparkle-windows): ...`), and the job pushes it. Without the secret the
+  and commits it (`chore(sparkle-windows): ...`), and the job pushes it with the other two. Without the secret the
   feed is left as it is. For a setup made outside the workflow, run the script on the release
   Mac (`--upload --commit`, the key from the login keychain) and push. Until the first Windows
   release, the feed does not exist and an installed build's check reports an error.

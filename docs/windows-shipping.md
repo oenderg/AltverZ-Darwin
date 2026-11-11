@@ -178,7 +178,7 @@ base64 of the 32-byte seed, which becomes a PKCS#8 Ed25519 key with the prefix `
 
 The release workflow makes and publishes the Windows files with the Apple ones
 (docs/RELEASING.md, "Running the build"): its Windows jobs build both programs, the setup and
-the zips, attach them to the release, and its `windows-publish` job runs
+the zips, and its `publish` job attaches them to the release with the Apple files and runs
 `scripts/publish-windows-setup.sh` with the `SPARKLE_PRIVATE_KEY` secret, which signs the setup,
 checks the signature against `sparkle/public-key` (the key the Windows program carries), writes
 `sparkle/windows-appcast.xml` with `scripts/update-windows-appcast.py` (the release notes from
