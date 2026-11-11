@@ -59,7 +59,13 @@ pem = "-----BEGIN PUBLIC KEY-----\n" + base64.b64encode(der).decode() + "\n-----
 open(sys.argv[2], "w").write(pem)
 open(sys.argv[4], "wb").write(base64.b64decode(sys.argv[3]))
 PY
-if ! openssl pkeyutl -verify -pubin -inkey "$TMP/pub.pem" -rawin -in "$SETUP" -sigfile "$TMP/sig.bin" >/dev/null; then
+# Ed25519 needs OpenSSL 3 or later (pkeyutl -rawin); macOS's own openssl is LibreSSL, and a
+# GitHub runner's PATH finds that one first, so Homebrew's is taken when it is there.
+OPENSSL=openssl
+for o in /opt/homebrew/opt/openssl@3/bin/openssl /usr/local/opt/openssl@3/bin/openssl; do
+    if [ -x "$o" ]; then OPENSSL="$o"; break; fi
+done
+if ! "$OPENSSL" pkeyutl -verify -pubin -inkey "$TMP/pub.pem" -rawin -in "$SETUP" -sigfile "$TMP/sig.bin" >/dev/null; then
     echo "the signature does not verify with $PUBLIC_KEY: wrong key?" >&2
     exit 1
 fi
