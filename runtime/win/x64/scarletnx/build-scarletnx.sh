@@ -12,7 +12,7 @@
 set -e
 H="$(cd "$(dirname "$0")" && pwd)"
 DIR="${1:?usage: build-scarletnx.sh <folder>}"
-PIN=7950099a3377c3f95ef62c7559dccca4a4911885
+PIN=f5c2fa84d52f75744739c3ad8edef79217f5a42c
 URL=https://github.com/scarletnx/ScarletNX.git
 PATCH="$H/scarletnx.patch"
 
