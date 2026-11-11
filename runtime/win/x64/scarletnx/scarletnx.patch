@@ -498,3 +498,31 @@ index a1c107c..5841ca5 100644
  /* What a miss in the module runs (snx_runtime_defaults' RtAPI.miss, snx_recompiled_lookup and _call) instead of the
     module's JIT: a caller's own just-in-time compiler, called as the guest function at the pc, which compiles the code
     there and runs it. NULL restores the module's JIT. A caller with its own RtAPI.miss and dispatch table (gnuabi)
+diff --git a/src/common/utilities/common.c b/src/common/utilities/common.c
+index 5fae22d..85b4854 100644
+--- a/src/common/utilities/common.c
++++ b/src/common/utilities/common.c
+@@ -1815,6 +1815,14 @@ char* snx_temp_dir(const char* parent) {
+         free(name);
+         wp = wide(candidate);
+         int ok = wp && CreateDirectoryW(wp, &security);
++        /* Wine cannot apply the owner-rights entry: it makes the folder with no rights at all and answers Access
++           denied. The folder goes again and a plain one takes its place, private as the user's own temp folder
++           is (a parent given here inherits its rights the same way). */
++        if (!ok && wp && GetLastError() == ERROR_ACCESS_DENIED) {
++            RemoveDirectoryW(wp);
++            ok = CreateDirectoryW(wp, NULL);
++        }
++        DWORD error = GetLastError();
+         free(wp);
+         if (ok) {
+             LocalFree(descriptor);
+@@ -1822,7 +1830,7 @@ char* snx_temp_dir(const char* parent) {
+             return candidate;
+         }
+         free(candidate);
+-        if (GetLastError() != ERROR_ALREADY_EXISTS) break;
++        if (error != ERROR_ALREADY_EXISTS) break;
+     }
+     LocalFree(descriptor);
+     free(path);

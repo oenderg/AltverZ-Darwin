@@ -17,7 +17,7 @@ git checkout 5b9c0fab
 git apply /path/to/runtime/win/x64/scarletnx/scarletnx.patch
 ```
 
-What the patch adds to `src/common/cpu/recompiler/library.c` and `snx_recompiler.h`:
+What the patch adds to `src/common/cpu/recompiler/library.c`, `snx_recompiler.h` and `src/common/utilities/common.c`:
 
 - **Live code** (`snx_recompiler_set_live_code`): the recompiler reads the guest's code where it is, not from a
   copy, so code the mod patches at run time (libRFLib's hooks) is compiled as it is then.
@@ -33,6 +33,10 @@ What the patch adds to `src/common/cpu/recompiler/library.c` and `snx_recompiler
 - **Progress** (`snx_recompiler_set_progress`): a callback with the units' weight and functions done and total,
   once with the totals and then after each unit finishes; the Windows preparing window uses it for its bar and
   estimate. `upstream-progress.md` has the numbers.
+- **A temp folder under Wine** (`snx_temp_dir`, common.c): the private folder the module loads from is made with an
+  owner-rights entry Wine cannot apply (Wine makes it with no rights and answers Access denied, so a translation
+  under Wine or CrossOver was never saved). On that error the folder is made again without the entry, private as
+  the user's own temp folder is. On Windows itself nothing changes.
 
 The leader fix that used to be in the patch is upstream as `5b9c0fab` ("Clear every leader's dispatch slot on
 invalidation", https://github.com/scarletnx/ScarletNX/pull/1449, merged 2026-11-08), so the patch no longer
