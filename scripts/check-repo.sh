@@ -5,7 +5,8 @@
 #
 # - the release notes for VERSION exist;
 # - the game version (data/game-<version>.json) is the one build.sh, the runtime, the version
-#   script and the README use, including the README badge's link to the mod's changelog;
+#   script and the README use, including the README badge's link to the mod's changelog (and a
+#   warning when the Windows smoke test has no picture for it);
 # - every DLL the x64 Windows build ships has its license in runtime/win/licenses;
 # - sparkle/public-key is a 32-byte Ed25519 key, and both Windows builds and the Mac build read it;
 # - the release text builds for a release with all seven files.
@@ -36,6 +37,9 @@ else
     grep -q "reflourished.fandom.com/wiki/Changelogs/Version_$SERIES" README.md ||
         problem "the README badge does not link to the changelog of $SERIES"
     grep -q "PvZ2 Reflourished $G" README.md || problem "the README's build steps do not name the $G APK"
+    # A warning only: the Windows CI run that makes the new picture starts with this check
+    [ -f "runtime/win/smoke/first-$G.png" ] ||
+        echo "check-repo: warning: runtime/win/smoke/first-$G.png, the Windows smoke test's picture, is missing (docs/TESTING.md)" >&2
 fi
 
 # The x64 DLLs' licenses (collect-dlls.sh stops the build when the set changes; this says so sooner)

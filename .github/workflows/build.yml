@@ -371,9 +371,10 @@ jobs:
 
   # Each portable zip started twice on a runner of its own CPU, as a new player would
   # (runtime/win/smoke-test.ps1): the first start must translate (x64) and draw, the second
-  # must find the translation and draw again. The runners have no GPU, so ANGLE draws through
+  # must find the translation and draw again, and both must draw the Welcome screen of
+  # runtime/win/smoke/first-<game>.png. The runners have no GPU, so ANGLE draws through
   # Windows' software renderer: the frames count, the frame rate does not. The logs and
-  # screenshots are kept as the smoke-<arch> artifact.
+  # pictures are kept as the smoke-<arch> artifact.
   smoke:
     name: Windows smoke test (${{ matrix.arch }})
     needs: windows
@@ -406,6 +407,7 @@ jobs:
         id: obb
         run: |
           $j = Get-Content (Get-ChildItem data/game-*.json | Select-Object -First 1) | ConvertFrom-Json
+          "game=$($j.version)" >> $env:GITHUB_OUTPUT
           "name=$($j.obb_name)" >> $env:GITHUB_OUTPUT
           "sha=$($j.obb_sha256)" >> $env:GITHUB_OUTPUT
           "url=$($j.obb_urls[0])" >> $env:GITHUB_OUTPUT
@@ -433,7 +435,8 @@ jobs:
       - name: Start the game twice
         env:
           NAME: ${{ steps.obb.outputs.name }}
-        run: ./runtime/win/smoke-test.ps1 -Game game -Obb "obb/$env:NAME" -Out smoke
+          GAME: ${{ steps.obb.outputs.game }}
+        run: ./runtime/win/smoke-test.ps1 -Game game -Obb "obb/$env:NAME" -Out smoke -Baseline "runtime/win/smoke/first-$env:GAME.png"
 
       - name: Keep the logs and screenshots
         if: always()

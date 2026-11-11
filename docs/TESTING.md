@@ -335,11 +335,22 @@ CPU (x64 on `windows-2025`, ARM64 on `windows-11-arm`), started twice by
 which took 17 minutes on the runner's 4 cores (1001 s, 3.8 cores busy; 2 minutes on a 24-thread PC). A start passes once the log's 5 s frame line
 shows frames drawn; the second must also find the x64 translation the first saved. The runners have
 no GPU, so ANGLE draws through Windows' software renderer: the frames count, the frame rate does
-not. The `smoke-x64` and `smoke-ARM64` artifacts keep each start's log and a picture of the game's
-window (`PrintWindow`, so other windows can't cover it).
+not. Each start must also draw the right picture: a picture of the game's window (`PrintWindow`, so other
+windows can't cover it) must be at least 90% like `runtime/win/smoke/first-<game version>.png`, the
+first start's Welcome screen, within 30 s of the first frames. Alike means: both scaled to 64x48, the
+share of pixels whose red, green and blue are each within 32. Good runs come out at 100% on x64 and
+ARM64 alike; a black window is about 2%, the same screen in a window of another shape about 37%. The
+`smoke-x64` and `smoke-ARM64` artifacts keep each start's log and picture, and the baseline beside it
+when a picture did not match.
 
-By hand, on any Windows PC or VM, with an unpacked portable zip and an OBB on the same drive:
+A new game version (or new title art from the mod's server) changes the picture. Take the new
+`first.png` from a run's `smoke-x64` artifact, check it by eye, and commit it as the new baseline;
+`check-repo.sh` says when the current game version has none. To see how alike two pictures are:
+`smoke-test.ps1 -Picture <png> -Baseline <png>`.
+
+By hand, on any Windows PC or VM, with an unpacked portable zip and an OBB on the same drive (a
+baseline only matches a window of the runners' size, 924x720):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File runtime\win\smoke-test.ps1 -Game <folder> -Obb <main...obb> -Out <folder>
+powershell -ExecutionPolicy Bypass -File runtime\win\smoke-test.ps1 -Game <folder> -Obb <main...obb> -Out <folder> [-Baseline <png>]
 ```

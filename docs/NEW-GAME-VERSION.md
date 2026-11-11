@@ -35,6 +35,9 @@ The version is also written in these places (search for `1.4.2`):
 - `.github/workflows/build.yml`: the input descriptions and the release text.
 - `README.md`: the game badge, its link to the mod's changelog (`Changelogs/Version_<major>.<minor>.x`)
   and the APK's name in the build steps.
+- `runtime/win/smoke/first-<version>.png`: the Windows smoke test's picture of the first start
+  ([TESTING.md](TESTING.md), "Windows smoke test"). Without it, `check-repo.sh` warns and the smoke
+  test fails but keeps the new picture: take `first.png` from the run's `smoke-x64` artifact.
 
 `scripts/check-repo.sh` (run on every push and before a release builds) says which of these still
 name another version.
