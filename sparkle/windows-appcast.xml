@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>PvZ2 Reflourished for Windows</title>
+    <link>https://github.com/oenderg/Reflourished-Darwin/releases</link>
+    <description>Updates of PvZ2 Reflourished for Windows</description>
+    <language>en</language>
+    <item>
+      <title>PvZ2 Reflourished 1.4.0 for Windows</title>
+      <pubDate>Wed, 11 Nov 2026 11:55:01 +0000</pubDate>
+      <link>https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.4.0</link>
+      <sparkle:version>10400</sparkle:version>
+      <sparkle:shortVersionString>1.4.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<p><b>Now on Windows.</b> PvZ2: Reflourished runs on Windows PCs, with the same settings, keys and saves menu as on the Mac. One setup installs it on both Intel/AMD and ARM PCs, and it updates itself from then on.</p><ul><li>Windows: the first start downloads the game's data (1.3 GB) and, on Intel and AMD PCs, prepares the game for that PC once (about 2 minutes on a recent PC, longer on older ones). Later starts take seconds.</li><li>Windows: the game runs at your display's refresh rate with <b>Target 60 FPS</b> on, in a window you can resize or in full screen (F11 or Alt+Enter). The plant you picked follows the pointer, as on the Mac.</li><li>Windows: open <b>Settings</b> with <code>Ctrl+,</code>, by right-clicking the title bar (or <code>Alt+Space</code>), or by right-clicking the game's taskbar button. Both menus also have <b>Check for Updates</b>.</li><li>New default keys: seed packets 5 to 8 now sit on <code>Q</code> <code>W</code> <code>E</code> <code>R</code>, next to 1 to 4, with <code>Tab</code> for fast-forward and <code>F</code> for plant food. Keys you set yourself stay as they are.</li><li>Mac: the key labels in levels are now on by default (Settings &gt; Keyboard &gt; <b>Show keys in levels</b>).</li><li>Levels that hide the shovel, plant food or power-ups, such as Ancient Egypt Day 23, no longer show labels for them, and their keys no longer pick up the hidden control.</li><li>iPad: in a window on iPadOS 27, the game now resizes to any size you drag it to instead of jumping between a few shapes and sometimes showing the picture stretched.</li><li>iPhone and iPad: a single swipe at the bottom edge no longer leaves the game; it takes a second swipe, as at the top.</li></ul><p><a href="https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.4.0">The release on GitHub</a></p>]]></description>
+      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.4.0/PvZ2-Reflourished-1.4.2-Darwin-1.4.0-Windows-Setup.exe" length="120743516" type="application/octet-stream"
+                 sparkle:edSignature="wVt1MqZ6z2kOiD8CYl0wPa9sCvPMhpEtfIG2Xq0YrRGXsjDrvrY4X7PKAvgicK+5rG80dVa0SSeAmgNfP0+XCA==" sparkle:os="windows-x64"
+                 sparkle:installerArguments="/SILENT /SP- /NOICONS"/>
+      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.4.0/PvZ2-Reflourished-1.4.2-Darwin-1.4.0-Windows-Setup.exe" length="120743516" type="application/octet-stream"
+                 sparkle:edSignature="wVt1MqZ6z2kOiD8CYl0wPa9sCvPMhpEtfIG2Xq0YrRGXsjDrvrY4X7PKAvgicK+5rG80dVa0SSeAmgNfP0+XCA==" sparkle:os="windows-arm64"
+                 sparkle:installerArguments="/SILENT /SP- /NOICONS"/>
+    </item>
+  </channel>
+</rss>
