@@ -20,6 +20,15 @@
       "screenshots": [],
       "versions": [
         {
+          "version": "1.4.0",
+          "buildVersion": "10400",
+          "date": "2026-11-11",
+          "localizedDescription": "Now on Windows. PvZ2: Reflourished runs on Windows PCs, with the same settings, keys and saves menu as on the Mac. One setup installs it on both Intel/AMD and ARM PCs, and it updates itself from then on.\n\n• Windows: the first start downloads the game's data (1.3 GB) and, on Intel and AMD PCs, prepares the game for that PC once (about 2 minutes on a recent PC, longer on older ones). Later starts take seconds.\n• Windows: the game runs at your display's refresh rate with Target 60 FPS on, in a window you can resize or in full screen (F11 or Alt+Enter). The plant you picked follows the pointer, as on the Mac.\n• Windows: open Settings with Ctrl+,, by right-clicking the title bar (or Alt+Space), or by right-clicking the game's taskbar button. Both menus also have Check for Updates.\n• New default keys: seed packets 5 to 8 now sit on Q W E R, next to 1 to 4, with Tab for fast-forward and F for plant food. Keys you set yourself stay as they are.\n• Mac: the key labels in levels are now on by default (Settings > Keyboard > Show keys in levels).\n• Levels that hide the shovel, plant food or power-ups, such as Ancient Egypt Day 23, no longer show labels for them, and their keys no longer pick up the hidden control.\n• iPad: in a window on iPadOS 27, the game now resizes to any size you drag it to instead of jumping between a few shapes and sometimes showing the picture stretched.\n• iPhone and iPad: a single swipe at the bottom edge no longer leaves the game; it takes a second swipe, as at the top.",
+          "downloadURL": "https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.4.0/PvZ2-Reflourished-1.4.2-Darwin-1.4.0-iOS.ipa",
+          "size": 62121505,
+          "minOSVersion": "15.5"
+        },
+        {
           "version": "1.3.0",
           "buildVersion": "10300",
           "date": "2026-11-05",
