@@ -180,10 +180,13 @@ After that the app updates itself.
 **Windows** (Windows 10 or 11, 64-bit) - run the setup. It is not signed, so Windows shows
 "Windows protected your PC" the first time: click **More info**, then **Run anyway**.
 
+<details>
+<summary>What the two screens look like</summary>
 <p align="center">
   <img src="docs/windows/smartscreen-1.png" alt="Windows protected your PC, with More info" width="45%">
   <img src="docs/windows/smartscreen-2.png" alt="After More info: Run anyway" width="45%">
 </p>
+</details>
 
 The first start downloads the game's data (1.3 GB). On Intel and AMD PCs it then prepares the
 game for that PC, once: about 2 minutes on a recent PC, longer on older ones, with a progress
