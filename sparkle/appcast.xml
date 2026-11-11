@@ -6,15 +6,15 @@
     <description>Updates of PvZ2 Reflourished for the Mac (Reflourished-Darwin)</description>
     <language>en</language>
     <item>
-      <title>Reflourished-Darwin 1.3.0 · PvZ2: Reflourished 1.4.2</title>
-      <pubDate>Thu, 05 Nov 2026 22:19:56 +0000</pubDate>
-      <link>https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.3.0</link>
-      <sparkle:version>10300</sparkle:version>
-      <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
+      <title>Reflourished-Darwin 1.4.0 · PvZ2: Reflourished 1.4.2</title>
+      <pubDate>Wed, 11 Nov 2026 11:31:19 +0000</pubDate>
+      <link>https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.4.0</link>
+      <sparkle:version>10400</sparkle:version>
+      <sparkle:shortVersionString>1.4.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p><b>See your keys, and where your plant will go.</b> In a level, each control can show the key that works it, and on the Mac the plant you picked follows the pointer, with a cross on the tile it will land on.</p><ul><li>Key labels: on the Mac, turn on Settings &gt; Keyboard &gt; <b>Show keys in levels</b>. On iPad, they appear once you press a key on a hardware keyboard.</li><li>Mac: the selected plant, the shovel or plant food follows the pointer. The cross hides where the plant can't go, such as water without a lily pad. Turn it off, or change the cross's brightness, in Settings &gt; Keyboard.</li><li>Import Quests works: on iPhone and iPad it no longer closes the game, and on the Mac it asks for a file to open instead of where to save one. Pick the quests zip you exported.</li></ul><p><a href="https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.3.0">The release on GitHub</a></p>]]></description>
-      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.3.0/PvZ2-Reflourished-1.4.2-Darwin-1.3.0-Mac.dmg" length="71460592"
-                 type="application/octet-stream" sparkle:edSignature="s7K/uwJigRQyOz+uJpF3XikXEGYsHLhm+syUOZP+erk6XdEOSDTzlDEcAofXSU7fQvk1lRiUANiifMgZTDXfDg=="/>
+      <description><![CDATA[<p><b>Now on Windows.</b> PvZ2: Reflourished runs on Windows PCs, with the same settings, keys and saves menu as on the Mac. One setup installs it on both Intel/AMD and ARM PCs, and it updates itself from then on.</p><ul><li>Windows: the first start downloads the game's data (1.3 GB) and, on Intel and AMD PCs, prepares the game for that PC once (about 2 minutes on a recent PC, longer on older ones). Later starts take seconds.</li><li>Windows: the game runs at your display's refresh rate with <b>Target 60 FPS</b> on, in a window you can resize or in full screen (F11 or Alt+Enter). The plant you picked follows the pointer, as on the Mac.</li><li>Windows: open <b>Settings</b> with <code>Ctrl+,</code>, by right-clicking the title bar (or <code>Alt+Space</code>), or by right-clicking the game's taskbar button. Both menus also have <b>Check for Updates</b>.</li><li>New default keys: seed packets 5 to 8 now sit on <code>Q</code> <code>W</code> <code>E</code> <code>R</code>, next to 1 to 4, with <code>Tab</code> for fast-forward and <code>F</code> for plant food. Keys you set yourself stay as they are.</li><li>Mac: the key labels in levels are now on by default (Settings &gt; Keyboard &gt; <b>Show keys in levels</b>).</li><li>Levels that hide the shovel, plant food or power-ups, such as Ancient Egypt Day 23, no longer show labels for them, and their keys no longer pick up the hidden control.</li><li>iPad: in a window on iPadOS 27, the game now resizes to any size you drag it to instead of jumping between a few shapes and sometimes showing the picture stretched.</li><li>iPhone and iPad: a single swipe at the bottom edge no longer leaves the game; it takes a second swipe, as at the top.</li></ul><p><a href="https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.4.0">The release on GitHub</a></p>]]></description>
+      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.4.0/PvZ2-Reflourished-1.4.2-Darwin-1.4.0-Mac.dmg" length="71367424"
+                 type="application/octet-stream" sparkle:edSignature="BVAuCX10vCTi8k3XMw/5vaNQ+T/Kn1t2V9P9+rEFjOYeoN23higHM1GrrI8WiYmvGkii9wDNMYCuz3e6iWW/DA=="/>
     </item>
   </channel>
 </rss>
