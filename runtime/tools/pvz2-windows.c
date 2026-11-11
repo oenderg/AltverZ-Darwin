@@ -3861,7 +3861,14 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     {
         char logp[MAX_PATH + 16];
         join(logp, sizeof(logp), g_data, "pvz2.log");
-        /* A restart to fit the window is the same session: it keeps appending to the log. */
+        /* Each start begins its own log, and the one before it stays as pvz2.previous.log (after a
+         * crash or an error, that is the run to read), so the log never grows past two runs, as on
+         * the Mac. A restart to fit the window is the same session: it keeps appending to the log. */
+        if (!g_relaunch) {
+            char prevp[MAX_PATH + 32];
+            join(prevp, sizeof(prevp), g_data, "pvz2.previous.log");
+            MoveFileExA(logp, prevp, MOVEFILE_REPLACE_EXISTING);
+        }
         tl_win_log_open_mode(logp, g_relaunch);
     }
     if (g_relaunch)

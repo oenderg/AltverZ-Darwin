@@ -31,7 +31,7 @@ beyond Windows' own DLLs travels in the zip.
 - the OBB under `sdcard\Android\obb\...`;
 - `No_Backup\1.4.2.main.tar`;
 - the x64 translation cache and `cache\`;
-- `pvz2.log`.
+- `pvz2.log` and `pvz2.previous.log` (the run before).
 
 Portable mode and `TL_DATA` keep everything in one folder, as before. A start with the
 old layout moves `config\pvz2-config` (or its newer `.tmp`), the reminders and Nimble
