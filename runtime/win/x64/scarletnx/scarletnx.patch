@@ -1,5 +1,5 @@
 diff --git a/src/common/cpu/recompiler/library.c b/src/common/cpu/recompiler/library.c
-index c2f7281..1207f11 100644
+index c2f72815..1207f117 100644
 --- a/src/common/cpu/recompiler/library.c
 +++ b/src/common/cpu/recompiler/library.c
 @@ -52,7 +52,7 @@ extern const unsigned long snx_rtlib_bitcode_size;
@@ -460,7 +460,7 @@ index c2f7281..1207f11 100644
          ++count;
      }
 diff --git a/src/common/cpu/recompiler/snx_recompiler.h b/src/common/cpu/recompiler/snx_recompiler.h
-index a1c107c..5841ca5 100644
+index a1c107cb..5841ca59 100644
 --- a/src/common/cpu/recompiler/snx_recompiler.h
 +++ b/src/common/cpu/recompiler/snx_recompiler.h
 @@ -80,6 +80,16 @@ SNX_RECOMPILER_API int snx_recompiler_set_optimization(struct snx_recompiler* r,
@@ -499,10 +499,10 @@ index a1c107c..5841ca5 100644
     module's JIT: a caller's own just-in-time compiler, called as the guest function at the pc, which compiles the code
     there and runs it. NULL restores the module's JIT. A caller with its own RtAPI.miss and dispatch table (gnuabi)
 diff --git a/src/common/utilities/common.c b/src/common/utilities/common.c
-index 5fae22d..2a8d416 100644
+index 5fae22d8..872b5460 100644
 --- a/src/common/utilities/common.c
 +++ b/src/common/utilities/common.c
-@@ -1799,9 +1799,24 @@ char* snx_temp_dir(const char* parent) {
+@@ -1799,9 +1799,31 @@ char* snx_temp_dir(const char* parent) {
      PSECURITY_DESCRIPTOR descriptor = NULL;
      path = parent ? snx_strdup(parent) : snx_temp_root();
      if (!path) return NULL;
@@ -515,15 +515,22 @@ index 5fae22d..2a8d416 100644
 +    wchar_t sddl[256];
 +    wchar_t* user = NULL;
 +    HANDLE token = NULL;
++    char why[512] = "";
 +    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
 +        union {
 +            TOKEN_USER user;
 +            unsigned char bytes[256];
 +        } info;
 +        DWORD size = 0;
-+        if (GetTokenInformation(token, TokenUser, &info, sizeof(info), &size)) ConvertSidToStringSidW(info.user.User.Sid, &user);
++        if (!GetTokenInformation(token, TokenUser, &info, sizeof(info), &size) ||
++            !ConvertSidToStringSidW(info.user.User.Sid, &user))
++            snx_os_error(why, sizeof why);
 +        CloseHandle(token);
-+    }
++    } else
++        snx_os_error(why, sizeof why);
++    if (!user)
++        snx_error("cannot read the user's SID (%s): the temp folder names the owner (OW), which Wine cannot apply",
++                  why);
 +    swprintf(sddl, 256, L"D:P(A;OICI;FA;;;%ls)(A;OICI;FA;;;SY)", user ? user : L"OW");
 +    if (user) LocalFree(user);
 +    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &descriptor, NULL)) {

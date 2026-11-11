@@ -24,6 +24,7 @@
 #include <string.h>
 
 #include "common/cpu/recompiler/snx_recompiler.h"
+#include "common/utilities/common.h"
 #include "husk-tl-ld.h"
 #include "husk-tl-va.h"
 #include "husk-tl-xmem.h"
@@ -713,6 +714,13 @@ static void snx_log(const char *text)
         tl_log_line("%s", text);
 }
 
+/* ScarletNX's warnings and errors (snx_error) go to stderr unless a program takes them, and a Windows program's
+ * stderr goes nowhere: the log has them, such as a temp folder that falls back to the owner-rights SID. */
+static void snx_error_line(const char *line)
+{
+    tl_log_line("scarletnx: %s", line);
+}
+
 /* The cold translation's progress, for the preparing window: the workers report each finished unit's weight, and the
  * UI thread reads the last values. The weight is what the units were sized by, so the bar follows the work. */
 static atomic_ullong g_progress_weight, g_progress_weight_total;
@@ -756,6 +764,7 @@ bool tl_x64_translate(const char *cache_dir, char *err, size_t errlen)
         g_rec = snx_recompiler_new(SNX_RECOMPILER_FLAG_LLVM);
         if (!g_rec) { snprintf(err, errlen, "the recompiler cannot target this computer"); return false; }
         snx_recompiler_set_log(snx_log);
+        snx_error_sink(snx_error_line);
         snx_recompiler_set_progress(g_rec, x64_progress, NULL);
         /* the default target, an Armv8.0 CPU: pointer authentication and BTI (libRFLib's PACIASP) are hints there and run
          * as no-ops; the MAX target decodes them as the real instructions, which the backend has no code for */
