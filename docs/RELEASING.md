@@ -48,7 +48,8 @@ ARM64 programs with llvm-mingw; `windows` (`windows-2025`) installs MSYS2's CLAN
 versions `runtime/win/x64/msys2-clang64.txt` pins, builds ScarletNX with our patch (cached
 between runs), the x86-64 programs, the setup with Inno Setup 7.1.1 and both portable zips.
 The Windows files have no Full variant: the setup and the zips download the game's data on first
-start.
+start. Then `smoke` starts each portable zip twice, x64 on `windows-2025` and ARM64 on
+`windows-11-arm` (docs/TESTING.md, "Windows smoke test"); it does not hold back `publish`.
 
 **Publishing** is one job, `publish`, at the end. Every build job only keeps its files as run files;
 `publish` starts once every build the run asked for has passed (a failed or cancelled build publishes

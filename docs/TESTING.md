@@ -325,3 +325,21 @@ On an iPad, also drag the window through a few shapes. The log's `ios: geometry 
 second) should follow the drag; a build that only ever reports the full screen (1376x1032 or 1032x1376
 on a 13-inch iPad) is being scaled by the system, not resized. Check this on a build from CI as well
 as a local one: the two can use different SDKs, and iPadOS treats an older SDK's app differently.
+
+## Windows smoke test
+
+Every run that builds Windows ends with the `smoke` job: each portable zip on a runner of its own
+CPU (x64 on `windows-2025`, ARM64 on `windows-11-arm`), started twice by
+`runtime/win/smoke-test.ps1`. The first start is a new player's, with only the OBB (from the
+`obb_urls` in `data/game-*.json`, kept in the Actions cache): the x64 copy translates the game first,
+which takes about 10 minutes on the runner's 4 cores. A start passes once the log's 5 s frame line
+shows frames drawn; the second must also find the x64 translation the first saved. The runners have
+no GPU, so ANGLE draws through Windows' software renderer: the frames count, the frame rate does
+not. The `smoke-x64` and `smoke-ARM64` artifacts keep each start's log and a picture of the game's
+window (`PrintWindow`, so other windows can't cover it).
+
+By hand, on any Windows PC or VM, with an unpacked portable zip and an OBB on the same drive:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File runtime\win\smoke-test.ps1 -Game <folder> -Obb <main...obb> -Out <folder>
+```
