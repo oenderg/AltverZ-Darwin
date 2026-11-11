@@ -29,6 +29,10 @@ on:
         description: "Release tag (leave empty: v<VERSION>)"
         required: false
         default: ""
+      skip_smoke:
+        description: "Skip the Windows smoke test, so publishing does not wait for it (only after checking a failure yourself)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -378,6 +382,7 @@ jobs:
   smoke:
     name: Windows smoke test (${{ matrix.arch }})
     needs: windows
+    if: github.event.inputs.skip_smoke != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -451,17 +456,22 @@ jobs:
 
   # One job publishes everything, once every build the run asked for has passed: the release
   # (made as a draft, filled, then made public), its text, the AltStore source and both update
-  # feeds. A failed or cancelled build publishes nothing. On a Mac, for Sparkle's sign_update.
+  # feeds. A failed or cancelled build publishes nothing, and nor does a Windows build whose
+  # smoke test failed (the installed copies update themselves to it), unless the run skipped
+  # the smoke test. On a Mac, for Sparkle's sign_update.
   publish:
     name: Publish
-    needs: [build, windows]
+    needs: [build, windows, smoke]
     if: >-
       always() && github.event.inputs.publish == 'true' &&
       (needs.build.result == 'success' ||
         (github.event.inputs.platforms == 'Windows' && needs.build.result == 'skipped')) &&
       (needs.windows.result == 'success' ||
         (github.event.inputs.platforms != 'All' && github.event.inputs.platforms != 'Windows' &&
-          needs.windows.result == 'skipped'))
+          needs.windows.result == 'skipped')) &&
+      (needs.smoke.result == 'success' ||
+        (needs.smoke.result == 'skipped' &&
+          (github.event.inputs.skip_smoke == 'true' || needs.windows.result == 'skipped')))
     runs-on: macos-15
     timeout-minutes: 60
     steps:

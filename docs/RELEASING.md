@@ -16,7 +16,9 @@ Actions > **Build** > Run workflow, with:
 | `obb_url` | optional; empty = the mod's own OBB (only needed for full builds) |
 | `platforms` | All (default: iPhone/iPad, Mac and Windows), iPhone/iPad and Mac, one of those, or Windows |
 | `variants` | Slim and full (default), Slim, or Full |
+| `publish` | on (default): publish the release, the AltStore source and the update feeds; off: build only |
 | `release_tag` | optional; empty = `v<VERSION>` (for example `v1.0.0`) |
+| `skip_smoke` | off (default); on: no Windows smoke test, so publishing does not wait for it. Only after checking a failed smoke test yourself (below) |
 
 **The repository's own APK.** The mod's only download hosts (Google Drive and MEGA) are unreliable
 for a machine, so this repository keeps the APK as an asset of a **draft** release named
@@ -49,7 +51,12 @@ versions `runtime/win/x64/msys2-clang64.txt` pins, builds ScarletNX with our pat
 between runs), the x86-64 programs, the setup with Inno Setup 7.1.1 and both portable zips.
 The Windows files have no Full variant: the setup and the zips download the game's data on first
 start. Then `smoke` starts each portable zip twice, x64 on `windows-2025` and ARM64 on
-`windows-11-arm` (docs/TESTING.md, "Windows smoke test"); it does not hold back `publish`.
+`windows-11-arm` (docs/TESTING.md, "Windows smoke test"), and `publish` waits for it: a Windows
+build that does not start, or draws the wrong picture, is not published, as the installed copies
+would update themselves to it. When it fails, look at the `smoke-x64` / `smoke-ARM64` pictures
+and logs. A new baseline picture (new title art, a new game version) is committed and the run
+started again; a failure you have checked and want to publish anyway is a new run with
+`skip_smoke` on.
 
 **Publishing** is one job, `publish`, at the end. Every build job only keeps its files as run files;
 `publish` starts once every build the run asked for has passed (a failed or cancelled build publishes
