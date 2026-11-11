@@ -24,7 +24,7 @@ The Intel/AMD (x64) program also contains:
   ScarletNX's recompiler library, GNU General Public License version 3
       ScarletNX-GPL-3.0.txt
       source: https://github.com/scarletnx/ScarletNX at commit
-      5b9c0fab49adc6d61d7a6abf39d9fbaf7b544f61, with
+      7950099a3377c3f95ef62c7559dccca4a4911885, with
       runtime/win/x64/scarletnx/scarletnx.patch from this program's source applied.
       Because of it, the x64 program as a whole is distributed under the GNU General
       Public License version 3, which the "or any later version" above allows.

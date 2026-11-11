@@ -1,7 +1,7 @@
 # ScarletNX, as the x86-64 build needs it
 
 The x86-64 Windows build links ScarletNX's recompiler library
-(https://github.com/scarletnx/ScarletNX, GPLv3) at commit `5b9c0fab`, with `scarletnx.patch` applied:
+(https://github.com/scarletnx/ScarletNX, GPLv3) at commit `7950099a`, with `scarletnx.patch` applied:
 
 ```sh
 runtime/win/x64/scarletnx/build-scarletnx.sh <folder>   # in MSYS2's CLANG64 shell
@@ -13,11 +13,11 @@ target (Release, `SNX_TOOLS_ONLY=ON`, no tests or front ends) into `<folder>/bui
 
 ```sh
 git clone https://github.com/scarletnx/ScarletNX && cd ScarletNX
-git checkout 5b9c0fab
+git checkout 7950099a
 git apply /path/to/runtime/win/x64/scarletnx/scarletnx.patch
 ```
 
-What the patch adds to `src/common/cpu/recompiler/library.c`, `snx_recompiler.h` and `src/common/utilities/common.c`:
+What the patch adds to `src/common/cpu/recompiler/library.c` and `snx_recompiler.h`:
 
 - **Live code** (`snx_recompiler_set_live_code`): the recompiler reads the guest's code where it is, not from a
   copy, so code the mod patches at run time (libRFLib's hooks) is compiled as it is then.
@@ -33,12 +33,11 @@ What the patch adds to `src/common/cpu/recompiler/library.c`, `snx_recompiler.h`
 - **Progress** (`snx_recompiler_set_progress`): a callback with the units' weight and functions done and total,
   once with the totals and then after each unit finishes; the Windows preparing window uses it for its bar and
   estimate. `upstream-progress.md` has the numbers.
-- **A temp folder under Wine** (`snx_temp_dir`, common.c): the private folder the module loads from names the
-  user by its own SID instead of the owner-rights SID (OW). Wine cannot apply OW: it made the folder with no
-  rights and answered Access denied, so a translation under Wine or CrossOver was never saved. The folder is
-  still the user's and the system's alone; OW stays as the fallback if the SID cannot be read, and the log
-  says so.
 
 The leader fix that used to be in the patch is upstream as `5b9c0fab` ("Clear every leader's dispatch slot on
 invalidation", https://github.com/scarletnx/ScarletNX/pull/1449, merged 2026-11-08), so the patch no longer
 carries it. `upstream-fix.patch` and `upstream-pr.md` record that change and its evidence.
+
+The temp folder fix for Wine (`snx_temp_dir` names the user by its own SID instead of the owner-rights SID, OW,
+which Wine cannot apply, and says so in the log when it falls back to OW) is upstream as of `7950099a`
+(https://github.com/scarletnx/ScarletNX/pull/1689, merged 2026-11-11), so the patch no longer carries it either.
