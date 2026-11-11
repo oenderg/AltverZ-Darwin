@@ -499,30 +499,34 @@ index a1c107c..5841ca5 100644
     module's JIT: a caller's own just-in-time compiler, called as the guest function at the pc, which compiles the code
     there and runs it. NULL restores the module's JIT. A caller with its own RtAPI.miss and dispatch table (gnuabi)
 diff --git a/src/common/utilities/common.c b/src/common/utilities/common.c
-index 5fae22d..85b4854 100644
+index 5fae22d..2a8d416 100644
 --- a/src/common/utilities/common.c
 +++ b/src/common/utilities/common.c
-@@ -1815,6 +1815,14 @@ char* snx_temp_dir(const char* parent) {
-         free(name);
-         wp = wide(candidate);
-         int ok = wp && CreateDirectoryW(wp, &security);
-+        /* Wine cannot apply the owner-rights entry: it makes the folder with no rights at all and answers Access
-+           denied. The folder goes again and a plain one takes its place, private as the user's own temp folder
-+           is (a parent given here inherits its rights the same way). */
-+        if (!ok && wp && GetLastError() == ERROR_ACCESS_DENIED) {
-+            RemoveDirectoryW(wp);
-+            ok = CreateDirectoryW(wp, NULL);
-+        }
-+        DWORD error = GetLastError();
-         free(wp);
-         if (ok) {
-             LocalFree(descriptor);
-@@ -1822,7 +1830,7 @@ char* snx_temp_dir(const char* parent) {
-             return candidate;
-         }
-         free(candidate);
--        if (GetLastError() != ERROR_ALREADY_EXISTS) break;
-+        if (error != ERROR_ALREADY_EXISTS) break;
+@@ -1799,9 +1799,24 @@ char* snx_temp_dir(const char* parent) {
+     PSECURITY_DESCRIPTOR descriptor = NULL;
+     path = parent ? snx_strdup(parent) : snx_temp_root();
+     if (!path) return NULL;
+-    /* Key material must remain private even when the selected temp parent is shared. */
+-    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)", SDDL_REVISION_1,
+-                                                              &descriptor, NULL)) {
++    /* Key material must remain private even when the selected temp parent is shared. The folder is the user's and
++       the system's alone. The user is named by its own SID: Wine cannot apply the owner-rights SID (OW), makes the
++       folder with no rights at all and answers Access denied; OW stays as the fallback if the SID cannot be read. */
++    wchar_t sddl[256];
++    wchar_t* user = NULL;
++    HANDLE token = NULL;
++    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
++        union {
++            TOKEN_USER user;
++            unsigned char bytes[256];
++        } info;
++        DWORD size = 0;
++        if (GetTokenInformation(token, TokenUser, &info, sizeof(info), &size)) ConvertSidToStringSidW(info.user.User.Sid, &user);
++        CloseHandle(token);
++    }
++    swprintf(sddl, 256, L"D:P(A;OICI;FA;;;%ls)(A;OICI;FA;;;SY)", user ? user : L"OW");
++    if (user) LocalFree(user);
++    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &descriptor, NULL)) {
+         free(path);
+         return NULL;
      }
-     LocalFree(descriptor);
-     free(path);

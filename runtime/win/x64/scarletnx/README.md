@@ -33,10 +33,10 @@ What the patch adds to `src/common/cpu/recompiler/library.c`, `snx_recompiler.h`
 - **Progress** (`snx_recompiler_set_progress`): a callback with the units' weight and functions done and total,
   once with the totals and then after each unit finishes; the Windows preparing window uses it for its bar and
   estimate. `upstream-progress.md` has the numbers.
-- **A temp folder under Wine** (`snx_temp_dir`, common.c): the private folder the module loads from is made with an
-  owner-rights entry Wine cannot apply (Wine makes it with no rights and answers Access denied, so a translation
-  under Wine or CrossOver was never saved). On that error the folder is made again without the entry, private as
-  the user's own temp folder is. On Windows itself nothing changes.
+- **A temp folder under Wine** (`snx_temp_dir`, common.c): the private folder the module loads from names the
+  user by its own SID instead of the owner-rights SID (OW). Wine cannot apply OW: it made the folder with no
+  rights and answered Access denied, so a translation under Wine or CrossOver was never saved. The folder is
+  still the user's and the system's alone; OW stays as the fallback if the SID cannot be read.
 
 The leader fix that used to be in the patch is upstream as `5b9c0fab` ("Clear every leader's dispatch slot on
 invalidation", https://github.com/scarletnx/ScarletNX/pull/1449, merged 2026-11-08), so the patch no longer
