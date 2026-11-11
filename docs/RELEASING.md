@@ -76,7 +76,9 @@ game's art and UI font in `scripts/dmg/art/` (decoded from the OBB, never commit
 `render.sh preview.png` draws the icons in to judge the layout. Finder counts the title bar in the
 window height and draws the labels black: check a changed layout in a real Finder window.
 
-The release's text is `scripts/release-notes.py`'s: What's new from `release-notes/<version>.md`,
+The release's text is `scripts/release-notes.py`'s: a **Download:** line with one direct link per
+platform (the small IPA, the small DMG, the Windows setup; a platform without a file is left out),
+What's new from `release-notes/<version>.md`,
 the feat/fix/perf commits since the previous tag (folded, with the compare link; the checkout fetches
 the tags for this), and `release-notes/footer.md` with a table of the files the run built. The same
 What's new is the AltStore changelog (`--format text`) and the Mac update window's notes

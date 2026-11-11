@@ -33,6 +33,8 @@ KINDS = [("-iOS.ipa", "iPhone / iPad"), ("-iOS-Full.ipa", "iPhone / iPad, game d
          ("-Windows-Setup.exe", "Windows (Intel/AMD and ARM)"),
          ("-Windows-x64.zip", "Windows Intel/AMD, portable"),
          ("-Windows-ARM64.zip", "Windows on ARM, portable")]
+# The one-click line at the top: the file most people want on each platform
+QUICK = [("-iOS.ipa", "iPhone / iPad"), ("-Mac.dmg", "Mac"), ("-Windows-Setup.exe", "Windows")]
 
 
 def whats_new(version):
@@ -88,10 +90,23 @@ def downloads(files):
     return "| Device | File | Size |\n|---|---|---|\n" + "\n".join(rows)
 
 
+def quick_links(files, tag, repo):
+    """One line of direct download links, one per platform the release has a file for."""
+    links = []
+    for suffix, what in QUICK:
+        for name, _ in sorted(files):
+            if name.endswith(suffix):
+                links.append(f"[{what}](https://github.com/{repo}/releases/download/{tag}/{name})")
+                break
+    return "**Download:** " + " · ".join(links) if links else None
+
+
 def page(args):
+    files = release_files(args)
     footer = open(os.path.join(NOTES, "footer.md")).read().strip()
-    footer = footer.replace("{downloads}", downloads(release_files(args))).replace("{repo}", args.repo)
-    parts = ["## What's new", whats_new(args.version)]
+    footer = footer.replace("{downloads}", downloads(files)).replace("{repo}", args.repo)
+    quick = quick_links(files, args.tag, args.repo)
+    parts = ([quick] if quick else []) + ["## What's new", whats_new(args.version)]
     changes = all_changes(args.tag, args.since, args.repo)
     if changes:
         parts.append(changes)
