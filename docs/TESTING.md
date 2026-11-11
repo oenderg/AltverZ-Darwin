@@ -332,7 +332,7 @@ Every run that builds Windows ends with the `smoke` job: each portable zip on a 
 CPU (x64 on `windows-2025`, ARM64 on `windows-11-arm`), started twice by
 `runtime/win/smoke-test.ps1`. The first start is a new player's, with only the OBB (from the
 `obb_urls` in `data/game-*.json`, kept in the Actions cache): the x64 copy translates the game first,
-which takes about 10 minutes on the runner's 4 cores. A start passes once the log's 5 s frame line
+which took 17 minutes on the runner's 4 cores (1001 s, 3.8 cores busy; 2 minutes on a 24-thread PC). A start passes once the log's 5 s frame line
 shows frames drawn; the second must also find the x64 translation the first saved. The runners have
 no GPU, so ANGLE draws through Windows' software renderer: the frames count, the frame rate does
 not. The `smoke-x64` and `smoke-ARM64` artifacts keep each start's log and a picture of the game's
