@@ -9,14 +9,24 @@
 set -e
 R="$(cd "$1" && pwd)"; SNX="$(cd "$2" && pwd)"; Z="$(cd "$3" && pwd)"; OUT="$4"; target="${5:-starttest}"
 H="$R/win"; N="$R/src/translation-layer-next"; T="$R/src/translation-layer"; X="$H/x64"
-VERSION="${APP_VERSION:-$(cat "$R/../VERSION")}"
+# The mod this build is for (data/profiles/<id>.json). Its generated pvz2-profile-generated.h
+# (scripts/profile-generate.py, written by build-win.sh into out/win-profile-<id>) is on the include
+# path ahead of the checked-in defaults; PROFILE_DIR names that folder. MSYS2 has no Python, so the
+# few plain strings read here come straight from the JSON.
+PROFILE="${PROFILE:-altverz}"
+PROFILE_JSON="$R/../data/profiles/$PROFILE.json"
+pj() { sed -n "s/^ *\"$1\": *\"\([^\"]*\)\".*/\1/p" "$PROFILE_JSON" | head -1; }
+PROFILE_DIR="${PROFILE_DIR:-$R/../out/win-profile-$PROFILE}"
+[ -f "$PROFILE_DIR/pvz2-profile-generated.h" ] || { echo "no $PROFILE_DIR/pvz2-profile-generated.h: run runtime/win/build-win.sh once on a Mac, or profile-generate.py" >&2; exit 1; }
+APP_NAME="$(pj app_name)"
+VERSION="${APP_VERSION:-$(pj app_version)}"
 WS="$R/../prebuilt/winsparkle"
-FEED="${SPARKLE_FEED_URL:-https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/sparkle/windows-appcast.xml}"
+FEED="${SPARKLE_FEED_URL:-$(pj sparkle_feed_url | sed 's|/appcast.xml$|/windows-appcast.xml|')}"
 KEY="${SPARKLE_PUBLIC_KEY:-$(cat "$R/../sparkle/public-key" 2>/dev/null || true)}"
 OBJ="$OUT/obj"; mkdir -p "$OBJ" "$OUT"
 CC=clang
 CFLAGS="-std=gnu11 -g -O1 -D_GNU_SOURCE -DTL_WINDOWS=1 -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -Wno-unused-function
-  -include $H/compat/win-compat.h -I$H/compat -I$T -I$N -I$R/tools -I$Z/include -I$X -I$SNX/src"
+  -include $H/compat/win-compat.h -I$H/compat -I$T -I$N -I$R/tools -I$Z/include -I$PROFILE_DIR -I$X -I$SNX/src"
 
 # zlib twice: the runtime's, and the guest's (64-bit uLong, z_ prefixed)
 ZS="adler32 compress crc32 deflate gzclose gzlib gzread gzwrite infback inffast inflate inftrees trees uncompr zutil"
@@ -33,11 +43,11 @@ fi
 UPD_DEFS="-DPVZ2_UPDATES=0"; UPD_EXTRA=""; UPD_LIBS=""
 case "$target" in
     starttest) SRCS="$WIN_CORE $X/husk-tl-x64.c $X/x64-starttest.c"; EXE="$OUT/rfl-x64-starttest.exe" ;;
-    game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/PvZ2 Reflourished x64.exe"
+    game) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT/$APP_NAME x64.exe"
         UPD_DEFS="-DPVZ2_UPDATES=1 -DPVZ2_UPDATE_FEED_URL=\"$FEED\" -DPVZ2_UPDATE_PUBLIC_KEY=\"$KEY\""
         UPD_EXTRA="-I$WS/include"; UPD_LIBS="-L$WS/x64 -lWinSparkle"
         LDX="-mwindows -lwinmm -lshell32 -lole32 -luuid -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
-    game-portable) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT-portable/PvZ2 Reflourished x64.exe"
+    game-portable) SRCS="$WIN_CORE $WIN_GAME $X/husk-tl-x64.c"; EXE="$OUT-portable/$APP_NAME x64.exe"
         LDX="-mwindows -lwinmm -lshell32 -lole32 -luuid -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
 esac
@@ -53,7 +63,7 @@ for f in $SRCS; do
         *)  o="$OBJ/$(basename "$f" | sed 's/\.c$//').o"
             flags="-DPVZ2_APP_VERSION=\"$VERSION\"" ;;
     esac
-    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$R/../VERSION" -nt "$o" ] || [ "$R/tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$R/tools/pvz2-windows-updates.h" -nt "$o" ] || [ "$R/tools/pvz2-windows-identity.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ] || [ "$X/sigs-tables.inc" -nt "$o" ]; then
+    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$PROFILE_DIR/pvz2-profile-generated.h" -nt "$o" ] || [ "$R/tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$R/tools/pvz2-windows-updates.h" -nt "$o" ] || [ "$R/tools/pvz2-windows-identity.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ] || [ "$X/sigs-tables.inc" -nt "$o" ]; then
         echo "  cc $(basename "$f")"
         $CC $CFLAGS $flags -c "$f" -o "$o"
     fi
@@ -70,10 +80,10 @@ if [ "$target" = game ] || [ "$target" = game-portable ]; then
     "$H/build-darkmode.sh" clang++ llvm-ar "$OUT"
     DM="$OBJ/pvz2-windows-darkmode.o"
     DMSRC="$R/tools/pvz2-windows-darkmode.cpp"
-    if [ ! -f "$DM" ] || [ "$DMSRC" -nt "$DM" ] || [ "$R/tools/pvz2-windows-darkmode.h" -nt "$DM" ]; then
+    if [ ! -f "$DM" ] || [ "$DMSRC" -nt "$DM" ] || [ "$R/tools/pvz2-windows-darkmode.h" -nt "$DM" ] || [ "$PROFILE_DIR/pvz2-profile-generated.h" -nt "$DM" ]; then
         echo "  c++ pvz2-windows-darkmode.cpp"
         clang++ -std=c++20 -O1 -g -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 \
-            -I"$R/third_party/darkmodelib/include" -I"$R/tools" -c "$DMSRC" -o "$DM"
+            -I"$R/third_party/darkmodelib/include" -I"$N" -I"$PROFILE_DIR" -I"$R/tools" -c "$DMSRC" -o "$DM"
     fi
     OBJS="$OBJS $DM $OUT/libdarkmode.a"
 fi
