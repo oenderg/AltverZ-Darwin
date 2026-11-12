@@ -696,14 +696,18 @@ static struct {
     pvz_touch v[256];
     int n;
     uint32_t next_id, active_id;
-    /* The guest's finger for each of the host's fingers. The host has one
-     * finger (the mouse), but it can press again before a release has gone
-     * out -- the shovel's tap is released 120 ms later, and the plant's drag
-     * is released after its steps -- and the release has to go to the finger
-     * that was pressed, not to the newest one. Without this, a finger stays
-     * down in the game for ever. */
+    /* The guest's finger for each of the host's fingers. The Mac and Windows
+     * have one finger (the mouse), but it can press again before a release has
+     * gone out -- the shovel's tap is released 120 ms later, and the plant's
+     * drag is released after its steps -- and the release has to go to the
+     * finger that was pressed, not to the newest one. Without this, a finger
+     * stays down in the game for ever. On iOS each of the player's fingers has
+     * its own id (2 to 7), and 1 is the shortcuts'. */
     uint32_t finger[8];
-    int last_x, last_y;
+    /* Where each of the host's fingers last was: a touch record carries the
+     * finger's previous position, and with two fingers down that is its own,
+     * not the other finger's. */
+    int last_x[8], last_y[8];
     pthread_mutex_t mu;
 } TQ = { .next_id = 1, .active_id = 1, .mu = PTHREAD_MUTEX_INITIALIZER };
 static struct {
@@ -6035,8 +6039,10 @@ void tl_pvz2_touch(int phase, int id, float x, float y)
     t->y = (int)(y + 0.5f);
     t->time_s = now_s();
     t->id = touch_id_for(phase, id);
-    if (phase == 0) { t->px = t->x; t->py = t->y; TQ.last_x = t->x; TQ.last_y = t->y; }
-    else { t->px = TQ.last_x; t->py = TQ.last_y; TQ.last_x = t->x; TQ.last_y = t->y; }
+    int slot = (id >= 0 && id < 8) ? id : 0;
+    if (phase == 0) { t->px = t->x; t->py = t->y; }
+    else { t->px = TQ.last_x[slot]; t->py = TQ.last_y[slot]; }
+    TQ.last_x[slot] = t->x; TQ.last_y[slot] = t->y;
     tl_log_line("pvz2: touch phase %d id %u at (%d,%d), queued %d", t->phase, t->id, t->x, t->y, TQ.n);
     pthread_mutex_unlock(&TQ.mu);
 }
