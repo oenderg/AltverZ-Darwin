@@ -3,14 +3,14 @@
 Two zips come out of `runtime/win/package-zip.sh`:
 
 ```
-PvZ2-Reflourished-<game>-Darwin-<version>-Windows-ARM64.zip
-PvZ2-Reflourished-<game>-Darwin-<version>-Windows-x64.zip
+PvZ2-AltVerZ-<game>-Darwin-<version>-Windows-ARM64.zip
+PvZ2-AltVerZ-<game>-Darwin-<version>-Windows-x64.zip
 ```
 
 Each holds the program, ANGLE (`libEGL.dll`, `libGLESv2.dll` and `d3dcompiler_47.dll`),
-`Game/pvz2.apk`, `Game/1.4.2.main.tar`, the level key label font
-(`level-ui.ttf`) and a README. Neither zip carries the game's OBB (1.3 GB): the
-first start downloads it from the Mac build's own link (`data/game-1.4.2.json`'s
+`Game/pvz2.apk`, `Game/1.8.3f.main.tar`, the level key label font
+(`level-ui.ttf`) and a README. Neither zip carries the game's OBB (1.1 GB): the
+first start downloads it from the Mac build's own link (`the profile's game manifest (`data/game-1.8.3f.json`)`'s
 first `obb_urls` entry) into the data folder, checking its size and sha256, with a
 progress window and a Try Again after a failure. No MSYS2 or
 llvm-mingw installation is needed on the player's PC: everything the programs import
@@ -18,18 +18,18 @@ beyond Windows' own DLLs travels in the zip.
 
 ## Where the player's files go
 
-`%APPDATA%\PvZ2 Reflourished` is the small, personal folder:
+`%APPDATA%\PvZ2 AltVerZ` is the small, personal folder:
 
 - `settings.ini`;
 - `config\pvz2-config`, the game's own options and tutorial state;
 - `pvz2-reminders.tsv` and `nimble-persistence.tsv`;
-- the saves, under `sdcard\Android\data\com.ea.game.pvz2_rfl\files\...`, including
-  `No_Backup\CDN.1.4.2`.
+- the saves, under `sdcard\Android\data\com.ea.game.pvz2_auz\files\...`, including
+  `No_Backup\CDN.1.8.3f`.
 
-`%LOCALAPPDATA%\PvZ2 Reflourished` is the big folder that can be made again on this PC:
+`%LOCALAPPDATA%\PvZ2 AltVerZ` is the big folder that can be made again on this PC:
 
 - the OBB under `sdcard\Android\obb\...`;
-- `No_Backup\1.4.2.main.tar`;
+- `No_Backup\1.8.3f.main.tar`;
 - the x64 translation cache and `cache\`;
 - `pvz2.log` and `pvz2.previous.log` (the run before).
 
@@ -39,7 +39,7 @@ persistence from the big folder to the small one once, and logs each move.
 
 ## What each program imports
 
-`llvm-objdump -p` on the ARM64 program (`out/win/PvZ2 Reflourished.exe`, linked with
+`llvm-objdump -p` on the ARM64 program (`out/win-altverz/PvZ2 AltVerZ.exe`, linked with
 `-static` by llvm-mingw):
 
 ```
@@ -51,7 +51,7 @@ api-ms-win-crt-{stdio,filesystem,runtime,time,math,heap,environment,string,local
 All of those are Windows components (the API sets are the Universal CRT). The program
 has no non-system dependency.
 
-`llvm-objdump -p` on the x86-64 program (`out/win-x64/PvZ2 Reflourished x64.exe`):
+`llvm-objdump -p` on the x86-64 program (`out/win-altverz-x64/PvZ2 AltVerZ x64.exe`):
 
 ```
 WINMM.dll SHELL32.dll COMCTL32.dll WINHTTP.dll bcrypt.dll GDI32.dll GDIPLUS.dll USER32.dll KERNEL32.dll ADVAPI32.dll
@@ -79,8 +79,8 @@ dynamic library is what the build uses now.
 architecture trees in `out/win-installer/` and zips them for a Windows PC;
 `runtime/win/installer/build-installer.cmd <staged folder> [version] [output folder]` compiles
 `pvz2.iss` with Inno Setup 7 (7.1.1 while this was written; it also runs on ARM64 Windows,
-through emulation) into `PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe`. Both are per user, with
-no administrator prompt, and install to `%LOCALAPPDATA%\Programs\PvZ2 Reflourished`; a fixed
+through emulation) into `PvZ2-AltVerZ-<game>-Darwin-<version>-Windows-Setup.exe`. Both are per user, with
+no administrator prompt, and install to `%LOCALAPPDATA%\Programs\PvZ2 AltVerZ`; a fixed
 AppId ties the versions together.
 
 The 1.3.0 setup is 120 MB. The ARM64 files are 65 MB and the x64 files 229 MB, with the game's
@@ -88,9 +88,9 @@ APK and ANGLE in both; a setup for one architecture alone would be about 46 MB (
 (x64). One setup is kept because it is one download link and one feed item, at the cost of the
 larger download for each player.
 
-Uninstalling deletes the program folder and `%LOCALAPPDATA%\PvZ2 Reflourished` (the OBB, the CDN
+Uninstalling deletes the program folder and `%LOCALAPPDATA%\PvZ2 AltVerZ` (the OBB, the CDN
 archive, the x64 translation cache and `pvz2.log`), then asks "Also delete your saves and
-settings?" with No preselected; Yes deletes `%APPDATA%\PvZ2 Reflourished` (saves, settings,
+settings?" with No preselected; Yes deletes `%APPDATA%\PvZ2 AltVerZ` (saves, settings,
 `config\pvz2-config`, the reminders and Nimble files). A silent uninstall keeps them. An install
 over an older version keeps both folders; Setup offers to close a running game, and a close that
 comes from Setup (or another program) saves and exits without the game's own quit prompt.
@@ -123,24 +123,24 @@ way.)
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>PvZ2 Reflourished for Windows</title>
-    <link>https://github.com/oenderg/Reflourished-Darwin/releases</link>
-    <description>Updates of PvZ2 Reflourished for Windows</description>
+    <title>PvZ2 AltVerZ for Windows</title>
+    <link>https://github.com/oenderg/AltverZ-Darwin/releases</link>
+    <description>Updates of PvZ2 AltVerZ for Windows</description>
     <language>en</language>
     <item>
-      <title>Reflourished-Darwin 1.3.1 for Windows</title>
+      <title>AltverZ-Darwin 1.3.1 for Windows</title>
       <pubDate>...</pubDate>
-      <link>https://github.com/oenderg/Reflourished-Darwin/releases/tag/v1.3.1</link>
+      <link>https://github.com/oenderg/AltverZ-Darwin/releases/tag/v1.3.1</link>
       <sparkle:version>10301</sparkle:version>
       <sparkle:shortVersionString>1.3.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <description><![CDATA[<p>What's new...</p>]]></description>
-      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.3.1/PvZ2-Reflourished-1.4.2-Darwin-1.3.1-Windows-Setup.exe"
+      <enclosure url="https://github.com/oenderg/AltverZ-Darwin/releases/download/v1.3.1/PvZ2-AltVerZ-1.8.3f-Darwin-1.3.1-Windows-Setup.exe"
                  length="120182790" type="application/octet-stream"
                  sparkle:edSignature="..."
                  sparkle:os="windows-x64"
                  sparkle:installerArguments="/SILENT /SP- /NOICONS"/>
-      <enclosure url="https://github.com/oenderg/Reflourished-Darwin/releases/download/v1.3.1/PvZ2-Reflourished-1.4.2-Darwin-1.3.1-Windows-Setup.exe"
+      <enclosure url="https://github.com/oenderg/AltverZ-Darwin/releases/download/v1.3.1/PvZ2-AltVerZ-1.8.3f-Darwin-1.3.1-Windows-Setup.exe"
                  length="120182790" type="application/octet-stream"
                  sparkle:edSignature="..."
                  sparkle:os="windows-arm64"
@@ -166,7 +166,7 @@ key is in the owner's login keychain and in the Actions secret `SPARKLE_PRIVATE_
 Signing on a Mac, with the Sparkle build the Mac app already fetches:
 
 ```sh
-sig="$(<sparkle>/bin/sign_update --ed-key-file <key file> PvZ2-Reflourished-1.4.2-Darwin-1.3.1-Windows-Setup.exe)"
+sig="$(<sparkle>/bin/sign_update --ed-key-file <key file> PvZ2-AltVerZ-1.8.3f-Darwin-1.3.1-Windows-Setup.exe)"
 ```
 
 Signing on Windows, with `winsparkle-tool` from the release (`bin\winsparkle-tool.exe sign
@@ -188,7 +188,7 @@ installed copies see the update.
 
 By hand, for a setup built outside the workflow: build it with
 `runtime/win/installer/build-installer.sh` and `build-installer.cmd`, then on the Mac run
-`scripts/publish-windows-setup.sh PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe
+`scripts/publish-windows-setup.sh PvZ2-AltVerZ-<game>-Darwin-<version>-Windows-Setup.exe
 --tag <tag> --upload --commit` (the key from the login keychain; `--key-file` takes the
 exported key instead) and push the commit.
 
@@ -210,7 +210,7 @@ A test build needs its own feed and a throwaway key: build with
 `SPARKLE_FEED_URL=http://127.0.0.1:8799/windows-appcast.xml SPARKLE_PUBLIC_KEY=<test>`, serve
 the feed and the setup from the Mac (the VM reaches `127.0.0.1` as `http://10.0.2.2:<port>/`),
 and write the appcast with the test key's signature. The VM's WinSparkle state lives in
-`HKCU\Software\oenderg\PvZ2 Reflourished\WinSparkle`; delete it after a test, and never sign a
+`HKCU\Software\oenderg\PvZ2 AltVerZ\WinSparkle`; delete it after a test, and never sign a
 test with the real key.
 
 ## ANGLE
@@ -234,7 +234,7 @@ ANGLE: the only one that pins a version and covers both architectures from one s
 `.github/workflows/angle-windows.yml` runs that script on `windows-2025`, once per
 architecture, in parallel. It does what Chrome's own ANGLE build does:
 
-1. `depot_tools` into `out/win/angle-build/depot_tools` (the workflow caches it), then ANGLE
+1. `depot_tools` into `out/win-altverz/angle-build/depot_tools` (the workflow caches it), then ANGLE
    at `runtime/win/ANGLE_COMMIT`, with a shallow fetch of that one commit.
 2. `scripts/bootstrap.py`, which writes `.gclient`.
 3. `runtime/win/trim-angle-deps.py` drops the DEPS entries a D3D11 renderer does not need:
