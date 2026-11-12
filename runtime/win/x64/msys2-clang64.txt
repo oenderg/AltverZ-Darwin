@@ -1,0 +1,72 @@
+# The MSYS2 CLANG64 packages the x86-64 Windows program is built with, at the versions its
+# release was tested with: <package without the mingw-w64-clang-x86_64- prefix> <version>.
+# runtime/win/x64/setup-msys2.sh installs exactly these from repo.msys2.org. libLLVM-23.dll and
+# the other DLLs the program imports ship beside it, so a different version here is a different
+# program: change the list on purpose, then test the build on a PC before a release.
+# The list is the whole set a build needs, dependencies included, so nothing comes in unpinned.
+brotli 1.2.1-1
+bzip2 1.0.8-4
+c-ares 1.34.9-1
+ca-certificates 20260816-3
+clang 23.1.5-1
+clang-libs 23.1.5-1
+cmake 4.4.5-1
+compiler-rt 23.1.5-1
+cppdap 1.65.r11.g6464cd7-1
+crt 14.0.0.r598.ge3d18511f-1
+curl 8.23.0-1
+egl-headers 1.5.r284.3ae2b7c-1
+expat 2.10.0-1
+gettext-runtime 1.0-1
+gles-headers 3.2.r1065.7fc154c-1
+gmp 6.3.0-2
+gnutls 3.8.13-3
+headers 14.0.0.r598.ge3d18511f-1
+jsoncpp 1.9.8-1
+libarchive 3.8.11-1
+libb2 0.98.1-3
+libc++ 23.1.5-1
+libffi 3.8.0-1
+libiconv 1.19.1-1
+libidn2 2.3.8-4
+libjpeg-turbo 3.2.1-1
+libpng 1.6.59-2
+libpsl 0.21.5-3
+libssh2 1.11.1-2
+libsystre 1.0.2-3
+libtasn1 4.21.0-1
+libtre 0.9.0-2
+libunistring 1.4.2-1
+libunwind 23.1.5-1
+libuv 1.53.0-1
+libwinpthread 14.0.0.r598.ge3d18511f-1
+libxml2 2.15.4-3
+lld 23.1.5-1
+llvm 23.1.5-1
+llvm-libs 23.1.5-1
+llvm-tools 23.1.5-1
+lz4 1.11.0-1
+mpdecimal 4.0.1-3
+nasm 3.02-1
+ncurses 6.6-4
+nettle 4.0-1
+nghttp2 1.71.0-1
+nghttp3 1.19.0-1
+ngtcp2 1.26.0-1
+ninja 1.13.2-1
+openssl 3.6.5-1
+p11-kit 0.26.5-1
+pcre2 10.49-1
+pkgconf 1~3.0.10-1
+python 3.14.10-1
+rapidjson 1.1.0-8
+rhash 1.4.6-1
+sqlite 3.54.1-2
+tcl 8.6.18-1
+tk 8.6.18-1
+tzdata 2026f-1
+wineditline 2.208-1
+winpthreads 14.0.0.r598.ge3d18511f-1
+xz 5.8.4-1
+zlib 1.3.2-3
+zstd 1.5.7-2

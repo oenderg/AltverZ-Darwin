@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #define _DARWIN_C_SOURCE
 #include "husk-tl-egl.h"
+#include "husk-tl-va.h"   /* TL_ASM_NAME */
 
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +31,7 @@ EGLBoolean tl_egl_swap_buffers_pooled(EGLBoolean (*swap)(EGLDisplay, EGLSurface)
 #define EGL_NONE 0x3038
 #define EGL_WIDTH 0x3057
 #define EGL_HEIGHT 0x3056
+#define EGL_FIXED_SIZE_ANGLE 0x3201
 #define EGL_PLATFORM_ANGLE_ANGLE 0x3202
 #define EGL_PLATFORM_ANGLE_TYPE_ANGLE 0x3203
 #define EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE 0x3489
@@ -135,9 +138,16 @@ static EGLDisplay w_eglGetDisplay(void *native)
     (void)native;
     pthread_mutex_lock(&E.lock);
     if (!E.display && E.ready) {
+#if defined(_WIN32)
+        /* Windows: ANGLE over Direct3D 11 (EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE) */
+        const EGLint attribs[] = { EGL_PLATFORM_ANGLE_TYPE_ANGLE, 0x3208, EGL_NONE };
+        E.display = a_eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, NULL, attribs);
+        tl_log_line("egl: display %p (ANGLE over Direct3D 11)", E.display);
+#else
         const EGLint attribs[] = { EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE, EGL_NONE };
         E.display = a_eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, NULL, attribs);
         tl_log_line("egl: display %p (ANGLE over Metal)", E.display);
+#endif
     }
     EGLDisplay d = E.display;
     pthread_mutex_unlock(&E.lock);
@@ -359,6 +369,40 @@ static EGLSurface w_eglCreateWindowSurface(EGLDisplay d, EGLConfig cfg, void *wi
         return s;
     }
     void *layer = tl_nwindow_native(win);
+#ifdef _WIN32
+    /* ANGLE's fixed-size window surface keeps the guest's backbuffer at the
+     * size the host asks for, and DXGI stretches it into the child window.
+     * The Windows host uses that for its launch boost: the game starts at 804
+     * lines so that it picks its HD art, while a small window stays small.
+     * Without the extension the surface follows the window, as before. */
+    int fw = tl_nwindow_width(win), fh = tl_nwindow_height(win);
+    const char *ext = a_eglQueryString ? a_eglQueryString(d, 0x3055) : NULL;
+    if (fw > 0 && fh > 0 && ext && strstr(ext, "EGL_ANGLE_window_fixed_size")) {
+        EGLint fixed[24];
+        int n = 0;
+        if (at) {
+            for (; at[n] != EGL_NONE && n < 16; n += 2) {
+                fixed[n] = at[n];
+                fixed[n + 1] = at[n + 1];
+            }
+        }
+        fixed[n++] = EGL_FIXED_SIZE_ANGLE;
+        fixed[n++] = EGL_TRUE;
+        fixed[n++] = EGL_WIDTH;
+        fixed[n++] = fw;
+        fixed[n++] = EGL_HEIGHT;
+        fixed[n++] = fh;
+        fixed[n++] = EGL_NONE;
+        EGLSurface fixed_s = a_eglCreateWindowSurface(d, cfg, layer, fixed);
+        if (fixed_s) {
+            tl_log_line("egl: fixed window surface %p on layer %p (%dx%d, the window may be smaller)",
+                        fixed_s, layer, fw, fh);
+            return fixed_s;
+        }
+        tl_log_line("egl: fixed window surface failed (%#x); the surface follows the window",
+                    a_eglGetError());
+    }
+#endif
     EGLSurface s = a_eglCreateWindowSurface(d, cfg, layer, at);
     tl_log_line("egl: window surface %p on layer %p (%dx%d), eglGetError %#x", s, layer, tl_nwindow_width(win), tl_nwindow_height(win), a_eglGetError());
     return s;
@@ -610,6 +654,74 @@ static void (*r_glTexSubImage3D)(unsigned, int, int, int, int, int, int, int, un
 static void w_glTexSubImage3D(unsigned t, int l, int x, int y, int z, int w, int h, int d, uint64_t fmt, uint64_t type, const void *px)
 { r_glTexSubImage3D(t, l, x, y, z, w, h, d, (unsigned)fmt, (unsigned)type, px); }
 
+/*
+ * ETC1, the texture format every Android GPU takes and so the one the game's art is in. ANGLE over Metal accepts it; the
+ * ANGLE builds on Windows (Direct3D 11) may not, and then each upload fails with GL_INVALID_ENUM and the lawn, the plants
+ * and the zombies draw as nothing. When the extension is missing, the blocks are decoded here and uploaded as RGBA8.
+ */
+static void (*r_glCompressedTexImage2D)(unsigned, int, unsigned, int, int, int, int, const void *);
+static void etc1_block(const uint8_t *b, uint8_t *out, int stride)   /* one 4x4 block into RGBA rows */
+{
+    static const int mod[8][4] = { { 2, 8, -2, -8 }, { 5, 17, -5, -17 }, { 9, 29, -9, -29 }, { 13, 42, -13, -42 },
+                                   { 18, 60, -18, -60 }, { 24, 80, -24, -80 }, { 33, 106, -33, -106 }, { 47, 183, -47, -183 } };
+    uint32_t hi = (uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3];
+    uint32_t lo = (uint32_t)b[4] << 24 | (uint32_t)b[5] << 16 | (uint32_t)b[6] << 8 | b[7];
+    int base[2][3];
+    if (hi & 2) {                                                     /* differential: 5-bit colour and a 3-bit signed delta */
+        for (int c = 0; c < 3; c++) {
+            int v = (int)(hi >> (27 - 8 * c)) & 31, d = (int)(hi >> (24 - 8 * c)) & 7;
+            if (d >= 4) d -= 8;
+            int v2 = (v + d) & 31;
+            base[0][c] = v << 3 | v >> 2; base[1][c] = v2 << 3 | v2 >> 2;
+        }
+    } else {                                                          /* individual: two 4-bit colours */
+        for (int c = 0; c < 3; c++) {
+            int v = (int)(hi >> (28 - 8 * c)) & 15, v2 = (int)(hi >> (24 - 8 * c)) & 15;
+            base[0][c] = v << 4 | v; base[1][c] = v2 << 4 | v2;
+        }
+    }
+    int table[2] = { (int)(hi >> 5) & 7, (int)(hi >> 2) & 7 }, flip = hi & 1;
+    for (int x = 0; x < 4; x++)
+        for (int y = 0; y < 4; y++) {
+            int i = x * 4 + y, sub = flip ? y >= 2 : x >= 2;
+            int idx = (int)((lo >> (16 + i)) & 1) << 1 | (int)((lo >> i) & 1);
+            int m = mod[table[sub]][idx];
+            uint8_t *px = out + (size_t)y * (size_t)stride + (size_t)x * 4;
+            for (int c = 0; c < 3; c++) { int v = base[sub][c] + m; px[c] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
+            px[3] = 255;
+        }
+}
+static bool etc1_native(void)
+{
+    static int have = -1;
+    if (have < 0) {
+        const unsigned char *(*gs)(unsigned) = a_eglGetProcAddress ? (const unsigned char *(*)(unsigned))a_eglGetProcAddress("glGetString") : NULL;
+        const char *ext = gs ? (const char *)gs(0x1F03) : NULL;
+        if (!ext) return true;                                        /* no context yet: ask again next time */
+        have = strstr(ext, "GL_OES_compressed_ETC1_RGB8_texture") != NULL;
+        if (!have) tl_log_line("gl: this ANGLE has no ETC1 textures; they are decoded to RGBA8 on upload");
+    }
+    return have;
+}
+static void w_glCompressedTexImage2D(unsigned t, int l, unsigned f, int w, int h, int border, int size, const void *data)
+{
+    static void (*teximage)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *);
+    if (f != 0x8D64 /* GL_ETC1_RGB8_OES */ || !data || w <= 0 || h <= 0 || etc1_native()) { r_glCompressedTexImage2D(t, l, f, w, h, border, size, data); return; }
+    if (!teximage) teximage = a_eglGetProcAddress("glTexImage2D");
+    int bw = (w + 3) / 4, bh = (h + 3) / 4;
+    if (!teximage || size < bw * bh * 8) { r_glCompressedTexImage2D(t, l, f, w, h, border, size, data); return; }
+    int pw = bw * 4, ph = bh * 4;
+    uint8_t *rgba = malloc((size_t)pw * (size_t)ph * 4);
+    if (!rgba) { r_glCompressedTexImage2D(t, l, f, w, h, border, size, data); return; }
+    const uint8_t *src = data;
+    for (int by = 0; by < bh; by++)
+        for (int bx = 0; bx < bw; bx++, src += 8) etc1_block(src, rgba + ((size_t)by * 4 * (size_t)pw + (size_t)bx * 4) * 4, pw * 4);
+    /* the blocks cover whole 4x4s; a smaller mip level keeps its w x h corner, rows packed tight */
+    if (pw != w) for (int y = 1; y < h; y++) memmove(rgba + (size_t)y * (size_t)w * 4, rgba + (size_t)y * (size_t)pw * 4, (size_t)w * 4);
+    teximage(t, l, 0x1908 /* GL_RGBA */, w, h, 0, 0x1908, 0x1401 /* GL_UNSIGNED_BYTE */, rgba);
+    free(rgba);
+}
+
 static void (*r_glCompressedTexSubImage3D)(unsigned, int, int, int, int, int, int, int, unsigned, int, const void *);
 static void w_glCompressedTexSubImage3D(unsigned t, int l, int x, int y, int z, int w, int h, int d, uint64_t fmt, uint64_t size, const void *data)
 { r_glCompressedTexSubImage3D(t, l, x, y, z, w, h, d, (unsigned)fmt, (int)size, data); }
@@ -774,7 +886,7 @@ static EGLBoolean w_eglDestroySync(EGLDisplay d, void *s) { return s ? r_eglDest
 
 #define ADAPT(name) { #name, (void *)w_##name, (void **)&r_##name }
 static const struct { const char *name; void *wrap; void **real; } k_adapt[] = {
-    ADAPT(glBlitFramebuffer), ADAPT(glTexSubImage3D), ADAPT(glCompressedTexSubImage3D), ADAPT(glCopyImageSubData),
+    ADAPT(glBlitFramebuffer), ADAPT(glCompressedTexImage2D), ADAPT(glTexSubImage3D), ADAPT(glCompressedTexSubImage3D), ADAPT(glCopyImageSubData),
     ADAPT(glColorMask), ADAPT(glDepthMask), ADAPT(glVertexAttribPointer), ADAPT(glUniformMatrix2fv),
     ADAPT(glUniformMatrix3fv), ADAPT(glUniformMatrix4fv), ADAPT(glSampleCoverage), ADAPT(glGetString), ADAPT(glGetStringi), ADAPT(glCompileShader), ADAPT(glShaderSource), ADAPT(glAttachShader), ADAPT(glLinkProgram), ADAPT(glDeleteProgram), ADAPT(glGetIntegerv), ADAPT(glBindBufferBase), ADAPT(glBindBuffer), ADAPT(glBufferData), ADAPT(glBufferSubData), ADAPT(glBindBufferRange),
     ADAPT(eglClientWaitSyncKHR), ADAPT(eglDestroySyncKHR), ADAPT(eglGetSyncAttribKHR), ADAPT(eglClientWaitSync), ADAPT(eglDestroySync),
@@ -852,7 +964,7 @@ __attribute__((naked, used)) static void glt_common(void)
         "stp x8, x17, [sp, #64]\n"
         "stp d0, d1, [sp, #80]\n" "stp d2, d3, [sp, #96]\n" "stp d4, d5, [sp, #112]\n" "stp d6, d7, [sp, #128]\n"
         "mov x0, x16\n"
-        "bl _tl_glt_note\n"
+        "bl " TL_ASM_NAME(tl_glt_note) "\n"
         "ldp x0, x1, [sp, #0]\n" "ldp x2, x3, [sp, #16]\n" "ldp x4, x5, [sp, #32]\n" "ldp x6, x7, [sp, #48]\n"
         "ldp x8, x17, [sp, #64]\n"
         "ldp d0, d1, [sp, #80]\n" "ldp d2, d3, [sp, #96]\n" "ldp d4, d5, [sp, #112]\n" "ldp d6, d7, [sp, #128]\n"
@@ -910,6 +1022,58 @@ static const char *const k_es31_stub_names[] = {
     "glFramebufferParameteri", "glGetFramebufferParameteriv", "glTexStorage2DMultisample", NULL
 };
 
+/*
+ * TL_GL_CHECK=1: texture uploads, draws and program use are followed by glGetError, and the first failures are logged
+ * with their arguments. For a back end that draws some things and not others (a texture format it lacks, a draw it
+ * refuses), this says which call ANGLE turned down.
+ */
+static unsigned (*k_glGetError)(void);
+static atomic_int g_glk_said;
+static void glk_report(const char *call, const char *fmt, ...)
+{
+    if (!k_glGetError) return;
+    unsigned e = k_glGetError();
+    if (!e || atomic_fetch_add(&g_glk_said, 1) >= 60) return;
+    char args[200]; va_list ap; va_start(ap, fmt); vsnprintf(args, sizeof(args), fmt, ap); va_end(ap);
+    tl_log_line("gl: %s(%s) -> error %#x", call, args, e);
+}
+static void (*k_glCompressedTexImage2D)(unsigned, int, unsigned, int, int, int, int, const void *);
+static void c_glCompressedTexImage2D(unsigned t, int l, unsigned f, int w, int h, int b, int n, const void *d)
+{ k_glCompressedTexImage2D(t, l, f, w, h, b, n, d); glk_report("glCompressedTexImage2D", "%#x, %d, format %#x, %dx%d, %d bytes", t, l, f, w, h, n); }
+static void (*k_glTexImage2D)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *);
+static void c_glTexImage2D(unsigned t, int l, int i, int w, int h, int b, unsigned f, unsigned ty, const void *d)
+{ k_glTexImage2D(t, l, i, w, h, b, f, ty, d); glk_report("glTexImage2D", "%#x, %d, internal %#x, %dx%d, format %#x, type %#x", t, l, i, w, h, f, ty); }
+static void (*k_glTexSubImage2D)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *);
+static void c_glTexSubImage2D(unsigned t, int l, int x, int y, int w, int h, unsigned f, unsigned ty, const void *d)
+{ k_glTexSubImage2D(t, l, x, y, w, h, f, ty, d); glk_report("glTexSubImage2D", "%#x, %d, %d,%d %dx%d, format %#x, type %#x", t, l, x, y, w, h, f, ty); }
+static void (*k_glDrawElements)(unsigned, int, unsigned, const void *);
+static void c_glDrawElements(unsigned m, int n, unsigned ty, const void *i)
+{ k_glDrawElements(m, n, ty, i); glk_report("glDrawElements", "mode %#x, %d, type %#x, %p", m, n, ty, i); }
+static void (*k_glDrawArrays)(unsigned, int, int);
+static void c_glDrawArrays(unsigned m, int f, int n) { k_glDrawArrays(m, f, n); glk_report("glDrawArrays", "mode %#x, %d, %d", m, f, n); }
+static void (*k_glUseProgram)(unsigned);
+static void c_glUseProgram(unsigned p) { k_glUseProgram(p); glk_report("glUseProgram", "%u", p); }
+static void (*k_glBindTexture)(unsigned, unsigned);
+static void c_glBindTexture(unsigned t, unsigned x) { k_glBindTexture(t, x); glk_report("glBindTexture", "%#x, %u", t, x); }
+static void (*k_glFramebufferTexture2D)(unsigned, unsigned, unsigned, unsigned, int);
+static void c_glFramebufferTexture2D(unsigned a, unsigned b, unsigned c, unsigned d, int e) { k_glFramebufferTexture2D(a, b, c, d, e); glk_report("glFramebufferTexture2D", "%#x, %#x, %#x, %u, %d", a, b, c, d, e); }
+static const struct { const char *name; void *wrap; void **real; } k_check[] = {
+#define CHECK(n) { #n, (void *)c_##n, (void **)&k_##n }
+    CHECK(glCompressedTexImage2D), CHECK(glTexImage2D), CHECK(glTexSubImage2D), CHECK(glDrawElements), CHECK(glDrawArrays),
+    CHECK(glUseProgram), CHECK(glBindTexture), CHECK(glFramebufferTexture2D),
+#undef CHECK
+};
+static void *glk_wrap(const char *name, void *real)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("TL_GL_CHECK") && atoi(getenv("TL_GL_CHECK")) ? 1 : 0;
+    if (!on || !real) return real;
+    if (!k_glGetError && a_eglGetProcAddress) k_glGetError = (unsigned (*)(void))a_eglGetProcAddress("glGetError");
+    for (size_t i = 0; i < sizeof(k_check) / sizeof(k_check[0]); i++)
+        if (!strcmp(k_check[i].name, name)) { *k_check[i].real = real; return k_check[i].wrap; }
+    return real;
+}
+
 static void *egl_resolve(const char *name);
 void *tl_egl_resolve(const char *name)
 {
@@ -940,15 +1104,25 @@ static void *egl_resolve(const char *name)
     }
     if (!real) return NULL;
     static int trace = -1;
+#if defined(__x86_64__)
+    trace = 0;   /* the trace's trampolines are ARM64 code */
+#else
     if (trace < 0) trace = getenv("TL_GL_TRACE") ? 1 : 0;
+#endif
     for (size_t i = 0; i < sizeof(k_adapt) / sizeof(k_adapt[0]); i++) {
         if (!strcmp(k_adapt[i].name, name)) { *k_adapt[i].real = real; return trace ? glt_wrap(name, k_adapt[i].wrap) : k_adapt[i].wrap; }
     }
+    real = glk_wrap(name, real);
     return trace && name[0] == 'g' && name[1] == 'l' ? glt_wrap(name, real) : real;
 }
 
 /* eglGetProcAddress for the guest */
+#if defined(__x86_64__)
+#include "../../win/x64/husk-tl-x64.h"
+static void *w_eglGetProcAddress(const char *name) { void *r = tl_egl_resolve(name); return r ? tl_x64_import(strdup(name), r) : NULL; }
+#else
 static void *w_eglGetProcAddress(const char *name) { return tl_egl_resolve(name); }
+#endif
 const tl_bionic_entry tl_tab_egl[] = {
     TL_WRAP("eglGetProcAddress", w_eglGetProcAddress), TL_WRAP("glGetString", w_glGetString),
     { "eglGetDisplay", w_eglGetDisplay }, { "eglInitialize", w_eglInitialize }, { "eglTerminate", w_eglTerminate },

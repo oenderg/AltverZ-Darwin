@@ -1,0 +1,6 @@
+# The ANGLE builds the Windows zips ship, as assets of the repository's private draft release
+# "build-inputs" (docs/RELEASING.md): one zip per architecture from the workflow run named in
+# prebuilt/win-<arch>/README.md, with its sha256. runtime/win/fetch-angle.sh downloads them into
+# prebuilt/win-<arch> (the DLLs are not in git) and checks them; the zips players get carry them.
+91b203f63f9dc40b789fd90a9d6f344a04a07227ccb624c5504ab6851a75ed2e  angle-windows-x64-a9d27357.zip
+7c1c6482db7a8a859688c2f7f8bfda8ca8c74ec722ab57e218642230ca70b7e7  angle-windows-arm64-a9d27357.zip

@@ -1,0 +1,4 @@
+# The ANGLE commit the Windows zips ship: the angle_revision of the Chromium DEPS
+# of the current Chrome stable release, here 158.0.8127.18. To update it, follow
+# "Refreshing ANGLE" in docs/windows-shipping.md.
+a9d273575638975f4f31aff9523c5194f36ecb61

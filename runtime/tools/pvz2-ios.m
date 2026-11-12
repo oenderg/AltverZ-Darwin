@@ -592,6 +592,10 @@ static NSString *ios_badge_label(int i)
         [self.layer addSublayer:metal];
         _metal = metal;
         metal.masksToBounds = YES;
+        /* Every finger, as on Android: a UIView takes only the first one unless
+         * it asks for more, and a tap made while another finger was down never
+         * reached the game. */
+        self.multipleTouchEnabled = YES;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(badgeKeyboardDisconnected:)
                                                      name:GCKeyboardDidDisconnectNotification object:nil];
     }
@@ -781,7 +785,18 @@ static int _lastSafe[2] = { -1, -1 };
      * host does the same for the mouse). */
     static NSMapTable<UITouch *, NSValue *> *down;
     if (!down) down = [NSMapTable weakToStrongObjectsMapTable];
-    int id = 1;
+    /* Each finger keeps its own id from its press to its let-go, so the game can
+     * tell two fingers apart: a tap with a second finger while the first holds
+     * a plant is a second finger, not the first one jumping. The player's
+     * fingers are 2 to 7; 1 is the host's own (the keyboard's shortcuts, and
+     * the packet they put in hand), so a shortcut never takes over a finger the
+     * player has down. */
+    enum { FINGER_FIRST = 2, FINGER_LAST = 7 };
+    static NSMapTable<UITouch *, NSNumber *> *ids;
+    if (!ids) ids = [NSMapTable weakToStrongObjectsMapTable];
+    /* The finger that carries a packet the keyboard put in hand: the first one
+     * that goes down after it. Another finger is just a finger. */
+    static __weak UITouch *carrier;
     for (UITouch *t in touches) {
         CGPoint p = [t locationInView:self];
         /* The game's own pixels: the same rectangle the game is drawn in, so a
@@ -794,10 +809,15 @@ static int _lastSafe[2] = { -1, -1 };
             CGPoint lp = last.CGPointValue;
             gx = lp.x; gy = lp.y;
         }
-        if (phase == 3 || phase == 4) [down removeObjectForKey:t];
-        else [down setObject:[NSValue valueWithCGPoint:CGPointMake(gx, gy)] forKey:t];
+        bool ends = phase == 3 || phase == 4;
         if (phase == 0) keyboard_touch_began();
-        if (atomic_load(&g_packet_in_hand)) {
+        if (phase == 0 && atomic_load(&g_packet_in_hand) && !carrier) carrier = t;
+        if (carrier == t) {
+            if (ends) { carrier = nil; [down removeObjectForKey:t]; }
+            else [down setObject:[NSValue valueWithCGPoint:CGPointMake(gx, gy)] forKey:t];
+            /* The packet went back into the bank while this finger was down:
+             * the rest of its gesture has nothing to carry. */
+            if (!atomic_load(&g_packet_in_hand)) continue;
             /* A packet is in hand (the keyboard took it out of the bank): the
              * finger carries it where it points and lets it go, which is how a
              * player plants one -- by dragging it out of the bank. */
@@ -820,7 +840,29 @@ static int _lastSafe[2] = { -1, -1 };
             }
             continue;
         }
-        tl_pvz2_touch(phase, id++, (float)gx, (float)gy);
+        int id;
+        if (phase == 0) {
+            /* The lowest id no finger has down; a seventh finger is not sent. */
+            bool used[FINGER_LAST + 1] = { false };
+            for (UITouch *o in ids) {
+                int n = [ids objectForKey:o].intValue;
+                if (n >= FINGER_FIRST && n <= FINGER_LAST) used[n] = true;
+            }
+            id = 0;
+            for (int n = FINGER_FIRST; n <= FINGER_LAST && !id; n++)
+                if (!used[n]) id = n;
+            if (!id) continue;
+            [ids setObject:@(id) forKey:t];
+        } else {
+            /* A finger the game never saw go down (it started on a black bar,
+             * or was a seventh) has nothing to move or let go. */
+            NSNumber *n = [ids objectForKey:t];
+            if (!n) continue;
+            id = n.intValue;
+        }
+        if (ends) { [ids removeObjectForKey:t]; [down removeObjectForKey:t]; }
+        else [down setObject:[NSValue valueWithCGPoint:CGPointMake(gx, gy)] forKey:t];
+        tl_pvz2_touch(phase, id, (float)gx, (float)gy);
     }
 }
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { (void)event; [self send:touches phase:0]; }
