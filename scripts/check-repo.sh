@@ -17,26 +17,23 @@ cd "$(dirname "$0")/.."
 bad=0
 problem() { echo "check-repo: $*" >&2; bad=1; }
 
+# The mod this repository publishes (data/profiles/<id>.json): its app version, game manifest, hook table
+PROFILE="${PROFILE:-altverz}"; ROOT="$PWD"
+. scripts/profile.sh || exit 1
+
 # The release notes
-VERSION="$(cat VERSION)"
-[ -f "release-notes/$VERSION.md" ] || problem "VERSION is $VERSION but release-notes/$VERSION.md is missing"
+VERSION="$PROFILE_APP_VERSION"
+[ -f "release-notes/$VERSION.md" ] || problem "the app version is $VERSION but release-notes/$VERSION.md is missing"
 
 # The game version
-games=(data/game-*.json)
-if [ "${#games[@]}" -ne 1 ]; then
-    problem "expected one data/game-*.json, found ${#games[@]}: ${games[*]}"
+if [ ! -f "$PROFILE_GAME_DATA" ]; then
+    problem "the profile's game manifest $PROFILE_GAME_DATA is missing"
 else
-    G="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "${games[0]}")"
-    [ "${games[0]}" = "data/game-$G.json" ] || problem "${games[0]} says version $G"
-    [ -f "data/hooks-$G.json" ] || problem "data/hooks-$G.json is missing (the game is $G)"
-    for f in build.sh scripts/app-version.sh runtime/src/translation-layer-next/husk-tl-pvz2.c; do
-        grep -q "$G" "$f" || problem "$f does not mention the game version $G"
-    done
-    grep -q "/badge/PvZ2%20Reflourished-$G-" README.md || problem "the README badge does not say $G"
-    SERIES="${G%.*}.x"
-    grep -q "reflourished.fandom.com/wiki/Changelogs/Version_$SERIES" README.md ||
-        problem "the README badge does not link to the changelog of $SERIES"
-    grep -q "PvZ2 Reflourished $G" README.md || problem "the README's build steps do not name the $G APK"
+    G="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$PROFILE_GAME_DATA")"
+    [ "$PROFILE_GAME_DATA" = "data/game-$G.json" ] || problem "$PROFILE_GAME_DATA says version $G"
+    [ -f "$PROFILE_HOOKS" ] || problem "$PROFILE_HOOKS (the profile's hook table) is missing"
+    grep -q "/badge/${PROFILE_APP_NAME// /%20}-$G-" README.md || problem "the README badge does not say $G"
+    grep -q "$PROFILE_APP_NAME" README.md || problem "the README does not name $PROFILE_APP_NAME"
     # A warning only: the Windows CI run that makes the new picture starts with this check
     [ -f "runtime/win/smoke/first-$G.png" ] ||
         echo "check-repo: warning: runtime/win/smoke/first-$G.png, the Windows smoke test's picture, is missing (docs/TESTING.md)" >&2
@@ -79,7 +76,7 @@ done
 # The release text, for a release with every kind of file
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-P="PvZ2-Reflourished-${G:-0}-Darwin-$VERSION"
+P="$PROFILE_ARTIFACT-${G:-0}-Darwin-$VERSION"
 python3 - "$tmp/assets.json" "$P" <<'PY'
 import json, sys
 ends = ["iOS.ipa", "iOS-Full.ipa", "Mac.dmg", "Mac-Full.dmg", "Windows-Setup.exe", "Windows-x64.zip", "Windows-ARM64.zip"]

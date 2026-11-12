@@ -1,13 +1,13 @@
-; PvZ2: Reflourished for Windows: the setup program.
+; The Windows setup program (the mod is the profile's).
 ;
 ; One setup for both PC architectures, made with Inno Setup 7 from a staged tree
 ; (runtime/win/installer/build-installer.sh stages it; build-installer.cmd runs this
 ; script on Windows). It installs the ARM64 program on ARM64 Windows and the x64 one
 ; everywhere else, per user and without an administrator prompt, into
-; %LOCALAPPDATA%\Programs\PvZ2 Reflourished.
+; %LOCALAPPDATA%\Programs\<the app name>.
 ;
-; The data folders are not part of the install: %APPDATA%\PvZ2 Reflourished (saves and
-; settings) and %LOCALAPPDATA%\PvZ2 Reflourished (the OBB, cache and log) are made by
+; The data folders are not part of the install: %APPDATA%\<the data folder> (saves and
+; settings) and %LOCALAPPDATA%\<the data folder> (the OBB, cache and log) are made by
 ; the game. Uninstalling removes the program and the second folder, then asks about the
 ; first (default No, so a reinstall keeps the saves); a silent uninstall keeps them.
 ;
@@ -33,17 +33,17 @@
   #define SetupIcon "..\pvz2.ico"
 #endif
 
-#define AppName "PvZ2 Reflourished"
-#define AppExe "PvZ2 Reflourished.exe"
-#define AppUrl "https://github.com/oenderg/Reflourished-Darwin"
+; The mod's names come from the profile, through build-installer.cmd's /D switches.
+#ifndef AppName
+  #error "pass /DAppName, /DAppExe, /DAppUrl, /DAppUserModelID, /DArtifact and /DDataFolder (build-installer.cmd does)"
+#endif
 ; The taskbar group and its jump list. The game sets the same string with
 ; SetCurrentProcessExplicitAppUserModelID, so a pinned or Start menu shortcut
 ; shows the game's Tasks section too.
-#define AppUserModelID "io.github.oenderg.reflourished"
 
 [Setup]
 ; A fixed identity: players' saves, settings and the update check hang off it. Never change it.
-AppId={{8DA0E954-1137-4C7C-85DF-40BD39EC232A}
+AppId={{1B569AE7-338F-436F-952F-47B660E4E083}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -52,7 +52,7 @@ AppPublisherURL={#AppUrl}
 AppSupportURL={#AppUrl}/issues
 AppUpdatesURL={#AppUrl}/releases
 VersionInfoVersion={#AppVersion}
-DefaultDirName={localappdata}\Programs\PvZ2 Reflourished
+DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 AllowNoIcons=yes
@@ -60,7 +60,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible arm64
 ArchitecturesInstallIn64BitMode=x64compatible arm64
 OutputDir={#OutDir}
-OutputBaseFilename=PvZ2-Reflourished-{#GameVersion}-Darwin-{#AppVersion}-Windows-Setup
+OutputBaseFilename={#Artifact}-{#GameVersion}-Darwin-{#AppVersion}-Windows-Setup
 SetupIconFile={#SetupIcon}
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
@@ -104,7 +104,7 @@ Filename: "{app}\{#AppExe}"; Flags: nowait; Check: RestartAfterSilentUpdate
 ; The program folder (the uninstaller removes itself afterwards), and the folder the
 ; game can make again: the OBB, the x64 translation cache, the CDN archive and the log.
 Type: filesandordirs; Name: "{app}"
-Type: filesandordirs; Name: "{localappdata}\PvZ2 Reflourished"
+Type: filesandordirs; Name: "{localappdata}\{#DataFolder}"
 
 [Code]
 const
@@ -151,7 +151,7 @@ begin
   Result := True;
   // WinSparkle's own state (the last check, a skipped version) is this app's, not the
   // player's; it goes with the program. The saves and the settings are asked about below.
-  RegDeleteKeyIncludingSubkeys(HKCU, 'Software\oenderg\PvZ2 Reflourished');
+  RegDeleteKeyIncludingSubkeys(HKCU, 'Software\oenderg\{#AppName}');
 end;
 
 { The program folder and the game's data folder are gone by now (they are in
@@ -165,7 +165,7 @@ var
 begin
   if CurUninstallStep <> usPostUninstall then
     exit;
-  Saves := ExpandConstant('{userappdata}\PvZ2 Reflourished');
+  Saves := ExpandConstant('{userappdata}\{#DataFolder}');
   if UninstallSilent then
   begin
     Log('Silent uninstall: the saves and settings stay in ' + Saves);

@@ -22,6 +22,12 @@ if not exist "%STAGE%\game-version.txt" (
     exit /b 2
 )
 for /f "usebackq delims=" %%g in ("%STAGE%\game-version.txt") do set GAMEVER=%%g
+rem The mod's names: profile.txt, written by build-installer.sh, has one NAME=value per line.
+if not exist "%STAGE%\profile.txt" (
+    echo build-installer: no profile.txt in %STAGE% ^(build-installer.sh writes it^)
+    exit /b 2
+)
+for /f "usebackq tokens=1,* delims==" %%a in ("%STAGE%\profile.txt") do set %%a=%%b
 if "%3"=="" (set OUT=%STAGE%\out) else (set OUT=%~3)
 if not exist "%OUT%" mkdir "%OUT%"
 
@@ -32,6 +38,6 @@ if not exist "%ISCC%" (
     exit /b 2
 )
 
-"%ISCC%" /Qp /DStageDir="%STAGE%" /DOutDir="%OUT%" /DAppVersion="%VER%" /DGameVersion="%GAMEVER%" /DSetupIcon="%~dp0..\pvz2.ico" "%~dp0pvz2.iss"
+"%ISCC%" /Qp /DStageDir="%STAGE%" /DOutDir="%OUT%" /DAppVersion="%VER%" /DGameVersion="%GAMEVER%" /DAppName="%AppName%" /DAppExe="%AppExe%" /DAppUrl="%AppUrl%" /DAppUserModelID="%AppUserModelID%" /DArtifact="%Artifact%" /DDataFolder="%DataFolder%" /DSetupIcon="%~dp0..\pvz2.ico" "%~dp0pvz2.iss"
 if errorlevel 1 exit /b 1
-echo built %OUT%\PvZ2-Reflourished-%GAMEVER%-Darwin-%VER%-Windows-Setup.exe
+echo built %OUT%\%Artifact%-%GAMEVER%-Darwin-%VER%-Windows-Setup.exe

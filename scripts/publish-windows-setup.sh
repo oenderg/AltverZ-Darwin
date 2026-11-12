@@ -4,7 +4,7 @@
 # with the SPARKLE_PRIVATE_KEY secret (--key-file - on stdin); by hand it runs on the release
 # Mac with the key from the login keychain, for a setup made outside the workflow.
 #
-#   scripts/publish-windows-setup.sh <PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe> --tag <tag>
+#   scripts/publish-windows-setup.sh <<artifact>-<game>-Darwin-<version>-Windows-Setup.exe> --tag <tag>
 #       [--key-file <file>]   the EdDSA private key file, or - for stdin (default: the Mac
 #                             app's key in the login keychain, where sign_update looks by itself)
 #       [--notes-html <html>] what the update window shows (default: the CHANGELOG's entry
@@ -17,6 +17,8 @@
 # The key is only ever read by sign_update: it is not printed, copied or logged.
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROFILE="${PROFILE:-altverz}"; ROOT="$REPO"
+. "$REPO/scripts/profile.sh"
 usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 SETUP="" TAG="" KEY_FILE="" PUBLIC_KEY="$REPO/sparkle/public-key" NOTES="" UPLOAD=0 COMMIT=0
@@ -72,13 +74,13 @@ fi
 echo "signed: the signature verifies with $PUBLIC_KEY"
 
 if [ -z "$NOTES" ]; then
-    NOTES="$(python3 "$REPO/scripts/release-notes.py" --whats-new --version "$(cat "$REPO/VERSION")" --format html)"
+    NOTES="$(python3 "$REPO/scripts/release-notes.py" --whats-new --version "$PROFILE_APP_VERSION" --format html)"
 fi
 python3 "$REPO/scripts/update-windows-appcast.py" "$SETUP" --tag "$TAG" --ed-signature "$sig" --notes-html "$NOTES"
 python3 "$REPO/scripts/update-windows-appcast.py" --check
 
 if [ "$UPLOAD" = 1 ]; then
-    gh release upload "$TAG" "$SETUP" --repo oenderg/Reflourished-Darwin
+    gh release upload "$TAG" "$SETUP" --repo "$PROFILE_REPO"
 fi
 if [ "$COMMIT" = 1 ]; then
     git -C "$REPO" add sparkle/windows-appcast.xml

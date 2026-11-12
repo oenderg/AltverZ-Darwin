@@ -6,7 +6,9 @@
 set -e
 H="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$H/../.." && pwd)"
-REPOSITORY="${GITHUB_REPOSITORY:-oenderg/Reflourished-Darwin}"
+PROFILE="${PROFILE:-altverz}"; ROOT="$REPO"
+. "$REPO/scripts/profile.sh"
+REPOSITORY="${GITHUB_REPOSITORY:-$PROFILE_REPO}"
 CACHE="$REPO/out/win/angle-download"
 ARCH="${1:-all}"
 [ "$ARCH" = all ] && set -- x64 arm64 || set -- "$ARCH"

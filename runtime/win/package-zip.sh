@@ -3,17 +3,17 @@
 # a "portable" file (everything the game writes stays in data\ beside the .exe) and (for
 # x86-64) the compiler's runtime DLLs. No updater: the zip's program has no WinSparkle.
 #
-#   runtime/win/package-zip.sh --arch all --apk "PvZ2 Reflourished 1.4.2.apk"
+#   runtime/win/package-zip.sh --arch all --apk "<the game's APK>"
 #
 # Options:
 #   --arch arm64|x64|all   which zips (default all)
 #   --apk FILE             the game's APK, put in Game/ (required)
-#   --tar FILE             the CDN archive, put in Game/1.4.2.main.tar (optional)
+#   --tar FILE             the CDN archive, put in Game/<the CDN archive> (optional)
 #   --angle DIR            libEGL.dll and libGLESv2.dll (and d3dcompiler_47.dll)
 #                          to ship; arm64 defaults to prebuilt/win-arm64, x64 to
 #                          prebuilt/win-x64 (runtime/win/build-angle.cmd makes them)
-#   --exe-arm64 FILE       default out/win-portable/PvZ2 Reflourished.exe
-#   --exe-x64 FILE         default out/win-x64-portable/PvZ2 Reflourished x64.exe
+#   --exe-arm64 FILE       default out/win-<profile>-portable/<app name>.exe
+#   --exe-x64 FILE         default out/win-<profile>-x64-portable/<app name> x64.exe
 #   --x64-runtime DIR      extra DLLs the x64 program imports (libLLVM-23.dll,
 #                          libc++.dll, ...); every .dll in it is copied
 #   --out DIR              where the zips land (default out/zips)
@@ -29,14 +29,16 @@
 set -e
 H="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$H/../.." && pwd)"
-VERSION="$(cat "$REPO/VERSION" 2>/dev/null || echo dev)"
+PROFILE="${PROFILE:-altverz}"; ROOT="$REPO"
+. "$REPO/scripts/profile.sh"
+VERSION="${APP_VERSION:-$PROFILE_APP_VERSION}"
 ARCH=all
 APK=""; TAR=""; OUT="$REPO/out/zips"
 ANGLE_ARM="$REPO/prebuilt/win-arm64"
 ANGLE_X64="$REPO/prebuilt/win-x64"
 ANGLE_GIVEN=""
-EXE_ARM="$REPO/out/win-portable/PvZ2 Reflourished.exe"
-EXE_X64="$REPO/out/win-x64-portable/PvZ2 Reflourished x64.exe"
+EXE_ARM="$REPO/out/win-$PROFILE-portable/$PROFILE_APP_NAME.exe"
+EXE_X64="$REPO/out/win-$PROFILE-x64-portable/$PROFILE_APP_NAME x64.exe"
 X64_RUNTIME=""
 
 while [ $# -gt 0 ]; do
@@ -60,9 +62,9 @@ if [ -z "$ANGLE_GIVEN" ]; then "$H/fetch-angle.sh" "$ARCH" || exit 1; fi
 [ -n "$APK" ] || { echo "package-zip: --apk is required" >&2; exit 2; }
 [ -f "$APK" ] || { echo "package-zip: no APK at $APK" >&2; exit 2; }
 
-GAME_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$REPO/data/game-1.4.2.json")"
+GAME_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$REPO/$PROFILE_GAME_DATA")"
 # The same pattern as the Apple files: PvZ2-Reflourished-<game>-Darwin-<version>-<platform>.
-stamp="PvZ2-Reflourished-$GAME_VERSION-Darwin-$VERSION"
+stamp="$PROFILE_ARTIFACT-$GAME_VERSION-Darwin-$VERSION"
 work="$REPO/out/zip-work"
 mkdir -p "$OUT"
 # make_zip writes from inside the staging folder, so the output folder must be absolute
@@ -81,13 +83,13 @@ stage_common() {
     [ -f "$REPO/runtime/tools/fonts/level-ui.ttf" ] && cp "$REPO/runtime/tools/fonts/level-ui.ttf" "$dir/"
     if [ -n "$TAR" ]; then
         [ -f "$TAR" ] || { echo "package-zip: no CDN archive at $TAR" >&2; exit 2; }
-        cp "$TAR" "$dir/Game/1.4.2.main.tar"
+        cp "$TAR" "$dir/Game/$PROFILE_CDN_ARCHIVE"
     fi
     cat > "$dir/README.txt" <<'EOF'
-PvZ2: Reflourished for Windows (portable)
-==========================================
+@APP@ for Windows (portable)
+============================
 
-Run "PvZ2 Reflourished.exe". It needs libEGL.dll and libGLESv2.dll beside it
+Run "@APP@.exe". It needs libEGL.dll and libGLESv2.dll beside it
 (ANGLE) and the game in the Game folder.
 
 This is the portable build: the file named "portable" beside the program makes
@@ -114,6 +116,7 @@ with a small progress window and a Cancel button; it is checked before the
 game starts. The archive in Game is the offline fallback for the live
 content.
 EOF
+    sed "s|@APP@|$PROFILE_APP_NAME|g; s|@DATA@|$PROFILE_DATA_FOLDER|g" "$dir/README.txt" > "$dir/README.txt.new" && mv "$dir/README.txt.new" "$dir/README.txt"
 }
 
 # The licenses folder: our GPL, what both programs build in, and (x64) ScarletNX and the DLLs
@@ -121,7 +124,7 @@ EOF
 stage_licenses() {
     lic="$1/licenses"
     mkdir -p "$lic"
-    cp "$REPO/LICENSE" "$lic/PvZ2-Reflourished.txt"
+    cp "$REPO/LICENSE" "$lic/$PROFILE_ARTIFACT.txt"
     cp "$REPO/runtime/win/licenses/"*.txt "$lic/"   # README.txt and the shared texts
     if [ "$2" = x64 ]; then cp "$REPO/runtime/win/licenses/x64/"*.txt "$lic/"; fi
 }
@@ -139,7 +142,7 @@ if [ "$ARCH" = arm64 ] || [ "$ARCH" = all ]; then
     dir="$work/arm64"
     stage_common "$dir"
     [ -f "$EXE_ARM" ] || { echo "package-zip: no portable ARM64 program at $EXE_ARM (runtime/win/build-win.sh game-portable)" >&2; exit 2; }
-    cp "$EXE_ARM" "$dir/PvZ2 Reflourished.exe"
+    cp "$EXE_ARM" "$dir/$PROFILE_APP_NAME.exe"
     [ -f "$ANGLE_ARM/libEGL.dll" ] && [ -f "$ANGLE_ARM/libGLESv2.dll" ] || {
         echo "package-zip: no libEGL.dll and libGLESv2.dll in $ANGLE_ARM (runtime/win/build-angle.cmd makes them, or pass --angle)" >&2; exit 2; }
     cp "$ANGLE_ARM"/*.dll "$dir/" 2>/dev/null || true
@@ -152,7 +155,7 @@ if [ "$ARCH" = x64 ] || [ "$ARCH" = all ]; then
     dir="$work/x64"
     stage_common "$dir"
     [ -f "$EXE_X64" ] || { echo "package-zip: no portable x64 program at $EXE_X64 (runtime/win/x64/build-x64.sh game-portable)" >&2; exit 2; }
-    cp "$EXE_X64" "$dir/PvZ2 Reflourished x64.exe"
+    cp "$EXE_X64" "$dir/$PROFILE_APP_NAME x64.exe"
     [ -f "$ANGLE_X64/libEGL.dll" ] && [ -f "$ANGLE_X64/libGLESv2.dll" ] || {
         echo "package-zip: no libEGL.dll and libGLESv2.dll in $ANGLE_X64 (runtime/win/build-angle.cmd makes them, or pass --angle)" >&2; exit 2; }
     cp "$ANGLE_X64"/*.dll "$dir/" 2>/dev/null || true

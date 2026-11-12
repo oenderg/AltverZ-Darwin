@@ -31,10 +31,17 @@ import sys
 import xml.etree.ElementTree as ET
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RELEASES = "https://github.com/oenderg/Reflourished-Darwin/releases"
+import json
+
+# The mod this repository publishes (PROFILE picks another): data/profiles/<id>.json
+with open(os.path.join(ROOT, "data", "profiles", os.environ.get("PROFILE", "altverz") + ".json")) as f:
+    PROFILE = json.load(f)
+APP_NAME = PROFILE["app_name"]
+REPO = "/".join(PROFILE["sparkle_feed_url"].split("/")[3:5])
+RELEASES = f"https://github.com/{REPO}/releases"
 DEFAULT_APPCAST = os.path.join(ROOT, "sparkle", "windows-appcast.xml")
 SPARKLE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
-SETUP_NAME = re.compile(r"PvZ2-Reflourished-\d+\.\d+\.\d+-Darwin-(\d+)\.(\d+)\.(\d+)-Windows-Setup\.exe")
+SETUP_NAME = re.compile(re.escape(PROFILE["artifact_name"]) + r"-[0-9A-Za-z.]+-Darwin-(\d+)\.(\d+)\.(\d+)-Windows-Setup\.exe")
 SYSTEMS = ("windows-x64", "windows-arm64")
 INSTALLER_ARGUMENTS = "/SILENT /SP- /NOICONS"
 MINIMUM_WINDOWS = "10.0"
@@ -50,19 +57,18 @@ def write(args):
     name = os.path.basename(args.setup)
     m = SETUP_NAME.fullmatch(name)
     if not m:
-        sys.exit(f"{name}: expected PvZ2-Reflourished-<game>-Darwin-<version>-Windows-Setup.exe")
+        sys.exit(f"{name}: expected {PROFILE['artifact_name']}-<game>-Darwin-<version>-Windows-Setup.exe")
     major, minor, patch = map(int, m.groups())
     version = f"{major}.{minor}.{patch}"
-    with open(os.path.join(ROOT, "VERSION")) as f:
-        repo_version = f.read().strip()
+    repo_version = PROFILE["app_version"]
     if version != repo_version:
-        sys.exit(f"{name} is version {version}, VERSION says {repo_version}")
+        sys.exit(f"{name} is version {version}, the profile says {repo_version}")
     build = build_number(major, minor, patch)
     if not re.fullmatch(r"[A-Za-z0-9+/]{86}==", args.ed_signature):
         sys.exit("--ed-signature is not an EdDSA signature (sign_update prints it)")
     url = args.url or f"{RELEASES}/download/{args.tag}/{name}"
     page = f"{RELEASES}/tag/{args.tag}"
-    notes = args.notes_html or f"<p>PvZ2 Reflourished {html.escape(version)} for Windows.</p>"
+    notes = args.notes_html or f"<p>{html.escape(APP_NAME)} {html.escape(version)} for Windows.</p>"
     if "]]>" in notes:
         sys.exit("--notes-html cannot contain ]]>")
     description = notes + f'<p><a href="{html.escape(page)}">The release on GitHub</a></p>'
@@ -76,12 +82,12 @@ def write(args):
     feed = f"""<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="{SPARKLE}">
   <channel>
-    <title>PvZ2 Reflourished for Windows</title>
+    <title>{html.escape(APP_NAME)} for Windows</title>
     <link>{RELEASES}</link>
-    <description>Updates of PvZ2 Reflourished for Windows</description>
+    <description>Updates of {html.escape(APP_NAME)} for Windows</description>
     <language>en</language>
     <item>
-      <title>PvZ2 Reflourished {html.escape(version)} for Windows</title>
+      <title>{html.escape(APP_NAME)} {html.escape(version)} for Windows</title>
       <pubDate>{email.utils.format_datetime(datetime.datetime.now(datetime.timezone.utc))}</pubDate>
       <link>{html.escape(page)}</link>
       <sparkle:version>{build}</sparkle:version>

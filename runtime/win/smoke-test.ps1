@@ -17,7 +17,9 @@ param(
     [string]$Picture,
     [int]$Match = 90,
     [int]$FirstMinutes = 40,
-    [int]$SecondMinutes = 5
+    [int]$SecondMinutes = 5,
+    [string]$Exe = 'PvZ2*.exe',                      # the program's name in -Game
+    [string]$Package = 'com.ea.game.pvz2_auz'        # the mod's package: the OBB's folder
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -64,8 +66,8 @@ foreach ($need in 'Game', 'Obb', 'Out') { if (-not (Get-Variable $need -ValueOnl
 $noBaseline = $Baseline -and -not (Test-Path -LiteralPath $Baseline)
 if ($noBaseline) { Write-Host "smoke: no baseline picture at ${Baseline}: the pictures are kept, and the test fails"; $Baseline = $null }
 
-$exe = Get-ChildItem -LiteralPath $Game -Filter 'PvZ2 Reflourished*.exe' | Select-Object -First 1
-if (-not $exe) { throw "no PvZ2 Reflourished*.exe in $Game" }
+$exe = Get-ChildItem -LiteralPath $Game -Filter $Exe | Select-Object -First 1
+if (-not $exe) { throw "no $Exe in $Game" }
 if (-not (Test-Path -LiteralPath (Join-Path $Game 'portable'))) { throw "$Game is not a portable copy (no 'portable' file)" }
 $x64 = $exe.Name -like '*x64*'
 $data = Join-Path $Game 'data'
@@ -73,7 +75,7 @@ $log = Join-Path $data 'pvz2.log'
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 
 # The OBB where the game looks for it, as a hard link: the same volume, no 1.3 GB copy
-$obbDir = Join-Path $data 'sdcard\Android\obb\com.ea.game.pvz2_rfl'
+$obbDir = Join-Path $data (Join-Path 'sdcard\Android\obb' $Package)
 New-Item -ItemType Directory -Force -Path $obbDir | Out-Null
 $obbTo = Join-Path $obbDir (Split-Path $Obb -Leaf)
 if (-not (Test-Path -LiteralPath $obbTo)) {
