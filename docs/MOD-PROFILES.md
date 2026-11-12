@@ -49,8 +49,9 @@ is answered in the driver.
 
 The mod OBBs pack their resources differently: Reflourished's parts are zstd
 and its seed-packet atlas is RGBA8888, while AltVerZ's parts are zlib and its
-atlases are ETC1 colour plus an alpha plane. Only the Mac host's cursor-art
-reader parses those files, and each build reads its own profile's OBB.
+atlases are ETC1 colour plus an alpha plane. The Mac host's cursor-art reader
+and the Windows host's `pvz2-cursor-images.c` parse both layouts, and each build
+reads its own profile's OBB.
 
 ## Live content
 
@@ -59,3 +60,17 @@ redirects. AltVerZ's own first boot named `possthree.pythonanywhere.com` in its
 `cdn_config.json.8.3` request; the base ends in `/`, so its paths start with a
 double slash. The archive it serves is gzip despite the `.tar` suffix, as
 Reflourished's is, so the same validator, cache and fallback are used.
+
+## The Windows build
+
+The Windows programs take their names from the same generated header as the
+Apple apps (`scripts/profile-generate.py`): the app name, package, data folder,
+mod library, CDN hosts and path and archive, plus `WIN_STEM` (the app name
+without spaces, for window classes and mutexes), `AUMID` (the taskbar identity,
+the bundle id without `-darwin`), `REPO` (where the update feed lives), the
+game's OBB (`OBB_NAME`, `OBB_SIZE`, `OBB_SHA256`, `OBB_URL`, from the game
+manifest) and `POWERUPS`. The scripts under `runtime/win/` and `scripts/` read
+the profile named by `PROFILE` (default `altverz`), and the Windows setup has
+its own fixed AppId in `runtime/win/installer/pvz2.iss`. The CDN archive and
+ANGLE builds are assets of the draft release `build-inputs`
+([RELEASING.md](RELEASING.md)).
