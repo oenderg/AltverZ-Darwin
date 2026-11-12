@@ -7,6 +7,7 @@
  * Every path goes through tl_path_resolve. Files are always opened in binary mode:
  * Android has no text mode, and Windows' would rewrite line ends.
  */
+#include "pvz2-profile.h"
 #include "husk-tl-bionic-win.h"
 
 #include <windows.h>
@@ -41,7 +42,7 @@ static const char *synth_content(const char *path, char *buf, size_t n)
 {
     SYSTEM_INFO si; GetSystemInfo(&si);
     if (!strcmp(path, "/proc/self/maps") || (!strncmp(path, "/proc/", 6) && strstr(path, "/maps") && !strcmp(strstr(path, "/maps"), "/maps"))) {
-        tl_ld_maps(buf, n, "/data/app/~~husk==/com.ea.game.pvz2_rfl-1/lib/arm64");
+        tl_ld_maps(buf, n, "/data/app/~~husk==/" PVZ2_PROFILE_PKG "-1/lib/arm64");
         return buf;
     }
     if (!strcmp(path, "/proc/cpuinfo")) {

@@ -13,6 +13,7 @@
  * HKCU\Software\oenderg\PvZ2 Reflourished\WinSparkle; the installer's
  * uninstaller removes that key.
  */
+#include "pvz2-profile.h"
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
@@ -35,7 +36,7 @@
 
 void tl_log_line(const char *fmt, ...);
 
-#define RELEASES_PAGE "https://github.com/oenderg/Reflourished-Darwin/releases/latest"
+#define RELEASES_PAGE "https://github.com/" PVZ2_PROFILE_REPO "/releases/latest"
 
 /* Both builds answer this the same way: a manual check ends up here. */
 static void open_releases_page(HWND owner)
@@ -128,7 +129,7 @@ void pvz2_updates_init(HWND game_window, int automatic)
     wchar_t version[64], build[32];
     MultiByteToWideChar(CP_UTF8, 0, PVZ2_APP_VERSION, -1, version, 64);
     app_build(PVZ2_APP_VERSION, build, 32);
-    win_sparkle_set_app_details(L"oenderg", L"PvZ2 Reflourished", version);
+    win_sparkle_set_app_details(L"oenderg", L"" PVZ2_PROFILE_APP_NAME, version);
     win_sparkle_set_app_build_version(build);
     win_sparkle_set_appcast_url(PVZ2_UPDATE_FEED_URL);
     win_sparkle_set_eddsa_public_key(PVZ2_UPDATE_PUBLIC_KEY);

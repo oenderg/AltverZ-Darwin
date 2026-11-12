@@ -9,6 +9,7 @@
  * When the network fails the saved copy answers, dated now, which is what the
  * Mac client does.
  */
+#include "pvz2-profile.h"
 #include "husk-tl-cdn.h"
 
 #include <windows.h>
@@ -22,7 +23,6 @@
 void tl_log_line(const char *fmt, ...);
 
 #define CDN_LIMIT (64u * 1024u * 1024u)
-#define CDN_HOST "reflourished.ducnguyen.org"
 
 static void slashes(char *p) { for (; *p; p++) if (*p == '\\') *p = '/'; }
 
@@ -32,7 +32,14 @@ bool tl_cdn_allowed_url(const char *url)
     const char *host = url + 8;
     if (strchr(host, '@')) return 0;                 /* no user:password */
     size_t n = strcspn(host, ":/?#");
-    if (n != strlen(CDN_HOST) || _strnicmp(host, CDN_HOST, n)) return 0;
+    /* The profile's hosts, "|" apart. */
+    bool known = false;
+    for (const char *h = PVZ2_PROFILE_CDN_HOSTS; *h && !known;) {
+        size_t len = strcspn(h, "|");
+        if (len == n && !_strnicmp(host, h, n)) known = true;
+        h += len + (h[len] == '|');
+    }
+    if (!known) return 0;
     const char *rest = host + n;
     if (*rest == ':') {
         char *end = NULL;
@@ -150,7 +157,7 @@ static tl_cdn_response *http_fetch(const char *url, const char *cache, char *why
                         (int)uc.dwExtraInfoLength, uc.lpszExtraInfo ? uc.lpszExtraInfo : L"");
     if (pn <= 0 || pn >= 2048) { snprintf(why, whyn, "path too long"); return NULL; }
 
-    session = WinHttpOpen(L"PvZ2 Reflourished/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+    session = WinHttpOpen(L"" PVZ2_PROFILE_APP_NAME L"/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                           WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { snprintf(why, whyn, "WinHttpOpen: %lu", GetLastError()); goto done; }
     WinHttpSetTimeouts(session, 30000, 30000, 30000, 60000);
@@ -269,7 +276,7 @@ static DWORD WINAPI run(void *p)
     job *j = p;
     tl_cdn_response *r = NULL;
     char why[160] = "";
-    static const char *const suffix = "/cdn/1.4.2.main.tar";
+    static const char *const suffix = PVZ2_PROFILE_CDN_PATH;
     size_t url_len = strlen(j->url), suffix_len = strlen(suffix);
     bool wanted = url_len >= suffix_len && !strcmp(j->url + url_len - suffix_len, suffix);
     if (tl_cdn_allowed_url(j->url) && wanted)

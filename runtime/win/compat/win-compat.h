@@ -127,6 +127,20 @@ int scandir(const char *dir, struct dirent ***list, int (*filter)(const struct d
 int alphasort(const struct dirent **a, const struct dirent **b);
 #define pread tl_win_pread
 
+/* mingw has no strcasestr; the driver's test hooks look a widget up by part of its name. */
+#include <string.h>
+#include <ctype.h>
+static inline char *strcasestr(const char *hay, const char *needle)
+{
+    if (!*needle) return (char *)hay;
+    for (; *hay; hay++) {
+        const char *h = hay, *n = needle;
+        while (*h && *n && tolower((unsigned char)*h) == tolower((unsigned char)*n)) { h++; n++; }
+        if (!*n) return (char *)hay;
+    }
+    return NULL;
+}
+
 #ifndef TL_WIN_COMPAT_IMPL
 #define malloc tl_malloc
 #define calloc tl_calloc

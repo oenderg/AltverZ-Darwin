@@ -6,6 +6,7 @@
  *
  *   rfl-x64-starttest.exe <apk> [data dir] [cache dir]
  */
+#include "pvz2-profile.h"
 #include <windows.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -59,7 +60,7 @@ int main(int argc, char **argv)
     if (!tl_x64_open(err, sizeof(err))) { tl_log_line("start: %s", err); return 1; }
     if (!tl_ld_add_apk(argv[1])) { tl_log_line("start: cannot open the APK %s", argv[1]); return 1; }
     tl_jni_init();
-    tl_lib *cxx = load("libc++_shared.so"), *nimble = load("libNimble.so"), *game = load("libPVZ2.so"), *rfl = load("libRFLib.so");
+    tl_lib *cxx = load("libc++_shared.so"), *nimble = load("libNimble.so"), *game = load("libPVZ2.so"), *rfl = load(PVZ2_PROFILE_MOD_LIBRARY);
     if (!cxx || !nimble || !game) return 1;
     tl_log_line("start: %zu unresolved imports after loading", tl_ld_unresolved_count());
     if (!tl_x64_translate(cache, err, sizeof(err))) { tl_log_line("start: translation failed: %s", err); return 1; }
@@ -68,7 +69,7 @@ int main(int argc, char **argv)
     if (!init(game, "libPVZ2")) return 1;
     onload(nimble);
     if (onload(game) < 0) tl_log_line("start: libPVZ2 has no JNI_OnLoad");
-    if (rfl) init(rfl, "libRFLib");
+    if (rfl) init(rfl, PVZ2_PROFILE_MOD_LIBRARY_BASE);
     tl_log_line("start: done, %zu unresolved imports", tl_ld_unresolved_count());
     return 0;
 }

@@ -14,6 +14,7 @@
  * The checks and the paths are the Mac client's: same name, size, sha256,
  * same folder in the data directory, same 256 MB of headroom, same messages.
  */
+#include "pvz2-profile.h"
 #include <windows.h>
 #include <commctrl.h>
 #include <winhttp.h>
@@ -32,7 +33,7 @@
 void tl_log_line(const char *fmt, ...);
 void tl_win_mkdirs(const char *path);
 
-#define OBB_CLASS L"PvZ2ReflourishedObb"
+#define OBB_CLASS L"" PVZ2_PROFILE_WIN_STEM L"Obb"
 #define ID_RETRY 1
 #define ID_CANCEL 2
 #define TIMER_PROGRESS 1
@@ -182,7 +183,7 @@ static int obb_http(char *why, size_t whyn)
                         (int)uc.dwExtraInfoLength, uc.lpszExtraInfo ? uc.lpszExtraInfo : L"");
     if (pn <= 0 || pn >= 2048) { snprintf(why, whyn, "The download link is not valid."); return 0; }
 
-    ses = WinHttpOpen(L"PvZ2 Reflourished/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+    ses = WinHttpOpen(L"" PVZ2_PROFILE_APP_NAME L"/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!ses) { snprintf(why, whyn, "WinHTTP could not start (%lu).", GetLastError()); goto done; }
     WinHttpSetTimeouts(ses, 30000, 30000, 30000, 15000);
@@ -400,7 +401,7 @@ static void build_window(void)
     if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &area, 0)) { area.right = GetSystemMetrics(SM_CXSCREEN); area.bottom = GetSystemMetrics(SM_CYSCREEN); }
     int x = area.left + ((area.right - area.left) - w) / 2;
     int y = area.top + ((area.bottom - area.top) - h) / 2;
-    D.win = CreateWindowExW(0, OBB_CLASS, L"PvZ2 Reflourished", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+    D.win = CreateWindowExW(0, OBB_CLASS, L"" PVZ2_PROFILE_APP_NAME, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
                             x, y, w, h, NULL, NULL, inst, NULL);
     if (!D.win) return;
     pvz2_window_app_id(D.win);
@@ -439,7 +440,7 @@ int tl_win_obb_ensure(const char *data_dir, const char *exe_dir)
     const char *urls = getenv("TL_PVZ2_OBB_URLS");
     if (urls && *urls) snprintf(D.url, sizeof(D.url), "%.*s", (int)strcspn(urls, " "), urls);
     else snprintf(D.url, sizeof(D.url), "%s", PVZ2_OBB_URL);
-    snprintf(D.dir, sizeof(D.dir), "%s/sdcard/Android/obb/com.ea.game.pvz2_rfl", data_dir);
+    snprintf(D.dir, sizeof(D.dir), "%s/sdcard/Android/obb/" PVZ2_PROFILE_PKG, data_dir);
     snprintf(D.final, sizeof(D.final), "%s/%s", D.dir, PVZ2_OBB_NAME);
     snprintf(D.part, sizeof(D.part), "%s.part", D.final);
 

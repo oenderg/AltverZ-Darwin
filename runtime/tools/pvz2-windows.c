@@ -20,6 +20,7 @@
  * beside it. TL_DATA overrides all three, so a scripted test touches nothing
  * outside its own folder.
  */
+#include "pvz2-profile.h"
 #include <windows.h>
 #include <gdiplus.h>
 #include <commctrl.h>
@@ -83,9 +84,9 @@ int tl_win_obb_ensure(const char *data_dir, const char *exe_dir);
 
 /* The taskbar's identity for the game. The installer gives its shortcuts the
  * same string, so a pinned or Start menu button shows this jump list too. */
-#define PVZ2_APP_USER_MODEL_ID L"io.github.oenderg.reflourished"
-#define PVZ2_REQUEST_WINDOW_CLASS L"PvZ2ReflourishedRequests"
-#define PVZ2_WINDOW_CLASS L"PvZ2Reflourished"
+#define PVZ2_APP_USER_MODEL_ID L"" PVZ2_PROFILE_AUMID
+#define PVZ2_REQUEST_WINDOW_CLASS L"" PVZ2_PROFILE_WIN_STEM L"Requests"
+#define PVZ2_WINDOW_CLASS L"" PVZ2_PROFILE_WIN_STEM
 /* A second start asks the running game to do one of these. */
 #define PVZ2_WM_START_ACTION (WM_APP + 19)
 #define PVZ2_REQUEST_MAGIC 0x50565A32u
@@ -195,7 +196,7 @@ static DWORD WINAPI launch_game(void *arg)
     atomic_store(&g_driver_ok, ok);
     atomic_store(&g_driver_done, 1);
     tl_log_line("windows: driver startup %s", ok ? "complete" : "FAILED");
-    if (!ok) MessageBoxA(g_hwnd, "Reflourished could not start. See pvz2.log in the data folder for details.", "PvZ2 Reflourished", MB_ICONERROR);
+    if (!ok) MessageBoxA(g_hwnd, PVZ2_PROFILE_APP_NAME " could not start. See pvz2.log in the data folder for details.", PVZ2_PROFILE_APP_NAME, MB_ICONERROR);
     return 0;
 }
 
@@ -676,7 +677,7 @@ static unsigned long long instance_key(const char *path)
 static int instance_claim(DWORD wait_ms)
 {
     wchar_t name[64];
-    swprintf(name, 64, L"Local\\PvZ2Reflourished-%016llx", g_data_key);
+    swprintf(name, 64, L"Local\\" L"" PVZ2_PROFILE_WIN_STEM L"-%016llx", g_data_key);
     g_instance_mutex = CreateMutexW(NULL, TRUE, name);
     if (!g_instance_mutex) {
         tl_log_line("windows: no instance mutex (%lu); starting anyway", GetLastError());
@@ -892,7 +893,7 @@ static int make_request_window(HINSTANCE inst)
     DWORD style = WS_CAPTION | WS_SYSMENU;
     AdjustWindowRectExForDpi(&r, style, FALSE, 0, dpi);
     int w = r.right - r.left, h = r.bottom - r.top;
-    g_request_window = CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", style,
+    g_request_window = CreateWindowExW(0, wc.lpszClassName, L"" PVZ2_PROFILE_APP_NAME, style,
                                       (GetSystemMetrics(SM_CXSCREEN) - w) / 2,
                                       (GetSystemMetrics(SM_CYSCREEN) - h) / 2,
                                       w, h, NULL, NULL, inst, NULL);
@@ -1532,12 +1533,12 @@ static void make_badge_window(HINSTANCE inst)
         WNDCLASSEXW bc = { sizeof(bc) };
         bc.lpfnWndProc = badge_proc;
         bc.hInstance = inst;
-        bc.lpszClassName = L"PvZ2ReflourishedBadges";
+        bc.lpszClassName = L"" PVZ2_PROFILE_WIN_STEM L"Badges";
         RegisterClassExW(&bc);
         registered = 1;
     }
     g_badge_win = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                                  L"PvZ2ReflourishedBadges", L"", WS_POPUP,
+                                  L"" PVZ2_PROFILE_WIN_STEM L"Badges", L"", WS_POPUP,
                                   0, 0, 1, 1, g_hwnd, NULL, inst, NULL);
 }
 
@@ -1725,17 +1726,17 @@ static void make_pointer_window(HINSTANCE inst)
         WNDCLASSEXW pc = { sizeof(pc) };
         pc.lpfnWndProc = pointer_proc;
         pc.hInstance = inst;
-        pc.lpszClassName = L"PvZ2ReflourishedPointer";
+        pc.lpszClassName = L"" PVZ2_PROFILE_WIN_STEM L"Pointer";
         RegisterClassExW(&pc);
         registered = 1;
     }
     g_pointer_win = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW |
-                                    WS_EX_NOACTIVATE, L"PvZ2ReflourishedPointer", L"", WS_POPUP,
+                                    WS_EX_NOACTIVATE, L"" PVZ2_PROFILE_WIN_STEM L"Pointer", L"", WS_POPUP,
                                     0, 0, 1, 1, g_hwnd, NULL, inst, NULL);
     if (!g_pointer_win)
         tl_log_line("windows: the pointer window could not be made (%lu)", GetLastError());
     g_plant_win = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW |
-                                  WS_EX_NOACTIVATE, L"PvZ2ReflourishedPointer", L"", WS_POPUP,
+                                  WS_EX_NOACTIVATE, L"" PVZ2_PROFILE_WIN_STEM L"Pointer", L"", WS_POPUP,
                                   0, 0, 1, 1, g_hwnd, NULL, inst, NULL);
     if (!g_plant_win)
         tl_log_line("windows: the plant window could not be made (%lu)", GetLastError());
@@ -2097,7 +2098,7 @@ static void pointer_load_art_once(void)
     if (g_pointer_art_state != POINTER_ART_NONE) return;
     g_pointer_art_state = POINTER_ART_LOADING;
     char dir[MAX_PATH + 64], path[MAX_PATH * 2];
-    join(dir, sizeof dir, g_data, "sdcard/Android/obb/com.ea.game.pvz2_rfl");
+    join(dir, sizeof dir, g_data, "sdcard/Android/obb/" PVZ2_PROFILE_PKG);
     join(path, sizeof path, dir, PVZ2_OBB_NAME);
     WIN32_FILE_ATTRIBUTE_DATA attrs;
     if (!GetFileAttributesExA(path, GetFileExInfoStandard, &attrs)) {
@@ -2596,11 +2597,11 @@ static void make_view(HINSTANCE inst)
         vc.lpfnWndProc = view_proc;
         vc.hInstance = inst;
         vc.hCursor = LoadCursor(NULL, IDC_ARROW);
-        vc.lpszClassName = L"PvZ2ReflourishedView";
+        vc.lpszClassName = L"" PVZ2_PROFILE_WIN_STEM L"View";
         RegisterClassExW(&vc);
         registered = 1;
     }
-    g_view = CreateWindowExW(0, L"PvZ2ReflourishedView", L"", WS_CHILD | WS_VISIBLE,
+    g_view = CreateWindowExW(0, L"" PVZ2_PROFILE_WIN_STEM L"View", L"", WS_CHILD | WS_VISIBLE,
                              0, 0, 1, 1, g_hwnd, NULL, inst, NULL);
     view_layout();
 }
@@ -3418,7 +3419,7 @@ static HWND make_window(HINSTANCE inst)
         MONITORINFO mi = { .cbSize = sizeof(mi) };
         if (GetMonitorInfoW(mon, &mi)) {
             g_fullscreen = 1;
-            parent = CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN,
+            parent = CreateWindowExW(0, wc.lpszClassName, L"" PVZ2_PROFILE_APP_NAME, WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN,
                                      mi.rcMonitor.left, mi.rcMonitor.top,
                                      mi.rcMonitor.right - mi.rcMonitor.left,
                                      mi.rcMonitor.bottom - mi.rcMonitor.top,
@@ -3428,7 +3429,7 @@ static HWND make_window(HINSTANCE inst)
         }
     }
     g_fullscreen = 0;
-    parent = CreateWindowExW(0, wc.lpszClassName, L"PvZ2 Reflourished", WINDOW_STYLE,
+    parent = CreateWindowExW(0, wc.lpszClassName, L"" PVZ2_PROFILE_APP_NAME, WINDOW_STYLE,
                              wr.left, wr.top, wr.right - wr.left, wr.bottom - wr.top,
                              NULL, NULL, inst, NULL);
     if (parent) { g_hwnd = parent; startup_layout_from_window(); make_view(inst); make_badge_window(inst); }
@@ -3647,7 +3648,7 @@ static void show_progress_window(HINSTANCE inst)
     wc.hInstance = inst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
-    wc.lpszClassName = L"PvZ2ReflourishedPrepare";
+    wc.lpszClassName = L"" PVZ2_PROFILE_WIN_STEM L"Prepare";
     RegisterClassExW(&wc);
 
     UINT dpi = g_hwnd ? GetDpiForWindow(g_hwnd) : 0;
@@ -3695,7 +3696,7 @@ static void show_progress_window(HINSTANCE inst)
     g_progress_bootstrap = 0.0;
     g_progress_estimate = 0.0;
     g_progress_have_estimate = 0;
-    HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, L"PvZ2ReflourishedPrepare", L"PvZ2 Reflourished",
+    HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, L"" PVZ2_PROFILE_WIN_STEM L"Prepare", L"" PVZ2_PROFILE_APP_NAME,
                                 WS_CAPTION | WS_SYSMENU, x, y, w, h, g_hwnd, NULL, inst, NULL);
     if (!hwnd) return;
     pvz2_window_app_id(hwnd);
@@ -3822,8 +3823,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         char roaming[MAX_PATH] = ".", local[MAX_PATH] = ".";
         if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, roaming))) slashes(roaming);
         if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, local))) slashes(local);
-        join(g_saves, sizeof(g_saves), roaming, "PvZ2 Reflourished");
-        join(g_data, sizeof(g_data), local, "PvZ2 Reflourished");
+        join(g_saves, sizeof(g_saves), roaming, PVZ2_PROFILE_DATA_FOLDER);
+        join(g_data, sizeof(g_data), local, PVZ2_PROFILE_DATA_FOLDER);
     }
     /* Absolute paths, so the mutex, the jump list's --data and a second start
      * all name the same folder. */
@@ -3855,7 +3856,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         set_app_id();
         if (!instance_send(start_action))
             MessageBoxW(NULL, L"This copy is already starting, but has not answered yet.\nPlease try its taskbar action again in a moment.",
-                        L"PvZ2 Reflourished", MB_OK | MB_ICONINFORMATION);
+                        L"" PVZ2_PROFILE_APP_NAME, MB_OK | MB_ICONINFORMATION);
         return 0;
     }
     {
@@ -3883,7 +3884,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
      * an empty "sdcard" folder beside the program. */
     if (SetCurrentDirectoryA(g_data)) tl_log_line("windows: the current folder is the data folder");
     tl_log_line("windows: %s mode", mode);
-    tl_log_line("windows: Pvz2 Reflourished %s, %s", PVZ2_APP_VERSION,
+    tl_log_line("windows: " PVZ2_PROFILE_APP_NAME " %s, %s", PVZ2_APP_VERSION,
                 pvz2_updates_built_in() ? "the installed build (with WinSparkle)" : "the portable build (no updater)");
     tl_log_line("windows: settings file %s", g_settings_path);
     tl_log_line("windows: the game's saves, config, reminders and Nimble data %s", g_saves);
@@ -3940,23 +3941,23 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     /* The CDN fallback archive, staged into the data folder unless a newer download is there. */
     {
         char bundled[MAX_PATH + 32], cached[MAX_PATH + 32], dir[MAX_PATH + 32];
-        join(bundled, sizeof(bundled), g_exe_dir, "Game/1.4.2.main.tar");
+        join(bundled, sizeof(bundled), g_exe_dir, "Game/" PVZ2_PROFILE_CDN_ARCHIVE);
         join(dir, sizeof(dir), g_data, "No_Backup"); tl_win_mkdirs(dir);
-        join(cached, sizeof(cached), g_data, "No_Backup/1.4.2.main.tar");
+        join(cached, sizeof(cached), g_data, "No_Backup/" PVZ2_PROFILE_CDN_ARCHIVE);
         if (!getenv("TL_PVZ2_MAIN_TAR")) { tl_cdn_stage(bundled, cached); _putenv_s("TL_PVZ2_MAIN_TAR", cached); }
     }
 
     char err[200] = "";
     if (!tl_xmem_open((size_t)2048 << 20, err, sizeof(err))) {
         tl_log_line("windows: no executable memory: %s", err);
-        MessageBoxA(NULL, err, "PvZ2 Reflourished", MB_ICONERROR);
+        MessageBoxA(NULL, err, PVZ2_PROFILE_APP_NAME, MB_ICONERROR);
         return 1;
     }
 #if defined(__x86_64__)
     /* x86-64: the stub page the translated code reaches the host through (husk-tl-x64.c) */
     if (!tl_x64_open(err, sizeof(err))) {
         tl_log_line("windows: %s", err);
-        MessageBoxA(NULL, err, "PvZ2 Reflourished", MB_ICONERROR);
+        MessageBoxA(NULL, err, PVZ2_PROFILE_APP_NAME, MB_ICONERROR);
         return 1;
     }
 #endif
@@ -4009,7 +4010,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
      * the player's mock-up had it. Windows' own items (Move, Size, Close) follow. */
     if (!g_fullscreen && !ensure_system_menu(GetSystemMenu(g_hwnd, FALSE))) g_menu_foreign = 1;
 
-    g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = "com.ea.game.pvz2_rfl",
+    g_cfg = (tl_ga_config){ .apk_path = g_apk, .data_dir = g_data, .package_name = PVZ2_PROFILE_PKG,
                             .width = g_sw, .height = g_sh, .metal_layer = g_view, .angle_egl = g_egl,
                             .angle_gles = g_gles, .frame_dir = NULL, .frame_every = 0 };
     const char *frames = getenv("TL_PVZ2_FRAMES");

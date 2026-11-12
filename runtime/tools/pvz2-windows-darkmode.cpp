@@ -9,6 +9,7 @@
  * every library subclass passes the message on, so the host's own light
  * painting is unchanged.
  */
+#include "pvz2-profile.h"
 #include <windows.h>
 #include <commctrl.h>
 
@@ -29,8 +30,8 @@ int tl_win_darkmode_confirm_quit(HWND owner)
     config.cbSize = sizeof(config);
     config.hwndParent = owner;
     config.dwFlags = TDF_POSITION_RELATIVE_TO_WINDOW | TDF_ALLOW_DIALOG_CANCELLATION;
-    config.pszWindowTitle = L"PvZ2 Reflourished";
-    config.pszMainInstruction = L"Quit PvZ2 Reflourished?";
+    config.pszWindowTitle = L"" PVZ2_PROFILE_APP_NAME;
+    config.pszMainInstruction = L"Quit " PVZ2_PROFILE_APP_NAME L"?";
     config.pszContent = L"The game saves before it quits.";
     config.cButtons = 2;
     config.pButtons = buttons;

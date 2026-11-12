@@ -13,18 +13,25 @@
 set -e
 H="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$H/../.." && pwd)"
-VERSION="${APP_VERSION:-$(cat "$REPO/VERSION")}"
+# The mod this build is for (data/profiles/<id>.json): names, package, OBB, CDN and feed. The
+# generated pvz2-profile-generated.h goes on the include path ahead of the checked-in defaults.
+PROFILE="${PROFILE:-altverz}"
+. "$REPO/scripts/profile.sh"
+profile_generate "$REPO/out/win-profile-$PROFILE"
+export PROFILE_DIR
+VERSION="${APP_VERSION:-$PROFILE_APP_VERSION}"
 SUF=""; [ -n "$APP_VERSION" ] && SUF="-$APP_VERSION"
 TC="${TL_WIN_TOOLCHAIN:?set TL_WIN_TOOLCHAIN to the folder holding llvm-mingw-* and win-arm64 (see runtime/win/README.md)}"
 CC="$TC/llvm-mingw-20261020-ucrt-macos-universal/bin/aarch64-w64-mingw32-clang"
 CXX="$TC/llvm-mingw-20261020-ucrt-macos-universal/bin/aarch64-w64-mingw32-clang++"
 AR="$TC/llvm-mingw-20261020-ucrt-macos-universal/bin/llvm-ar"
-OBJ="$REPO/out/win-obj$SUF"; BIN="$REPO/out/win$SUF"
+OBJ="$REPO/out/win-obj-$PROFILE$SUF"; BIN="$REPO/out/win-$PROFILE$SUF"
+EXE_NAME="$PROFILE_APP_NAME"
 WS="$REPO/prebuilt/winsparkle"
 # The Windows appcast and the EdDSA key of the Mac app's signature (the same key signs
 # both, docs/windows-shipping.md). A test build passes its own with SPARKLE_FEED_URL and
 # SPARKLE_PUBLIC_KEY; an empty key leaves the updater off.
-FEED="${SPARKLE_FEED_URL:-https://raw.githubusercontent.com/oenderg/Reflourished-Darwin/main/sparkle/windows-appcast.xml}"
+FEED="${SPARKLE_FEED_URL:-$(echo "$PROFILE_SPARKLE_FEED_URL" | sed "s|/appcast.xml$|/windows-appcast.xml|")}"
 KEY="${SPARKLE_PUBLIC_KEY:-$(cat "$REPO/sparkle/public-key" 2>/dev/null || true)}"
 mkdir -p "$OBJ" "$BIN"
 N="$H/../src/translation-layer-next"; T="$H/../src/translation-layer"
@@ -34,9 +41,9 @@ target="${1:-starttest}"
 # other object is shared, so a portable build costs two compiles, not a full rebuild.
 case "$target" in
     starttest) SRCS="$WIN_CORE $H/win-starttest.c"; OUT="$BIN/rfl-starttest.exe" ;;
-    game) SRCS="$WIN_CORE $WIN_GAME"; OUT="$BIN/PvZ2 Reflourished.exe"
+    game) SRCS="$WIN_CORE $WIN_GAME"; OUT="$BIN/$EXE_NAME.exe"
         LDX="-mwindows -lwinmm -lshell32 -lole32 -luuid -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
-    game-portable) SRCS="$WIN_CORE $WIN_GAME"; OUT="$REPO/out/win-portable$SUF/PvZ2 Reflourished.exe"
+    game-portable) SRCS="$WIN_CORE $WIN_GAME"; OUT="$REPO/out/win-$PROFILE-portable$SUF/$EXE_NAME.exe"
         LDX="-mwindows -lwinmm -lshell32 -lole32 -luuid -lcomctl32 -lwinhttp -lgdiplus -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     settings-test) SRCS="$H/win-settings-test.c $H/../tools/pvz2-windows-settings.c $H/../tools/pvz2-windows-updates.c"; OUT="$BIN/rfl-settings-test.exe"; LDX="-lshell32 -lcomctl32 -lgdi32 -ldwmapi -luxtheme -lshlwapi -lcomdlg32" ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
@@ -57,7 +64,7 @@ for f in $SRCS; do
             flags="-DPVZ2_APP_VERSION=\"$VERSION\""
             ;;
     esac
-    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$REPO/VERSION" -nt "$o" ] || [ "$H/../tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$H/../tools/pvz2-windows-updates.h" -nt "$o" ] || [ "$H/../tools/pvz2-windows-identity.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ]; then
+    if [ ! -f "$o" ] || [ "$f" -nt "$o" ] || [ "$REPO/VERSION" -nt "$o" ] || [ "$H/../tools/pvz2-windows-settings.h" -nt "$o" ] || [ "$H/../tools/pvz2-windows-updates.h" -nt "$o" ] || [ "$H/../tools/pvz2-windows-identity.h" -nt "$o" ] || [ "$H/compat/win-compat.h" -nt "$o" ] || [ "$PROFILE_DIR/pvz2-profile-generated.h" -nt "$o" ]; then
         "$H/cc.sh" "$f" $flags -c -o "$o"
     fi
     OBJS="$OBJS $o"
@@ -76,9 +83,9 @@ if [ "$target" = game ] || [ "$target" = game-portable ] || [ "$target" = settin
     "$H/build-darkmode.sh" "$CXX" "$AR" "$OBJ"
     DM="$OBJ/pvz2-windows-darkmode.o"
     DMSRC="$H/../tools/pvz2-windows-darkmode.cpp"
-    if [ ! -f "$DM" ] || [ "$DMSRC" -nt "$DM" ] || [ "$H/../tools/pvz2-windows-darkmode.h" -nt "$DM" ]; then
+    if [ ! -f "$DM" ] || [ "$DMSRC" -nt "$DM" ] || [ "$PROFILE_DIR/pvz2-profile-generated.h" -nt "$DM" ] || [ "$H/../tools/pvz2-windows-darkmode.h" -nt "$DM" ]; then
         "$CXX" -std=c++20 -O2 -g -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 \
-            -I"$H/../third_party/darkmodelib/include" -I"$H/../tools" -c "$DMSRC" -o "$DM"
+            -I"$H/../third_party/darkmodelib/include" -I"$H/../src/translation-layer-next" -I"$PROFILE_DIR" -I"$H/../tools" -c "$DMSRC" -o "$DM"
     fi
     OBJS="$OBJS $DM $OBJ/libdarkmode.a"
 fi

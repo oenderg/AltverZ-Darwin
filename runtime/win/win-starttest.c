@@ -4,6 +4,7 @@
  * constructors and JNI_OnLoad, in the order the driver uses. No window, no GL.
  * Usage: rfl-starttest.exe <apk> [data dir]
  */
+#include "pvz2-profile.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -86,8 +87,8 @@ int main(int argc, char **argv)
     tl_log_line("start: libPVZ2 constructors ran");
     onload(nimble);
     if (onload(game) < 0) tl_log_line("start: libPVZ2 has no JNI_OnLoad");
-    tl_lib *rfl = load("libRFLib.so");
-    if (rfl && tl_ld_init(rfl)) tl_log_line("start: libRFLib constructors ran");
+    tl_lib *rfl = load(PVZ2_PROFILE_MOD_LIBRARY);
+    if (rfl && tl_ld_init(rfl)) tl_log_line("start: " PVZ2_PROFILE_MOD_LIBRARY_BASE " constructors ran");
     /* the mod wrote its hooks into the game's code: make them visible to instruction fetch */
     tl_xmem_flush(tl_xmem_base(), tl_xmem_used());
     tl_log_line("start: done, %zu unresolved imports", tl_ld_unresolved_count());

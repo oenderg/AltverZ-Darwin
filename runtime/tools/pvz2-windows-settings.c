@@ -13,6 +13,7 @@
  */
 #define _WIN32_WINNT 0x0A00
 #define WINVER 0x0A00
+#include "pvz2-profile.h"
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
@@ -458,7 +459,7 @@ static LRESULT CALLBACK keyfield_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp,
         if (owner) {
             char text[160];
             snprintf(text, sizeof(text), "The key %s is already used for %s.\nChoose another key.", name, owner);
-            MessageBoxA(g_self, text, "PvZ2 Reflourished Settings", MB_ICONINFORMATION | MB_OK);
+            MessageBoxA(g_self, text, PVZ2_PROFILE_APP_NAME " Settings", MB_ICONINFORMATION | MB_OK);
             return 0;
         }
         field_set(field, name);
@@ -651,9 +652,9 @@ static void about_refresh_check_time(HWND page)
 
 static void build_about_page(HWND p)
 {
-    add(p, L"STATIC", L"PvZ2 Reflourished", 0, 24, 20, 460, 24, 0);
+    add(p, L"STATIC", L"" PVZ2_PROFILE_APP_NAME, 0, 24, 20, 460, 24, 0);
     add(p, L"STATIC", L"Version " L"" PVZ2_APP_VERSION, 0, 24, 50, 460, 20, 0);
-    add_ruled(p, L"STATIC", L"Plants vs. Zombies 2: Reflourished, running on Windows: the game's own Android code, drawn through Direct3D 11.",
+    add_ruled(p, L"STATIC", L"" PVZ2_PROFILE_APP_NAME L", running on Windows: the game's own Android code, drawn through Direct3D 11.",
               0, 24, 80, 460, 42, 0, W_FULL, 220);
     int y = 138;
     if (pvz2_updates_configured()) {
@@ -1123,7 +1124,7 @@ static void register_classes(void)
     WNDCLASSEXW wc = { sizeof(wc) };
     wc.lpfnWndProc = settings_proc;
     wc.hInstance = GetModuleHandleW(NULL);
-    wc.lpszClassName = L"PvZ2ReflourishedSettings";
+    wc.lpszClassName = L"" PVZ2_PROFILE_WIN_STEM L"Settings";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
@@ -1165,7 +1166,7 @@ void pvz2_settings_open(HWND owner, pvz2_settings *live, const pvz2_settings_hos
     if (x + w > mi.rcWork.right) x = mi.rcWork.right - w;
     if (y + h > mi.rcWork.bottom) y = mi.rcWork.bottom - h;
 
-    HWND win = CreateWindowExW(0, L"PvZ2ReflourishedSettings", L"PvZ2 Reflourished Settings",
+    HWND win = CreateWindowExW(0, L"" PVZ2_PROFILE_WIN_STEM L"Settings", L"" PVZ2_PROFILE_APP_NAME L" Settings",
                                SETTINGS_STYLE | WS_CLIPCHILDREN, x, y, w, h,
                                owner, NULL, GetModuleHandleW(NULL), NULL);
     if (!win) return;

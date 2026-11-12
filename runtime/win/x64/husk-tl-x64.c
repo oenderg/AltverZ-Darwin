@@ -15,6 +15,7 @@
  * A guest function given to the host as a callback (pthread_create's start routine) is wrapped in a host function made
  * here, a few bytes of x64 that call tl_guest_callv with the guest address and its signature.
  */
+#include "pvz2-profile.h"
 #include "husk-tl-x64.h"
 
 #include <windows.h>
@@ -649,7 +650,7 @@ static int add_lib(uintptr_t bias, const char *name, const void *phdr, unsigned 
         memcpy(&type, ph, 4); memcpy(&flags, ph + 4, 4); memcpy(&vaddr, ph + 16, 8); memcpy(&memsz, ph + 40, 8);
         /* the executable segments; libRFLib's writable ones too, where A64HookFunction builds its trampolines (code the
          * game reaches after the hooks are in) */
-        if (type != 1 /* PT_LOAD */ || (!(flags & 1) /* PF_X */ && strcmp(name, "libRFLib.so"))) continue;
+        if (type != 1 /* PT_LOAD */ || (!(flags & 1) /* PF_X */ && strcmp(name, PVZ2_PROFILE_MOD_LIBRARY))) continue;
         uint64_t a = (bias + vaddr) & ~(uint64_t)3, sz = (memsz + 3) & ~(uint64_t)3;
         R->r[R->n++] = (struct snx_code_range){ .address = a, .code = (const void *)(uintptr_t)a, .size = (size_t)sz };
         tl_log_line("x64: code of %s: %#llx, %zu KiB", name, (unsigned long long)a, (size_t)(sz >> 10));
