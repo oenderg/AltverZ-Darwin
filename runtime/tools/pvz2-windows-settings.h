@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * PvZ2: Reflourished on Windows: the settings, and the window that edits them.
+ * The mod on Windows: the settings, and the window that edits them.
  *
  * The settings are the shortcuts (the same ones the Mac host has, named the
  * same way), the window choices and the pointer preview. They live in an INI

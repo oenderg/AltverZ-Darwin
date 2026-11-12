@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * PvZ2: Reflourished on Windows: automatic updates, in the installed build only.
+ * The mod on Windows: automatic updates, in the installed build only.
  *
  * The installer's program links WinSparkle and carries its feed and the EdDSA
  * public key (runtime/win/build-win.sh passes PVZ2_UPDATE_FEED_URL and

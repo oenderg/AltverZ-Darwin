@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * PvZ2: Reflourished on Windows: the settings window.
+ * The mod on Windows: the settings window.
  *
  * A plain Win32 window with common controls v6, the system's own message font
  * at the window's DPI, and four pages: General, Gameplay, Keyboard and About. The look follows

@@ -1,7 +1,7 @@
 # ANGLE for Windows ARM64
 
 `libEGL.dll`, `libGLESv2.dll` and `d3dcompiler_47.dll`: our build of ANGLE over Direct3D 11
-for ARM64, the copy that `PvZ2-Reflourished-<game>-Darwin-<version>-Windows-ARM64.zip` carries.
+for ARM64, the copy that `PvZ2-AltVerZ-<game>-Darwin-<version>-Windows-ARM64.zip` carries.
 The files are not in git: `runtime/win/fetch-angle.sh` (which `runtime/win/package-zip.sh` runs)
 downloads them from the private draft release `build-inputs`, checks the sha256 that
 `runtime/win/ANGLE_ZIPS` names and unpacks them here. `runtime/win/build-angle.cmd` writes here too.

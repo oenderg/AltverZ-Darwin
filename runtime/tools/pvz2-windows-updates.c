@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * PvZ2: Reflourished on Windows: automatic updates (WinSparkle), installed build only.
+ * The mod on Windows: automatic updates (WinSparkle), installed build only.
  *
  * The feed is the Windows appcast (docs/windows-shipping.md), one item per
  * architecture, each pointing at the same setup program. Every update is
@@ -10,7 +10,7 @@
  * key.
  *
  * WinSparkle keeps its own state (last check, skipped version) in
- * HKCU\Software\oenderg\PvZ2 Reflourished\WinSparkle; the installer's
+ * HKCU\Software\oenderg\<the app name>\WinSparkle; the installer's
  * uninstaller removes that key.
  */
 #include "pvz2-profile.h"

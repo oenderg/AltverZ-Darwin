@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * PvZ2: Reflourished on Windows: the host.
+ * The mod on Windows: the host.
  *
  * A Win32 window that ANGLE draws into (on Direct3D), the mouse as a finger,
  * the keyboard's shortcuts, and the game's start-up: the same driver as the Mac
@@ -10,10 +10,10 @@
  *   the APK          Game/pvz2.apk next to the program        (TL_PVZ2_APK)
  *   the CDN archive  Game/1.4.2.main.tar next to the program  (TL_PVZ2_MAIN_TAR)
  *   ANGLE            libEGL.dll and libGLESv2.dll next to it  (TL_ANGLE_EGL, TL_ANGLE_GLES)
- *   the data folder  %LOCALAPPDATA%/PvZ2 Reflourished          (TL_DATA): the OBB,
+ *   the data folder  %LOCALAPPDATA%/<the profile's data folder>          (TL_DATA): the OBB,
  *                    the CDN archive, the x64 cache and pvz2.log
- *   the saves        %APPDATA%/PvZ2 Reflourished (its own sdcard layout; TL_DATA)
- *   the game's state %APPDATA%/PvZ2 Reflourished: settings.ini, config\pvz2-config,
+ *   the saves        %APPDATA%/<the profile's data folder> (its own sdcard layout; TL_DATA)
+ *   the game's state %APPDATA%/<the profile's data folder>: settings.ini, config\pvz2-config,
  *                    pvz2-reminders.tsv and nimble-persistence.tsv (TL_DATA)
  *
  * A file named "portable" next to the program puts all three folders in "data"
