@@ -4329,6 +4329,16 @@ static bool guest_app_looks_right(uint64_t app, uint64_t screen_pair)
     return design_h > 1.0f && design_h < 100000.0f && size[1] == (int)design_h;
 }
 
+static void guest_app_dump(uint64_t app, const char *tag)
+{
+    uint64_t a = 0, b = 0, vt = 0; int32_t sz[2] = {0, 0}; float dh = 0;
+    guest_read(app, &vt, 8); guest_read(app + 0x744, &a, 8); guest_read(app + 0x86c, &b, 8);
+    guest_read(app + 0xf4, sz, 8); guest_read(app + 0x9c4, &dh, 4);
+    tl_log_line("pvz2: app dump %s %p: vtable %llx, +744 %dx%d, +86c %dx%d, +f4 %dx%d, +9c4 %.1f",
+                tag, (void *)(uintptr_t)app, (unsigned long long)vt, (int)(uint32_t)a, (int)(uint32_t)(a >> 32),
+                (int)(uint32_t)b, (int)(uint32_t)(b >> 32), sz[0], sz[1], dh);
+}
+
 static uint64_t guest_app_find(int start_w, int start_h, bool writable_only)
 {
     LARGE_INTEGER began, ended, freq;
@@ -4363,9 +4373,13 @@ static uint64_t guest_app_find(int start_w, int start_h, bool writable_only)
                         if (i < 0x744) continue;
                         int32_t pair[2];
                         memcpy(pair, buf + i, sizeof pair);
-                        if (pair[0] <= 0 || pair[1] <= 0 ||
-                            pair[0] > 100000 || pair[1] > 100000) continue;
+                        if (pair[0] != start_w || pair[1] != start_h) continue;   /* the size being looked for */
                         uint64_t candidate = (uint64_t)(uintptr_t)(base + off + i - 0x744);
+                        /* Not this scan's own buffer: it holds a copy of whatever it read last,
+                         * the object included, and a copy passes every check until the buffer
+                         * is reused. A heap block is 8-byte aligned at least. */
+                        uintptr_t at = (uintptr_t)(base + off + i);
+                        if ((at >= (uintptr_t)buf && at < (uintptr_t)buf + (4u << 20)) || (candidate & 7)) continue;
                         uint64_t packed = ((uint64_t)(uint32_t)pair[0]) |
                                           ((uint64_t)(uint32_t)pair[1] << 32);
                         if (!guest_app_looks_right(candidate, packed)) continue;
@@ -6586,6 +6600,7 @@ static void *guest_app_finder(void *arg)
         uint64_t app = guest_app_find(w, h, true);
         if (app) {
             atomic_store(&g_app_object, (unsigned long long)app);
+            guest_app_dump(app, "found");
             /* What is in the object now: the size we were looking for. Every
              * write is checked against this, so a block the guest has freed is
              * never written to. */
@@ -6649,15 +6664,24 @@ static void start_app_finder(void)
 static bool guest_app_is_ours(uint64_t app)
 {
     uint64_t expect = atomic_load(&g_app_packed);
-    if (!expect) return false;
+    static int why_budget = 3;     /* which check failed, for the first few */
+    if (!expect) { if (why_budget-- > 0) tl_log_line("pvz2: app check: no size is known yet"); return false; }
     uint64_t packed = 0;
     if (!guest_read(app + 0x86c, &packed, sizeof packed)) return false;
-    if (packed != expect) return false;
+    if (packed != expect) {
+        if (why_budget-- > 0)
+            tl_log_line("pvz2: app check: the object holds %dx%d, expected %dx%d",
+                        (int)(uint32_t)packed, (int)(uint32_t)(packed >> 32),
+                        (int)(uint32_t)expect, (int)(uint32_t)(expect >> 32));
+        return false;
+    }
     float design_h = 0.0f;
     if (!guest_read(app + 0x9c4, &design_h, sizeof design_h)) return false;
     if (!(design_h > 1.0f && design_h < 100000.0f)) return false;
     int32_t size_fields[2] = { 0, 0 };
     if (!guest_read(app + 0xf4, size_fields, sizeof size_fields)) return false;
+    if (size_fields[1] != (int)design_h && why_budget-- > 0)
+        tl_log_line("pvz2: app check: height %d, design height %.1f", size_fields[1], design_h);
     return size_fields[1] == (int)design_h;
 }
 
@@ -6680,8 +6704,10 @@ static bool guest_tell_screen_size(int w, int h)
          * knows what to look for. */
         tl_log_line("pvz2: the guest's app object at %p is not the object any more -- nothing is written",
                     (void *)app);
+        guest_app_dump(app, "now");
         atomic_store(&g_app_object, 0);
-        start_app_finder();
+        static int refinds;
+        if (refinds++ < 6) start_app_finder();   /* a block that will not hold still is given up */
         return false;
     }
     bool ok = true;
