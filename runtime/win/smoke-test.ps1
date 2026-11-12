@@ -18,7 +18,7 @@ param(
     [int]$Match = 90,
     [int]$FirstMinutes = 40,
     [int]$SecondMinutes = 5,
-    [string]$Exe = 'PvZ2*.exe',                      # the program's name in -Game
+    [string]$ExeFilter = 'PvZ2*.exe',                      # the program's name in -Game
     [string]$Package = 'com.ea.game.pvz2_auz'        # the mod's package: the OBB's folder
 )
 $ErrorActionPreference = 'Stop'
@@ -66,8 +66,8 @@ foreach ($need in 'Game', 'Obb', 'Out') { if (-not (Get-Variable $need -ValueOnl
 $noBaseline = $Baseline -and -not (Test-Path -LiteralPath $Baseline)
 if ($noBaseline) { Write-Host "smoke: no baseline picture at ${Baseline}: the pictures are kept, and the test fails"; $Baseline = $null }
 
-$exe = Get-ChildItem -LiteralPath $Game -Filter $Exe | Select-Object -First 1
-if (-not $exe) { throw "no $Exe in $Game" }
+$exe = Get-ChildItem -LiteralPath $Game -Filter $ExeFilter | Select-Object -First 1
+if (-not $exe) { throw "no $ExeFilter in $Game" }
 if (-not (Test-Path -LiteralPath (Join-Path $Game 'portable'))) { throw "$Game is not a portable copy (no 'portable' file)" }
 $x64 = $exe.Name -like '*x64*'
 $data = Join-Path $Game 'data'

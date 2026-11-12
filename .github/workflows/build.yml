@@ -484,7 +484,7 @@ jobs:
           GAME: ${{ steps.obb.outputs.game }}
           PACKAGE: ${{ steps.obb.outputs.package }}
           EXE: ${{ steps.obb.outputs.exe }}
-        run: ./runtime/win/smoke-test.ps1 -Game game -Obb "obb/$env:NAME" -Out smoke -Baseline "runtime/win/smoke/first-$env:GAME.png" -Exe $env:EXE -Package $env:PACKAGE
+        run: ./runtime/win/smoke-test.ps1 -Game game -Obb "obb/$env:NAME" -Out smoke -Baseline "runtime/win/smoke/first-$env:GAME.png" -ExeFilter $env:EXE -Package $env:PACKAGE
 
       - name: Keep the logs and screenshots
         if: always()
