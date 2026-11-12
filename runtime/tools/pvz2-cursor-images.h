@@ -2,12 +2,10 @@
 /*
  * The plant pictures the pointer preview shows, read from the player's OBB.
  *
- * This is the Windows port's loader for the supported Reflourished 1.4.2 data:
- * zstd-compressed parts and RGBA8888 atlases. The Mac host still uses its own
- * pvz2-cursor-art.m for this release; it can adopt this plain C file in a
- * separate task. AltVerZ's OBB uses zlib-compressed parts and ETC1 colour with
- * an alpha plane; that path lives in AltVerZ-Darwin/runtime/tools/pvz2-cursor-art.m
- * and is deliberately not in this file.
+ * This is the Windows port's loader. It reads Reflourished's data (zstd parts,
+ * RGBA8888 atlases) and AltVerZ's (zlib parts, ETC1 colour with an alpha plane).
+ * The Mac host uses its own pvz2-cursor-art.m; it can adopt this plain C file in a
+ * separate task.
  */
 #ifndef PVZ2_CURSOR_IMAGES_H
 #define PVZ2_CURSOR_IMAGES_H

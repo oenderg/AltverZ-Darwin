@@ -1,15 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Reflourished 1.4.2's preview art, read from the player's OBB.
+ * The mod's preview art, read from the player's OBB.
  *
  * The OBB is the same 1bsr file the game and the Mac build read. The manifest
  * group holds an RTON stream naming each group and resource with its atlas
- * rectangle; the two texture groups are zstd-compressed RGBA8888 atlases.
+ * rectangle. Reflourished's parts are zstd frames and its atlases RGBA8888;
+ * AltVerZ's parts are zlib streams and its atlases ETC1 colour blocks followed
+ * by a full-size alpha plane, decoded here in software (the Mac's
+ * pvz2-cursor-art.m does the same).
  *
- * This file is built by the Windows host now. The Mac host still uses its own
- * pvz2-cursor-art.m for this release and can adopt this API in a separate task.
- * AltVerZ's zlib + ETC1 + alpha OBB is not handled here; that loader lives in
- * AltVerZ-Darwin/runtime/tools/pvz2-cursor-art.m.
+ * This file is built by the Windows host. The Mac host uses its own
+ * pvz2-cursor-art.m and can adopt this API in a separate task.
  */
 #include "pvz2-cursor-images.h"
 
@@ -18,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zlib.h>
 
 size_t ZSTD_decompress(void *, size_t, const void *, size_t);
 size_t ZSTD_findFrameCompressedSize(const void *, size_t);
@@ -97,6 +99,20 @@ static unsigned char *group_part(FILE *f, uint64_t file_size,
         free(data);
         if (out) *out_size = size;
         return out;
+    }
+    /* AltVerZ's OBB compresses the same parts with zlib; a stored part has no
+     * header and is recognised by its length alone. */
+    if (compressed >= 2 && compressed != size && data[0] == 0x78) {
+        unsigned char *out = malloc(size);
+        uLongf out_len = size;
+        if (out && uncompress(out, &out_len, data, (uLong)compressed) == Z_OK && out_len == size) {
+            free(data);
+            *out_size = size;
+            return out;
+        }
+        free(out);
+        free(data);
+        return NULL;
     }
     if (compressed == size) {
         *out_size = size;
@@ -540,6 +556,95 @@ static int parse_root(rton *r, cursor_group *seed, cursor_group *hud)
     }
 }
 
+/* ETC1 block decoding follows Harm Hanemaaijer's detex (decompress-etc.c):
+ *
+ * Copyright (c) 2015 Harm Hanemaaijer <fgenfb@yahoo.com>
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *
+ * PvZ2's Android OBB stores these textures as ETC1 colour blocks followed by
+ * a full-size alpha plane, which the Mac must decode in software. */
+static const int etc1_modifiers[8][4] = {
+    { 2, 8, -2, -8 }, { 5, 17, -5, -17 }, { 9, 29, -9, -29 }, { 13, 42, -13, -42 },
+    { 18, 60, -18, -60 }, { 24, 80, -24, -80 }, { 33, 106, -33, -106 }, { 47, 183, -47, -183 }
+};
+
+static int clamp_byte(int v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
+static void etc1_block(const uint8_t *b, uint8_t rgb[16][3])
+{
+    int differential = (b[3] & 2) != 0, flip = (b[3] & 1) != 0;
+    int base1[3], base2[3];
+    if (differential) {
+        for (int c = 0; c < 3; c++) {
+            int bc = b[c] & 0xf8;
+            base1[c] = bc | (bc >> 5);
+            int d = b[c] & 7;
+            int v = bc + ((d & 4) ? (((d & 3) - 4) << 3) : (d << 3));
+            /* The spec calls an out-of-range second colour invalid; clamping
+             * keeps one damaged block from hiding the whole picture. */
+            v = clamp_byte(v);
+            base2[c] = v | (v >> 5);
+        }
+    } else {
+        for (int c = 0; c < 3; c++) {
+            int bc = b[c] & 0xf0, bc2 = b[c] & 0x0f;
+            base1[c] = bc | (bc >> 4);
+            base2[c] = bc2 | (bc2 << 4);
+        }
+    }
+    const int *table1 = etc1_modifiers[(b[3] >> 5) & 7];
+    const int *table2 = etc1_modifiers[(b[3] >> 2) & 7];
+    uint32_t index = (uint32_t)b[4] << 24 | (uint32_t)b[5] << 16 | (uint32_t)b[6] << 8 | b[7];
+    for (int i = 0; i < 16; i++) {
+        /* ETC1 numbers a block's pixels column by column, and a clear flip bit splits it into left and right halves */
+        int x = i >> 2, y = i & 3;
+        int second = flip ? y >= 2 : x >= 2;
+        const int *base = second ? base2 : base1;
+        const int *table = second ? table2 : table1;
+        int m = (int)(((index >> i) & 1) | (((index >> (16 + i)) & 1) << 1));
+        for (int c = 0; c < 3; c++)
+            rgb[y * 4 + x][c] = (uint8_t)clamp_byte(base[c] + table[m]);
+    }
+}
+
+/* ETC1 colour (width*height/2 bytes) then one alpha byte per pixel. */
+static int decode_etc1_alpha(const uint8_t *data, size_t length, int width, int height,
+                              uint8_t *out)
+{
+    if (width <= 0 || height <= 0 || (width & 3) || (height & 3) ||
+        (size_t)width * height > 100000000) return 0;
+    size_t blocks = (size_t)(width / 4) * (size_t)(height / 4);
+    if (length < blocks * 8 + (size_t)width * height) return 0;
+    const uint8_t *alpha = data + blocks * 8;
+    for (int by = 0; by < height; by += 4) {
+        for (int bx = 0; bx < width; bx += 4) {
+            uint8_t rgb[16][3];
+            etc1_block(data + ((size_t)(by / 4) * (size_t)(width / 4) + bx / 4) * 8, rgb);
+            for (int y = 0; y < 4; y++) {
+                for (int x = 0; x < 4; x++) {
+                    size_t i = (size_t)(by + y) * (size_t)width + bx + x;
+                    out[i * 4 + 0] = rgb[y * 4 + x][0];
+                    out[i * 4 + 1] = rgb[y * 4 + x][1];
+                    out[i * 4 + 2] = rgb[y * 4 + x][2];
+                    out[i * 4 + 3] = alpha[i];
+                }
+            }
+        }
+    }
+    return 1;
+}
+
 /* --------------------------------------------------------------- the atlas */
 
 static int crop_image(const unsigned char *atlas, size_t atlas_size,
@@ -610,16 +715,33 @@ static int load_group(FILE *f, uint64_t file_size, const unsigned char *entry,
     }
     const unsigned char *t = textures + (size_t)index * texstride;
     uint32_t width = u32(t), height = u32(t + 4), pitch = u32(t + 8), format = u32(t + 12);
+    /* 0 is RGBA8888; 0x93 is ETC1 colour with an alpha plane (AltVerZ) */
     if (!width || !height || width > 8192 || height > 8192 ||
-        pitch != width * 4 || format != 0) {
-        set_why(why, whyn, "the OBB texture is not RGBA8888");
+        pitch != width * 4 || (format != 0 && format != 0x93)) {
+        set_why(why, whyn, "the OBB texture is not RGBA8888 or ETC1 with alpha");
         return 0;
     }
     size_t atlas_size = 0;
     unsigned char *atlas = group_part(f, file_size, entry, 0x28, &atlas_size);
-    if (!atlas || atlas_size < (size_t)width * (size_t)height * 4) {
+    if (!atlas) {
+        set_why(why, whyn, "the OBB texture atlas is missing");
+        return 0;
+    }
+    if (format == 0x93) {
+        unsigned char *decoded = malloc((size_t)width * (size_t)height * 4);
+        if (!decoded || !decode_etc1_alpha(atlas, atlas_size, (int)width, (int)height, decoded)) {
+            free(decoded);
+            free(atlas);
+            set_why(why, whyn, "the OBB ETC1 atlas is not readable");
+            return 0;
+        }
         free(atlas);
-        set_why(why, whyn, "the OBB texture atlas is missing or short");
+        atlas = decoded;
+        atlas_size = (size_t)width * (size_t)height * 4;
+    }
+    if (atlas_size < (size_t)width * (size_t)height * 4) {
+        free(atlas);
+        set_why(why, whyn, "the OBB texture atlas is short");
         return 0;
     }
     for (size_t i = 0; i < group->n; i++) {
@@ -669,7 +791,7 @@ int pvz2_cursor_images_load(const char *obb_path, pvz2_cursor_images *out,
     uint64_t file_size = (uint64_t)file_end;
     header = read_at(f, 0, 0x70, file_size);
     if (!header || memcmp(header, "1bsr", 4) != 0) {
-        set_why(why, whyn, "not a Reflourished OBB (1bsr missing)");
+        set_why(why, whyn, "not a game OBB (1bsr missing)");
         goto done;
     }
     uint32_t count = u32(header + 0x28), offset = u32(header + 0x2c);
