@@ -17,10 +17,11 @@ Actions > **Build** > Run workflow, with:
 |---|---|
 | `apk_url` | a link to the PvZ2 AltVerZ 1.8.3f APK (direct, Google Drive or MEGA); empty = the repository's own copy (below) |
 | `obb_url` | optional; empty = the game's own 1.8.3f OBB named in `data/game-1.8.3f.json` (only needed for full builds) |
-| `platforms` | iPhone/iPad and Mac, or one of them |
+| `platforms` | All (default), iPhone/iPad and Mac, or one of iPhone/iPad, Mac, Windows |
 | `variants` | Slim and full (default), Slim, or Full |
 | `publish` | publish the prerelease and update the AltStore source and Mac feed; off = build only |
 | `release_tag` | optional; empty = `v<app version>` (for example `v0.1.0`, from the profile) |
+| `skip_smoke` | skip the Windows smoke test, so publishing does not wait for it (only after checking a failure yourself) |
 
 The workflow sets `PROFILE=altverz`, so the app name, bundle id, data folder, game manifest and
 artifact prefix all come from `data/profiles/altverz.json` ([MOD-PROFILES.md](MOD-PROFILES.md)).
@@ -31,15 +32,17 @@ remains the fallback for a build without a profile.
 repository keeps the APK as an asset of a **draft** release named "Build inputs (never publish)"
 (tag `build-inputs`, which a draft does not create). A draft is visible only to people with write
 access to the repository, and to the workflow's own token, so nothing is published. The workflow
-downloads `PvZ2-AltVerZ-1.8.3f.apk` from it when `apk_url` is empty. For a new game version, attach
+downloads `PvZ2-AltVerZ-1.8.3f.apk` from it when `apk_url` is empty. The draft also holds the CDN archive
+(`1.8.3f.main.tar`; the mod's live-content host no longer serves it, so every build takes this copy) and the
+two Windows ANGLE builds named in `runtime/win/ANGLE_ZIPS` (`angle-windows-x64-*.zip`,
+`angle-windows-arm64-*.zip`). For a new game version, attach
 its APK to that draft (Releases > the draft > Edit). **Never publish it.** A fork has no such draft:
 it passes a link.
 
 The run uses GitHub's `xcode-27` runner (Xcode 27, the same SDK as a local build; a preview image, so a run can queue); expect the better part of an hour the first time. For both
 variants it builds slim first, packages it, removes intermediate bundles, then builds full with
 the same converted game libraries. The build number comes from the version, not the run number.
-The release title is `AltVerZ-Darwin <version> · PvZ2 AltVerZ <game> (early build)`, and every
-release is marked as a prerelease while the port is young.
+The release title is `AltVerZ-Darwin <version> · PvZ2 AltVerZ <game>`, and a 0.x release is marked as a prerelease.
 
 A release of both platforms and variants holds:
 
@@ -48,7 +51,16 @@ PvZ2-AltVerZ-<game>-Darwin-<version>-iOS.ipa
 PvZ2-AltVerZ-<game>-Darwin-<version>-iOS-Full.ipa
 PvZ2-AltVerZ-<game>-Darwin-<version>-Mac.dmg
 PvZ2-AltVerZ-<game>-Darwin-<version>-Mac-Full.dmg
+PvZ2-AltVerZ-<game>-Darwin-<version>-Windows-Setup.exe
+PvZ2-AltVerZ-<game>-Darwin-<version>-Windows-x64.zip
+PvZ2-AltVerZ-<game>-Darwin-<version>-Windows-ARM64.zip
 ```
+
+The Windows files come from three jobs: the ARM64 programs cross-build on a Mac runner, the x64
+programs, the setup and the zips are made on a Windows runner in MSYS2 with the pinned ScarletNX, and
+the smoke test starts each zip twice ([TESTING.md](TESTING.md)). One `publish` job then makes the
+release, the AltStore source and both update feeds once every build and the smoke test have passed.
+How the Windows files are made and updated: [windows-shipping.md](windows-shipping.md).
 
 For example: `PvZ2-AltVerZ-1.8.3f-Darwin-0.1.0-iOS.ipa`. Slim is a small download; the app
 downloads the game's data (about 1.1 GB) on first launch. Full has the data inside, for an offline

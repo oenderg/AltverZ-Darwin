@@ -461,3 +461,30 @@ On an iPad, also drag the window through a few shapes. The log's `ios: geometry 
 second) should follow the drag; a build that only ever reports the full screen (1376x1032 or 1032x1376
 on a 13-inch iPad) is being scaled by the system, not resized. Check this on a build from CI as well
 as a local one: the two can use different SDKs, and iPadOS treats an older SDK's app differently.
+
+## Windows
+
+The Windows builds are tested in the VM and by the smoke test; nothing here touches the Mac's own data.
+
+**By hand, in a Windows VM** (VMPal's "Windows 11 on ARM" runs the ARM64 build natively and the x64 build
+under Prism). Cross-build the ARM64 program on the Mac and package nothing:
+
+```sh
+export TL_WIN_TOOLCHAIN=<a folder with llvm-mingw-* and win-arm64>   # runtime/win/README.md
+runtime/win/build-win.sh game-portable     # out/win-altverz-portable/PvZ2 AltVerZ.exe
+```
+
+Put the exe in a folder with `libEGL.dll`, `libGLESv2.dll`, `d3dcompiler_47.dll`, `level-ui.ttf` and
+`Game/pvz2.apk` (and `Game/1.8.3f.main.tar` for the live-content fallback), and the OBB under
+`<data>/sdcard/Android/obb/com.ea.game.pvz2_auz/`; start it with `TL_DATA=<data>` set so it keeps its
+files there. The x64 program is built in MSYS2's CLANG64 shell (`runtime/win/x64/build-x64.sh`, with the
+ScarletNX library from `runtime/win/x64/scarletnx/build-scarletnx.sh` and the generated
+`out/win-profile-altverz/pvz2-profile-generated.h`); its first start translates the game (about 10 minutes
+in the VM, then cached).
+
+**The smoke test** runs in CI at the end of every Windows build: each portable zip is started twice on a
+runner, and each start must draw frames and, with a baseline, a picture like
+`runtime/win/smoke/first-<game version>.png` (at least 90% alike). A new game version, or the first run
+without a baseline, keeps its pictures as the `smoke-x64` and `smoke-ARM64` artifacts: check one by eye and
+commit it as the baseline. By hand: `runtime/win/smoke-test.ps1 -Game <unpacked zip> -Obb <main...obb> -Out
+<folder> [-Baseline <png>]` (`-Picture <png> -Baseline <png>` compares two pictures).
