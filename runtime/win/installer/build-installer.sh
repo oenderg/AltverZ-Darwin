@@ -106,6 +106,7 @@ stage_licenses() {
     mkdir -p "$lic"
     cp "$REPO/LICENSE" "$lic/$PROFILE_ARTIFACT.txt"
     cp "$REPO/runtime/win/licenses/"*.txt "$lic/"   # README.txt and the shared texts
+    sed "s|@APP@|$PROFILE_APP_NAME|g; s|@ARTIFACT@|$PROFILE_ARTIFACT|g; s|@REPO@|$PROFILE_REPO|g" "$lic/README.txt" > "$lic/README.txt.new" && mv "$lic/README.txt.new" "$lic/README.txt"
     if [ "$2" = x64 ]; then cp "$REPO/runtime/win/licenses/x64/"*.txt "$lic/"; fi
 }
 

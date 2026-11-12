@@ -1,9 +1,9 @@
-PvZ2: Reflourished for Windows: licenses
-=========================================
+@APP@ for Windows: licenses
+===========================
 
-The program itself (PvZ2 Reflourished.exe) is free software under the GNU General
-Public License, version 2 or (at your option) any later version: PvZ2-Reflourished.txt
-here. Its source code is at https://github.com/oenderg/Reflourished-Darwin, the
+The program itself (@APP@.exe) is free software under the GNU General
+Public License, version 2 or (at your option) any later version: @ARTIFACT@.txt
+here. Its source code is at https://github.com/@REPO@, the
 release's tag names the exact version.
 
 It is built with these other works, each under its own license:
