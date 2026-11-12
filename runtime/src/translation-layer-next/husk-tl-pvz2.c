@@ -3128,6 +3128,7 @@ static uint64_t guarded(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_
 }
 static uint64_t guest_call_x8(void *fn, uint64_t a0, uint64_t a1, void *out, bool *ok) { return guarded(fn, a0, a1, 0, 0, out, ok, "the guest's own call"); }
 static uint64_t guest_call2(void *fn, uint64_t a0, uint64_t a1, bool *ok) { return guarded(fn, a0, a1, 0, 0, NULL, ok, "the guest's own call"); }
+static uint64_t guest_call3(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, bool *ok) { return guarded(fn, a0, a1, a2, 0, NULL, ok, "the guest's own call"); }
 static uint64_t guest_call4(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, bool *ok) { return guarded(fn, a0, a1, a2, a3, NULL, ok, "cursor placement check: guest call"); }
 static uint64_t guest_call2_raw(void *fn, uint64_t a0, uint64_t a1, bool *ok)
 {
