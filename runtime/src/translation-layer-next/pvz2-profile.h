@@ -28,6 +28,7 @@
 #define PVZ2_PROFILE_WIN_STEM "PvZ2Reflourished"
 #define PVZ2_PROFILE_AUMID "io.github.oenderg.reflourished"
 #define PVZ2_PROFILE_REPO "oenderg/Reflourished-Darwin"
+#define PVZ2_PROFILE_POWERUPS 1
 #define PVZ2_PROFILE_GAME_VERSION "1.4.2"
 #define PVZ2_PROFILE_OBB_NAME "main.675.com.ea.game.pvz2_rfl.obb"
 #define PVZ2_PROFILE_OBB_SIZE 1341358080LL

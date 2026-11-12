@@ -49,6 +49,8 @@ def main(argv):
         "PVZ2_PROFILE_WIN_STEM": cstr(stem),
         "PVZ2_PROFILE_AUMID": cstr(aumid),
         "PVZ2_PROFILE_REPO": cstr(repo),
+        # Whether the game has power-up buttons at all (AltVerZ removed them): its settings hide their keys.
+        "PVZ2_PROFILE_POWERUPS": "1" if profile.get("powerups", True) else "0",
         "PVZ2_PROFILE_GAME_VERSION": cstr(game["version"]),
         "PVZ2_PROFILE_OBB_NAME": cstr(game["obb_name"]),
         "PVZ2_PROFILE_OBB_SIZE": "%dLL" % int(game["obb_size"]),

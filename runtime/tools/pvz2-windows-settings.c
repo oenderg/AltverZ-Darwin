@@ -495,9 +495,11 @@ static void build_keyboard_page(HWND p)
     key_row(p, FIELD_SHOVEL, 22, 180, 96, 56);
     key_row(p, FIELD_PLANT_FOOD, 22, 208, 96, 56);
     key_row(p, FIELD_FAST_FORWARD, 22, 236, 96, 56);
+#if PVZ2_PROFILE_POWERUPS
     key_row(p, FIELD_POWERUP1, 272, 180, 96, 56);
     key_row(p, FIELD_POWERUP2, 272, 208, 96, 56);
     key_row(p, FIELD_POWERUP3, 272, 236, 96, 56);
+#endif
     key_row(p, FIELD_COLLECT_SUN, 22, 294, 346, 100);
     add_ruled(p, L"STATIC", L"Click a key field and press the key you want: letters, digits, punctuation, Space, Tab, the arrows or F1–F12. Esc cancels, Delete clears. A key can only belong to one shortcut.",
               0, 22, 338, 476, 48, 0, W_FULL, 204);
@@ -521,7 +523,11 @@ static void build_pointer_page(HWND p)
     add_ruled(p, L"BUTTON", L"Playing", BS_GROUPBOX, 10, 8, 500, 116, 0, W_FULL, 0);
     HWND keys = add(p, L"BUTTON", L"Show keys in levels", BS_AUTOCHECKBOX, 24, 30, 440, 22, ID_SHOW_KEYS);
     SendMessageW(keys, BM_SETCHECK, g_pending.show_level_keys ? BST_CHECKED : BST_UNCHECKED, 0);
-    add_ruled(p, L"STATIC", L"“Show keys in levels” writes the key that works each control on its corner, in the game's own font (seed packets, shovel, fast-forward, plant food and the level's power-ups); it is on by default.",
+    add_ruled(p, L"STATIC", L"“Show keys in levels” writes the key that works each control on its corner, in the game's own font (seed packets, shovel, fast-forward, plant food"
+#if PVZ2_PROFILE_POWERUPS
+              L" and the level's power-ups"
+#endif
+              L"); it is on by default.",
               0, 24, 60, 460, 54, 0, W_FULL, 220);
     add_ruled(p, L"BUTTON", L"The pointer", BS_GROUPBOX, 10, 134, 500, 200, 0, W_FULL, 0);
     HWND show = add(p, L"BUTTON", L"Show the selected plant at the pointer", BS_AUTOCHECKBOX,
