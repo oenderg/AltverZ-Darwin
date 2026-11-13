@@ -4329,16 +4329,6 @@ static bool guest_app_looks_right(uint64_t app, uint64_t screen_pair)
     return design_h > 1.0f && design_h < 100000.0f && size[1] == (int)design_h;
 }
 
-static void guest_app_dump(uint64_t app, const char *tag)
-{
-    uint64_t a = 0, b = 0, vt = 0; int32_t sz[2] = {0, 0}; float dh = 0;
-    guest_read(app, &vt, 8); guest_read(app + 0x744, &a, 8); guest_read(app + 0x86c, &b, 8);
-    guest_read(app + 0xf4, sz, 8); guest_read(app + 0x9c4, &dh, 4);
-    tl_log_line("pvz2: app dump %s %p: vtable %llx, +744 %dx%d, +86c %dx%d, +f4 %dx%d, +9c4 %.1f",
-                tag, (void *)(uintptr_t)app, (unsigned long long)vt, (int)(uint32_t)a, (int)(uint32_t)(a >> 32),
-                (int)(uint32_t)b, (int)(uint32_t)(b >> 32), sz[0], sz[1], dh);
-}
-
 static uint64_t guest_app_find(int start_w, int start_h, bool writable_only)
 {
     LARGE_INTEGER began, ended, freq;
@@ -6600,7 +6590,6 @@ static void *guest_app_finder(void *arg)
         uint64_t app = guest_app_find(w, h, true);
         if (app) {
             atomic_store(&g_app_object, (unsigned long long)app);
-            guest_app_dump(app, "found");
             /* What is in the object now: the size we were looking for. Every
              * write is checked against this, so a block the guest has freed is
              * never written to. */
@@ -6704,7 +6693,6 @@ static bool guest_tell_screen_size(int w, int h)
          * knows what to look for. */
         tl_log_line("pvz2: the guest's app object at %p is not the object any more -- nothing is written",
                     (void *)app);
-        guest_app_dump(app, "now");
         atomic_store(&g_app_object, 0);
         static int refinds;
         if (refinds++ < 6) start_app_finder();   /* a block that will not hold still is given up */
