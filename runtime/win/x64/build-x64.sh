@@ -1,6 +1,11 @@
 #!/bin/sh
 # Build the x86-64 Windows programs, in MSYS2's CLANG64 shell (clang, LLVM 23):
 #   build-x64.sh <runtime folder> <ScarletNX checkout, its library built in build/lib> <zlib folder> <out folder> [starttest|game|game-portable]
+#
+# Cross-built on a Mac or Linux instead when X64_CROSS_SYSROOT (the folder cross/setup-sysroot.sh made) and
+# LLVM_MINGW (the llvm-mingw folder) are set: the tools are llvm-mingw's x86-64 ones, the program links LLVM's
+# import library from the sysroot, and its own C++ (the dark mode shim) links libc++ and libunwind statically, so
+# the one libc++.dll in the process is the one libLLVM-23.dll brings. runtime/win/build-x64-cross.sh runs the steps.
 # <zlib folder> holds zlib-1.3.1 and zlib-guest (setup-toolchain.sh makes both) and include/ with their headers.
 #
 # game is the installed build: it links WinSparkle from prebuilt/winsparkle/x64 and carries
@@ -24,7 +29,16 @@ WS="$R/../prebuilt/winsparkle"
 FEED="${SPARKLE_FEED_URL:-$(pj sparkle_feed_url | sed 's|/appcast.xml$|/windows-appcast.xml|')}"
 KEY="${SPARKLE_PUBLIC_KEY:-$(cat "$R/../sparkle/public-key" 2>/dev/null || true)}"
 OBJ="$OUT/obj"; mkdir -p "$OBJ" "$OUT"
-CC=clang
+if [ -n "${X64_CROSS_SYSROOT:-}" ]; then
+    MB="${LLVM_MINGW:?set LLVM_MINGW to the llvm-mingw folder}/bin"
+    CC="$MB/x86_64-w64-mingw32-clang"; CXX="$MB/x86_64-w64-mingw32-clang++"
+    AR="$MB/x86_64-w64-mingw32-llvm-ar"; WINDRES="$MB/x86_64-w64-mingw32-windres"
+    # the import library by its file: LLVM's DLL is the one library the program takes from the sysroot
+    LLVM_LINK="$X64_CROSS_SYSROOT/clang64/lib/libLLVM-23.dll.a"; CXX_RT="-static-libstdc++ -static-libgcc"
+    [ -f "$LLVM_LINK" ] || { echo "no $LLVM_LINK: run runtime/win/x64/cross/setup-sysroot.sh" >&2; exit 1; }
+else
+    CC=clang; CXX=clang++; AR=llvm-ar; WINDRES=windres; LLVM_LINK="-lLLVM-23"; CXX_RT=""
+fi
 CFLAGS="-std=gnu11 -g -O1 -D_GNU_SOURCE -DTL_WINDOWS=1 -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -Wno-unused-function
   -include $H/compat/win-compat.h -I$H/compat -I$T -I$N -I$R/tools -I$Z/include -I$PROFILE_DIR -I$X -I$SNX/src"
 
@@ -34,8 +48,8 @@ if [ ! -f "$OUT/libz-guest.a" ]; then
     mkdir -p "$OBJ/zh" "$OBJ/zg"
     for f in $ZS; do $CC -O2 -c "$Z/zlib-1.3.1/$f.c" -o "$OBJ/zh/$f.o"; done
     for f in $ZS; do $CC -O2 -DZ_PREFIX -Dz_errmsg=tl_guestz_errmsg -c "$Z/zlib-guest/$f.c" -o "$OBJ/zg/$f.o"; done
-    llvm-ar rcs "$OUT/libz.a" "$OBJ"/zh/*.o
-    llvm-ar rcs "$OUT/libz-guest.a" "$OBJ"/zg/*.o
+    $AR rcs "$OUT/libz.a" "$OBJ"/zh/*.o
+    $AR rcs "$OUT/libz-guest.a" "$OBJ"/zg/*.o
 fi
 
 . "$H/sources.sh"
@@ -73,23 +87,23 @@ if [ "$target" = game ] || [ "$target" = game-portable ]; then
     RC="$OBJ/win-manifest.o"
     if [ ! -f "$RC" ] || [ "$H/win-manifest.rc" -nt "$RC" ] || [ "$H/win-manifest.xml" -nt "$RC" ] || [ "$H/pvz2.ico" -nt "$RC" ]; then
         echo "  windres win-manifest.rc"
-        windres -I"$H" -O coff -i "$H/win-manifest.rc" -o "$RC"
+        $WINDRES -I"$H" -O coff -i "$H/win-manifest.rc" -o "$RC"
     fi
     OBJS="$OBJS $RC"
     # The dark mode library and its one C++ shim (runtime/win/build-darkmode.sh).
-    "$H/build-darkmode.sh" clang++ llvm-ar "$OUT"
+    "$H/build-darkmode.sh" "$CXX" "$AR" "$OUT"
     DM="$OBJ/pvz2-windows-darkmode.o"
     DMSRC="$R/tools/pvz2-windows-darkmode.cpp"
     if [ ! -f "$DM" ] || [ "$DMSRC" -nt "$DM" ] || [ "$R/tools/pvz2-windows-darkmode.h" -nt "$DM" ] || [ "$PROFILE_DIR/pvz2-profile-generated.h" -nt "$DM" ]; then
         echo "  c++ pvz2-windows-darkmode.cpp"
-        clang++ -std=c++20 -O1 -g -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 \
+        $CXX -std=c++20 -O1 -g -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 \
             -I"$R/third_party/darkmodelib/include" -I"$N" -I"$PROFILE_DIR" -I"$R/tools" -c "$DMSRC" -o "$DM"
     fi
     OBJS="$OBJS $DM $OUT/libdarkmode.a"
 fi
 L="$SNX/build/lib"
-clang++ -o "$EXE" $OBJS -Wl,--start-group "$L/recompiler-library/libscarletnx-recompiler.a" "$L/llvm-backend/libsnx_llvm.a" \
+$CXX $CXX_RT -o "$EXE" $OBJS -Wl,--start-group "$L/recompiler-library/libscarletnx-recompiler.a" "$L/llvm-backend/libsnx_llvm.a" \
     "$L/src/common/libscarletnx-common.a" "$L/llvm-backend/arm-backend/libsnx_arm_llvm.a" "$L/llvm-backend/arm-backend/libsnx_arm_rt.a" \
     "$L/llvm-backend/arm-backend/libsnx_arm_decode.a" "$L/libsnx_yyjson.a" "$L/libsnx_libdeflate.a" -Wl,--end-group \
-    $LDX $UPD_LIBS -L"$OUT" -lz -lz-guest -lLLVM-23 -lpsapi -lws2_32 -lbcrypt -lsynchronization -lpthread -Wl,--error-limit=0
+    $LDX $UPD_LIBS -L"$OUT" -lz -lz-guest "$LLVM_LINK" -lpsapi -lws2_32 -lbcrypt -lsynchronization -lpthread -Wl,--error-limit=0
 echo "built $EXE"

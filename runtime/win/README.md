@@ -34,6 +34,37 @@ the APK is the slim one).
 The x64 program (`runtime/win/x64/build-x64.sh`) takes the same `game`/`game-portable` targets
 and links `prebuilt/winsparkle/x64` for the installed one.
 
+### The x64 program from a Mac or Linux
+
+The release workflow builds the x64 program in MSYS2's CLANG64 shell on Windows. The same program can be
+cross-built on a Mac or Linux, with no Windows and no MSYS2:
+
+```sh
+TL_WIN_TOOLCHAIN=<toolchain folder> runtime/win/build-x64-cross.sh game-portable
+```
+
+It needs what the ARM64 build needs (`runtime/win/setup-toolchain.sh` unpacks llvm-mingw; `LLVM_MINGW` names
+another copy, a Linux host's own release) and `cmake`, `ninja`, `git`, `curl`, `zstd`, `python3` and a `clang`
+for the one helper ScarletNX runs while it builds. The script then:
+
+1. unpacks the MSYS2 CLANG64 packages pinned in `runtime/win/x64/cross/msys2-sysroot.txt` (versions and SHA-256
+   hashes, the same versions as `msys2-clang64.txt`): LLVM 23's headers, CMake package and import library for
+   Windows, and the DLLs the program ships with (`runtime/win/x64/cross/setup-sysroot.sh`);
+2. builds ScarletNX's recompiler library at the pinned commit with `scarletnx.patch` for x86-64 Windows
+   (`x64/scarletnx/build-scarletnx.sh` with `X64_CROSS_SYSROOT` set; ScarletNX's own CMake supports this
+   cross-build, its `windows-cross` preset, and takes LLVM from the sysroot's CMake package);
+3. builds the program (`x64/build-x64.sh`, same script, llvm-mingw's x86-64 tools) and collects the DLLs it
+   needs (`x64/collect-dlls.sh`) into `out/win-<profile>-x64-runtime`, which `package-zip.sh` and
+   `build-installer.sh` take as `--x64-runtime`.
+
+The compiler, C runtime and Windows headers are llvm-mingw's; only LLVM and the DLLs come from MSYS2, so the
+runtime DLLs are the same files the MSYS2 build ships. The program's own C++ (the dark mode shim) links libc++
+and libunwind statically, so the process has one libc++ DLL, the one `libLLVM-23.dll` brings, and the program
+imports only `libLLVM-23.dll` and `libwinpthread-1.dll` besides Windows' own. `collect-dlls.sh` stops when a
+program imports a `lib*.dll` it cannot find, so a missing runtime DLL fails the build, not the player's start.
+A cross-built program starts, translates the game from scratch and plays under CrossOver on a Mac; the MSYS2
+build stays the one the release workflow publishes until the cross-built one has run on a Windows PC.
+
 ## ANGLE
 
 The program draws through ANGLE over Direct3D 11: `libEGL.dll` and `libGLESv2.dll` beside it,

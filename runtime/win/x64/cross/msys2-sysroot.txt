@@ -1,0 +1,21 @@
+# The MSYS2 CLANG64 packages the cross-built x86-64 Windows program needs on a Mac or Linux, at the
+# versions runtime/win/x64/msys2-clang64.txt pins, with the SHA-256 of each package file:
+# <package without the mingw-w64-clang-x86_64- prefix> <version> <sha256 of the .pkg.tar.zst>.
+# runtime/win/x64/cross/setup-sysroot.sh downloads exactly these from repo.msys2.org, checks every file
+# against its hash and unpacks them into one folder (<folder>/clang64: include, lib, bin).
+#
+# What each is for: llvm has LLVM's headers, CMake package and static libraries (ScarletNX's recompiler
+# is built against them), llvm-tools has the import library libLLVM-23.dll.a, and llvm-libs, libc++,
+# libffi, libiconv, libwinpthread, libxml2, zstd and zlib are the DLLs the program ships with
+# (collect-dlls.sh). The compiler, the C runtime and the Windows headers come from llvm-mingw instead.
+# A new version here is a different program: change it on purpose, together with msys2-clang64.txt.
+llvm 23.1.5-1 0950f095f3393c0f1fa3d2cf42a37f6e8b82b327dc2a34befd7f9fd3b047ded0
+llvm-libs 23.1.5-1 4ef627dced07ac2c01072c6d7768d5c6c6683323b9c2fed38472f5e08bc74dba
+llvm-tools 23.1.5-1 6e9bca9df29203873f080dd25abceaeaf4ca155494043379c970f00d69e7232a
+libc++ 23.1.5-1 459ac050114cd40b3cea0622643077f725c0d71403b38b6405cee44fc4a984dd
+libffi 3.8.0-1 4d27339b52eabae86a1dff79cf432191ad8dd6acfa653b1179b12490234c66a6
+libiconv 1.19.1-1 8d16ca846553838f36ea4098dc543e0261bc248f77228d6765f3419a2dfd48da
+libwinpthread 14.0.0.r598.ge3d18511f-1 117d14b88ae27e1de1374ca49f32c37cb6c3d7631507220f4396a000c4c8c48c
+libxml2 2.15.4-3 10fecf310113c94e1c318b54a42647b58d6d9df4cfa5673de56a5a7ad1f7af18
+zstd 1.5.7-2 2d75c4ddf8f4f7b76fe33e3f1eea16450f9b3aede14285c886462d72f0ffd87d
+zlib 1.3.2-3 9dd6bee01521295224c2edeaa69e12dec3fdc0d33823047bb191a24c8bb68229
