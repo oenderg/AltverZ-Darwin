@@ -258,6 +258,57 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  # The x86-64 program cross-built on a Mac as well (runtime/win/build-x64-cross.sh: llvm-mingw's compiler and
+  # the MSYS2 LLVM packages runtime/win/x64/cross/msys2-sysroot.txt pins, no Windows). The release ships the
+  # MSYS2 build; smoke-x64-cross starts this one in that zip's place, so a break here shows in the run
+  # without holding a release back.
+  windows-x64-cross:
+    name: Windows x64 cross-build
+    needs: check
+    if: github.event.inputs.platforms == 'All' || github.event.inputs.platforms == 'Windows'
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      PROFILE: altverz
+      TL_WIN_TOOLCHAIN: ${{ github.workspace }}/out/win-toolchain
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain cache
+        uses: actions/cache@v6
+        with:
+          path: out/win-toolchain
+          key: win-arm64-toolchain-${{ hashFiles('runtime/win/setup-toolchain.sh', 'runtime/win/fetch-zlib.sh') }}
+
+      - name: Toolchain
+        run: runtime/win/setup-toolchain.sh
+
+      - name: Build tools
+        run: |
+          set -euo pipefail
+          for tool in cmake ninja zstd; do command -v "$tool" >/dev/null || brew install "$tool"; done
+
+      - name: Sysroot and ScarletNX cache
+        uses: actions/cache@v6
+        with:
+          path: out/win-x64-cross-work
+          key: win-x64-cross-${{ hashFiles('runtime/win/x64/cross/*', 'runtime/win/x64/scarletnx/*', 'runtime/win/fetch-zlib.sh') }}
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          runtime/win/build-x64-cross.sh game-portable
+          ls -l "out/win-altverz-x64-portable/PvZ2 AltVerZ x64.exe" out/win-altverz-x64-runtime
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-x64-cross-programs
+          path: |
+            out/win-altverz-x64-portable/PvZ2 AltVerZ x64.exe
+            out/win-altverz-x64-runtime/*.dll
+          retention-days: 1
+          if-no-files-found: error
+
   windows:
     name: Windows setup and zips
     needs: windows-arm64
@@ -493,6 +544,89 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: smoke-${{ matrix.arch }}
+          path: smoke
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # The cross-built x64 program, started twice as the smoke test does, in the MSYS2-built zip with its
+  # program and DLLs replaced. Its result does not gate the release (publish does not wait for it).
+  smoke-x64-cross:
+    name: Windows smoke test (x64, cross-built)
+    needs: [windows, windows-x64-cross]
+    if: github.event.inputs.skip_smoke != 'true'
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      # A single-file artifact that is a .zip arrives unpacked: the portable copy itself
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "*-Windows-x64.zip"
+          path: game
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-x64-cross-programs
+          path: cross
+
+      - name: The cross-built program in the zip's place
+        run: |
+          Copy-Item "cross/win-altverz-x64-portable/PvZ2 AltVerZ x64.exe" game/ -Force
+          Copy-Item cross/win-altverz-x64-runtime/*.dll game/ -Force
+          Get-ChildItem game -File | Where-Object { $_.Extension -in '.exe', '.dll' } | Format-Table Name, Length
+
+      - name: The OBB's name
+        id: obb
+        run: |
+          $p = Get-Content data/profiles/altverz.json | ConvertFrom-Json
+          $j = Get-Content $p.game_data | ConvertFrom-Json
+          "package=$($p.package_name)" >> $env:GITHUB_OUTPUT
+          "exe=$($p.app_name)*.exe" >> $env:GITHUB_OUTPUT
+          "game=$($j.version)" >> $env:GITHUB_OUTPUT
+          "name=$($j.obb_name)" >> $env:GITHUB_OUTPUT
+          "sha=$($j.obb_sha256)" >> $env:GITHUB_OUTPUT
+          "url=$($j.obb_urls[0])" >> $env:GITHUB_OUTPUT
+
+      - name: OBB cache
+        id: obb-cache
+        uses: actions/cache@v6
+        with:
+          path: obb
+          key: obb-${{ steps.obb.outputs.sha }}
+
+      - name: The OBB
+        if: steps.obb-cache.outputs.cache-hit != 'true'
+        env:
+          NAME: ${{ steps.obb.outputs.name }}
+          SHA: ${{ steps.obb.outputs.sha }}
+          URL: ${{ steps.obb.outputs.url }}
+        run: |
+          New-Item -ItemType Directory -Force -Path obb | Out-Null
+          curl.exe -fL --retry 3 -o "obb/$env:NAME" $env:URL
+          if ($LASTEXITCODE) { throw "the OBB download failed" }
+          $sum = (Get-FileHash "obb/$env:NAME" -Algorithm SHA256).Hash.ToLower()
+          if ($sum -ne $env:SHA) { throw "the OBB has sha256 $sum, not $env:SHA" }
+
+      - name: Start the game twice
+        env:
+          NAME: ${{ steps.obb.outputs.name }}
+          GAME: ${{ steps.obb.outputs.game }}
+          PACKAGE: ${{ steps.obb.outputs.package }}
+          EXE: ${{ steps.obb.outputs.exe }}
+        run: ./runtime/win/smoke-test.ps1 -Game game -Obb "obb/$env:NAME" -Out smoke -Baseline "runtime/win/smoke/first-$env:GAME.png" -ExeFilter $env:EXE -Package $env:PACKAGE
+
+      - name: Keep the logs and screenshots
+        if: always()
+        # A failed upload (GitHub's storage) must not fail a test that passed
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-x64-cross
           path: smoke
           retention-days: 14
           if-no-files-found: ignore
