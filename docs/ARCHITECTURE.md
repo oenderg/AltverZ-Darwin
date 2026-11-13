@@ -130,7 +130,7 @@ answers the few calls into those parts). The pieces that matter here:
 - Mac: the data folder is `~/Library/Application Support/PvZ2 AltVerZ/` for the `altverz`
   profile (`PvZ2 Reflourished/` for the other; or `TL_DATA`), with
   `pvz2.log` in it. iOS: `Documents/data/`, with `Documents/pvz2.log` and the OBB in `Documents/obb/`.
-  Each launch starts a new `pvz2.log` and renames the old one to `pvz2.previous.log` (on the Mac, not
+  Each launch starts a new `pvz2.log` and renames the old one to `pvz2.previous.log` (on the Mac and Windows, not
   for a restart to fit the window, nor for a test's `TL_PVZ2_LOG`).
 - In the data folder: `config/pvz2-config` (the game's own settings),
   `sdcard/Android/obb/<package>/` (the Mac's OBB),

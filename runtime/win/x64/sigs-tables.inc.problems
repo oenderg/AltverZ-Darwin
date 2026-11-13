@@ -1,0 +1,3 @@
+longjmp (tl_win_longjmp): (noreturn)=?(noreturn)
+siglongjmp (tl_win_longjmp): (noreturn)=?(noreturn)
+_longjmp (tl_win_longjmp): (noreturn)=?(noreturn)

@@ -22,6 +22,15 @@ def main(argv):
     out = argv[2]
     os.makedirs(out, exist_ok=True)
 
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(argv[1]))))
+    game = json.load(open(os.path.join(root, profile["game_data"])))
+    # The Windows build's names: the app's name without spaces or punctuation (window classes,
+    # mutexes), the taskbar identity (the bundle id without "-darwin") and the GitHub repository
+    # the update feed lives in.
+    stem = "".join(ch for ch in profile["app_name"] if ch.isalnum())
+    aumid = profile["bundle_id"][:-len("-darwin")] if profile["bundle_id"].endswith("-darwin") else profile["bundle_id"]
+    repo = "/".join(profile["sparkle_feed_url"].split("/")[3:5]) if profile.get("sparkle_feed_url") else ""
+
     macros = {
         "PVZ2_PROFILE_ID": cstr(profile["id"]),
         "PVZ2_PROFILE_APP_NAME": cstr(profile["app_name"]),
@@ -37,6 +46,16 @@ def main(argv):
         "PVZ2_PROFILE_CDN_ARCHIVE": cstr(profile["cdn_archive"]),
         "PVZ2_PROFILE_CDN_PATH": cstr(profile.get("cdn_path", "")),
         "PVZ2_PROFILE_CDN_HOSTS": cstr("|".join(profile.get("cdn_hosts", []))),
+        "PVZ2_PROFILE_WIN_STEM": cstr(stem),
+        "PVZ2_PROFILE_AUMID": cstr(aumid),
+        "PVZ2_PROFILE_REPO": cstr(repo),
+        # Whether the game has power-up buttons at all (AltVerZ removed them): its settings hide their keys.
+        "PVZ2_PROFILE_POWERUPS": "1" if profile.get("powerups", True) else "0",
+        "PVZ2_PROFILE_GAME_VERSION": cstr(game["version"]),
+        "PVZ2_PROFILE_OBB_NAME": cstr(game["obb_name"]),
+        "PVZ2_PROFILE_OBB_SIZE": "%dLL" % int(game["obb_size"]),
+        "PVZ2_PROFILE_OBB_SHA256": cstr(game["obb_sha256"]),
+        "PVZ2_PROFILE_OBB_URL": cstr(game["obb_urls"][0]),
     }
     with open(os.path.join(out, "pvz2-profile-generated.h"), "w") as f:
         f.write("/* Generated from %s by scripts/profile-generate.py -- do not edit. */\n" % argv[1])

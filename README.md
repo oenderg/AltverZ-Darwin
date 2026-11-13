@@ -1,11 +1,11 @@
 <h1 align="center">AltVerZ-Darwin</h1>
 
-<p align="center"><b>PvZ2: AltVerZ 1.8.3f natively on iPhone, iPad and Mac.</b><br>No jailbreak, no JIT, no emulator.</p>
+<p align="center"><b>PvZ2: AltVerZ 1.8.3f natively on iPhone, iPad, Mac and Windows.</b><br>No jailbreak, no JIT, no emulator.</p>
 
 <p align="center">
-The mod's Android code is converted ahead of time into ordinary, signed Apple code, so the game
-runs the way any other app does: full screen, at your display's refresh rate, with sound, saves
-and the mod's own content built in.
+The mod's Android code is converted ahead of time into ordinary, signed Apple code (on Windows it
+runs directly, or is translated for the PC once), so the game runs the way any other app does:
+full screen, at your display's refresh rate, with sound, saves and the mod's own content built in.
 </p>
 
 <p align="center">
@@ -14,6 +14,7 @@ and the mod's own content built in.
   <img alt="Game version" src="https://img.shields.io/badge/PvZ2%20AltVerZ-1.8.3f-2ea44f">
   <img alt="iPhone and iPad" src="https://img.shields.io/badge/iOS%20%26%20iPadOS-15.5%2B-0a84ff?logo=apple&logoColor=white">
   <img alt="Mac" src="https://img.shields.io/badge/macOS-14%2B%20·%20Apple%20silicon-0a84ff?logo=apple&logoColor=white">
+  <a href="https://github.com/oenderg/AltverZ-Darwin/releases"><img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%26%2011%20·%20x64%20%26%20ARM64-0078d4?logo=windows&logoColor=white"></a>
   <a href="https://github.com/oenderg/AltverZ-Darwin/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/oenderg/AltverZ-Darwin?style=social"></a>
 </p>
 
@@ -54,16 +55,22 @@ and the mod's own content built in.
   * Drawn at the sharpness of the display it is on; Settings can draw it sharper on a
     display that isn't Retina.
   * `Cmd-M` and `Cmd-H` pause the game.
+* **Windows**
+  * One setup for Intel/AMD and ARM PCs. It installs for your account only, with no administrator
+    prompt. The portable zips keep everything, saves included, in the folder you unpack them to.
+  * A window you can resize, or full screen (`F11` or `Alt+Enter`); Settings with `Ctrl-,` or a
+    right-click on the game's taskbar button.
+  * The plant you picked follows the pointer, with the same keys and key labels as on the Mac.
 * **Updates**
   * The Mac app updates itself: it checks once a day and asks before it installs
-    (PvZ2 AltVerZ > Check for Updates…).
+    (PvZ2 AltVerZ > Check for Updates…). So does the installed Windows game (Settings >
+    About, or Check for Updates… on its taskbar button); the portable zips don't.
   * iPhone and iPad get updates through AltStore and SideStore with this repository's source.
   * Your saves stay, and a full app needs no second 1.1 GB download.
 
 ## Install
 
-Every [release](https://github.com/oenderg/AltverZ-Darwin/releases) has two downloads for each
-platform:
+Every [release](https://github.com/oenderg/AltverZ-Darwin/releases) has these downloads:
 
 | File | What it is |
 |---|---|
@@ -71,6 +78,9 @@ platform:
 | `PvZ2-AltVerZ-<game>-Darwin-<version>-iOS-Full.ipa` | iPhone and iPad, with the game's data inside (about 1.1 GB) |
 | `PvZ2-AltVerZ-<game>-Darwin-<version>-Mac.dmg` | Mac, slim (about 55 MB) |
 | `PvZ2-AltVerZ-<game>-Darwin-<version>-Mac-Full.dmg` | Mac, with the game's data inside |
+| `PvZ2-AltVerZ-<game>-Darwin-<version>-Windows-Setup.exe` | Windows PCs, Intel/AMD and ARM |
+| `PvZ2-AltVerZ-<game>-Darwin-<version>-Windows-x64.zip` | Windows, Intel/AMD, portable (no installer, no updates) |
+| `PvZ2-AltVerZ-<game>-Darwin-<version>-Windows-ARM64.zip` | Windows, ARM (Snapdragon), portable |
 
 A slim app downloads the game's data (about 1.1 GB) the first time it opens and checks it, so keep
 it open on Wi-Fi until the game starts.
@@ -86,7 +96,15 @@ LiveContainer.
 app is not notarized, so the first time macOS refuses to open it: click **Done**, then in
 **System Settings → Privacy & Security** click **Open Anyway**. After that the app updates itself.
 
-Your saves live with the app (on the Mac, in `~/Library/Application Support/PvZ2 AltVerZ`).
+**Windows** (Windows 10 or 11, 64-bit) - run the setup. It is not signed, so Windows shows "Windows
+protected your PC" the first time: click **More info**, then **Run anyway**. If Windows 11's
+**Smart App Control** is on, it blocks every unsigned program with a "Bad Image" error; turn it
+off in **Windows Security → App & browser control → Smart App Control settings**. The first start
+downloads the game's data (1.1 GB). On Intel and AMD PCs it then prepares the game for that PC,
+once, with a progress window; later starts take seconds. After that the game updates itself.
+
+Your saves live with the app (on the Mac, in `~/Library/Application Support/PvZ2 AltVerZ`; on
+Windows, in `%APPDATA%\PvZ2 AltVerZ`).
 AltVerZ has no Import/Export menu, so to bring a save over from Android, copy `pp.dat`,
 `pp.dat.bak`, `local_profiles` and `global_save_data` from
 `Android/data/com.ea.game.pvz2_auz/files/No_Backup/` on the phone into
@@ -123,6 +141,9 @@ for apps with the game's data inside (about 1.1 GB more).
 ## Known issues
 
 * Early build: tested on the Mac, and only lightly on iPhone and iPad so far.
+* Windows: tested in virtual machines on an Apple silicon Mac (Windows 11 on ARM, and the x64 build
+  under its emulation), not yet on a physical PC. The setup is not code-signed, so SmartScreen
+  warns the first time and Smart App Control blocks it (see Install).
 
 ## How it works
 
@@ -133,10 +154,15 @@ straight into the converted code. A small host - built on
 makes, its file system, OpenGL ES through ANGLE over Metal, audio, touch and keyboard input, and
 the app's lifecycle.
 
+On Windows the same host code runs without the Apple conversion step. ARM PCs run the game's ARM64
+code directly, loaded from the APK at start-up. Intel and AMD PCs translate it to x86-64 on the
+first start with the [ScarletNX](https://github.com/scarletnx/ScarletNX) recompiler and keep the
+result, and the game draws through ANGLE over Direct3D 11.
+
 | Folder | What is in it |
 |---|---|
 | `converter/` | ELF → Mach-O conversion and the hook bake |
-| `runtime/` | the host: Android and JNI environment, graphics, audio, input, iOS and Mac apps |
+| `runtime/` | the host: Android and JNI environment, graphics, audio, input, iOS, Mac and Windows apps |
 | `data/` | the mod's recorded hook table, the game version it matches, and the mod profiles |
 | `prebuilt/` | ANGLE for iOS and the iOS Simulator (rebuild with `REBUILD_ANGLE=1 ./build.sh …`) |
 | `scripts/` | downloads, the disk image, the AltStore source, the Mac test runner |

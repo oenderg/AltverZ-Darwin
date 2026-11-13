@@ -47,7 +47,7 @@
 #include <unistd.h>
 #include <uuid/uuid.h>
 #include <mach/mach.h>
-#if !TARGET_OS_IPHONE
+#if !TARGET_OS_IPHONE && !defined(_WIN32)
 /* The mach_vm calls are not available on iOS (mach_vm.h says so). The app
  * object is only looked for on the Mac, where the surface's size can change;
  * on the iPad the surface is the game's own size for ever. */
@@ -55,6 +55,11 @@
 #define PVZ2_HAVE_MACH_VM 1
 #endif
 #include <sys/sysctl.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 #include "husk-tl-bionic.h"
 #include "husk-tl-codewrite.h"
@@ -66,13 +71,42 @@
 #include "husk-tl-ld.h"
 #include "husk-tl-xmem.h"
 
+#if defined(__x86_64__)
+/* x86-64: game code is translated (husk-tl-x64.c). A guest function the driver calls directly goes through a host
+ * function made for it (GUEST_FN, by its signature letters), and tl_jni_native answers with one made from the JNI
+ * signature. (tl_jni_native)(...) in parentheses still gives the guest address. */
+#include "../../win/x64/husk-tl-x64.h"
+void *tl_jni_native_host(const char *cls, const char *name, const char *sig);
+#define tl_jni_native(c, n, s) tl_jni_native_host((c), (n), (s))
+#define GUEST_FN(p, sig) ((p) ? tl_x64_host_fn((uint64_t)(uintptr_t)(p), (sig)) : NULL)
+#else
+#define GUEST_FN(p, sig) ((void *)(p))
+#endif
+
+/* Windows' CRT rename() refuses an existing target; the Mac's and iPad's
+ * rename replaces it. Every host file the driver commits through a .tmp needs
+ * the replacement to survive the second save. */
+static int host_rename_replace(const char *from, const char *to)
+{
+#ifdef _WIN32
+    if (MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        return 0;
+    errno = EIO;
+    return -1;
+#else
+    return rename(from, to);
+#endif
+}
+
 void tl_jni_hle_install(void);
 void tl_hle_configure(const char *pkg, const char *apk, const char *data, int w, int h);
 void tl_hle_set_activity(jobj *a);
 jobj *tl_hle_assets(void);
 void tl_set_data_dir(const char *dir);
 const char *tl_data_dir(void);
+const char *tl_path_resolve(const char *path, char *buf, size_t n);
 void tl_nwindow_configure(int w, int h, void *layer);
+void tl_nwindow_resize(int w, int h);
 void *tl_nwindow_get(void);
 
 #define PKG PVZ2_PROFILE_PKG
@@ -154,16 +188,35 @@ static void cfg_put(const char *k, setting s)
     pthread_mutex_unlock(&CFG.mu);
 }
 
+/* The Windows host keeps the small state files beside the saves; the Mac and
+ * iPad leave this empty and use the data folder, as they always have. */
+static char g_state_dir[1100];
+static unsigned g_state_epoch;
+
+void tl_pvz2_set_state_dir(const char *path)
+{
+    if (path && *path) snprintf(g_state_dir, sizeof(g_state_dir), "%s", path);
+    else g_state_dir[0] = 0;
+    ++g_state_epoch;
+}
+
+static const char *state_dir(void)
+{
+    return g_state_dir[0] ? g_state_dir : tl_data_dir();
+}
+
 /* The engine reads and writes these through Config_* only, so a small
- * tab-separated file in the app's data directory stands in for the phone's
+ * tab-separated file in the state directory stands in for the phone's
  * SharedPreferences.  Without it every launch looks like a fresh install and
  * the option screen, tutorial flags and volume all reset. */
 static const char *cfg_file_path(void)
 {
     static char path[1200];
-    if (!path[0]) {
+    static unsigned epoch;
+    if (!path[0] || epoch != g_state_epoch) {
+        epoch = g_state_epoch;
         char dir[1100];
-        snprintf(dir, sizeof(dir), "%s/config", tl_data_dir());
+        snprintf(dir, sizeof(dir), "%s/config", state_dir());
         mkdir(dir, 0755);
         snprintf(path, sizeof(path), "%s/pvz2-config", dir);
     }
@@ -230,7 +283,7 @@ static void cfg_save(void)
     }
     pthread_mutex_unlock(&CFG.mu);
     fclose(f);
-    rename(tmp, cfg_file_path());
+    host_rename_replace(tmp, cfg_file_path());
 }
 
 /* ---------------------------------------------------------------- Java side */
@@ -537,11 +590,12 @@ static void poll_trace(const char *what, const char *k)
 }
 
 /* The end of the game's start-up, for the host. The game reads
- * "prevent_load_game" in every start (about 6 s in), right before it loads the
+ * "prevent_load_game" on the normal logo-screen path, right before it loads the
  * save; the loading after it stalls the frames (25, then 44 fps), and the
  * title runs smoothly once it is done. So: that read, and then 2 s of frames
  * with no gap over 150 ms. A new screen size written into the game before that
- * crashes it (the host holds the size until then: tools/pvz2-macos.m). */
+ * crashes it (the host holds the size until then: tools/pvz2-macos.m). Windows
+ * also recognizes the installed MainMenu because its starts can skip that read. */
 static atomic_bool g_save_gate_read, g_started;
 int tl_pvz2_started(void) { return atomic_load(&g_started); }
 
@@ -646,14 +700,18 @@ static struct {
     pvz_touch v[256];
     int n;
     uint32_t next_id, active_id;
-    /* The guest's finger for each of the host's fingers. The host has one
-     * finger (the mouse), but it can press again before a release has gone
-     * out -- the shovel's tap is released 120 ms later, and the plant's drag
-     * is released after its steps -- and the release has to go to the finger
-     * that was pressed, not to the newest one. Without this, a finger stays
-     * down in the game for ever. */
+    /* The guest's finger for each of the host's fingers. The Mac and Windows
+     * have one finger (the mouse), but it can press again before a release has
+     * gone out -- the shovel's tap is released 120 ms later, and the plant's
+     * drag is released after its steps -- and the release has to go to the
+     * finger that was pressed, not to the newest one. Without this, a finger
+     * stays down in the game for ever. On iOS each of the player's fingers has
+     * its own id (2 to 7), and 1 is the shortcuts'. */
     uint32_t finger[8];
-    int last_x, last_y;
+    /* Where each of the host's fingers last was: a touch record carries the
+     * finger's previous position, and with two fingers down that is its own,
+     * not the other finger's. */
+    int last_x[8], last_y[8];
     pthread_mutex_t mu;
 } TQ = { .next_id = 1, .active_id = 1, .mu = PTHREAD_MUTEX_INITIALIZER };
 static struct {
@@ -1085,8 +1143,10 @@ static char *hex_decode(const char *s)
 static const char *reminder_file_path(void)
 {
     static char path[1200];
-    if (!path[0]) {
-        const char *dir = tl_data_dir();
+    static unsigned epoch;
+    if (!path[0] || epoch != g_state_epoch) {
+        epoch = g_state_epoch;
+        const char *dir = state_dir();
         if (!dir || !*dir) return NULL;
         snprintf(path, sizeof(path), "%s/pvz2-reminders.tsv", dir);
     }
@@ -1121,7 +1181,7 @@ static void reminders_save_locked(void)
     int fd = fileno(f);
     if (fflush(f) != 0 || fsync(fd) != 0 || ferror(f)) failed = true;
     if (fclose(f) != 0) failed = true;
-    if (!failed && rename(temporary, path) == 0) return;
+    if (!failed && host_rename_replace(temporary, path) == 0) return;
     unlink(temporary);
     tl_log_line("pvz2: reminder data could not be committed atomically (errno=%d)", errno);
 }
@@ -1499,8 +1559,8 @@ static void J_map_contains(tl_jcall *c) { nb_map *m = map_of(c); c->ret = vz(m &
 static void nb_resolve(void)
 {
     if (nb_native || !GAME_LIB) return;
-    nb_native = (nb_callback_fn)tl_ld_sym(GAME_LIB, "Java_com_ea_nimble_bridge_BaseNativeCallback_nativeCallback");
-    if (!nb_native) nb_native = (nb_callback_fn)tl_jni_native("com/ea/nimble/bridge/BaseNativeCallback", "nativeCallback", NULL);
+    nb_native = (nb_callback_fn)GUEST_FN(tl_ld_sym(GAME_LIB, "Java_com_ea_nimble_bridge_BaseNativeCallback_nativeCallback"), "vllil");
+    if (!nb_native) nb_native = (nb_callback_fn)GUEST_FN((tl_jni_native)("com/ea/nimble/bridge/BaseNativeCallback", "nativeCallback", NULL), "vllil");
     tl_log_line("pvz2: BaseNativeCallback.nativeCallback %s", nb_native ? "found" : "missing");
 }
 
@@ -1596,7 +1656,7 @@ static void nb_independent_setup(void)
      * notification is sent. Do not reproduce the unreachable stock EA code. */
     /* The first network status, queued once setup has run (the port does the same). */
     nb_queue("nimble.notification.networkStatusChange", NULL);
-    nb_life_fn resume = (nb_life_fn)tl_ld_sym(GAME_LIB, "Java_com_ea_nimble_bridge_NimbleCppApplicationLifeCycle_onApplicationResume");
+    nb_life_fn resume = (nb_life_fn)GUEST_FN(tl_ld_sym(GAME_LIB, "Java_com_ea_nimble_bridge_NimbleCppApplicationLifeCycle_onApplicationResume"), "vlll");
     if (resume) { tl_log_line("pvz2: Nimble onApplicationResume"); resume(tl_jni_env(), NULL, NULL); }
 }
 
@@ -1632,8 +1692,10 @@ static struct { pthread_mutex_t mu; ps_entry v[PS_CAPACITY]; int n; bool loaded;
 static const char *ps_file_path(void)
 {
     static char path[1200];
-    if (!path[0]) {
-        const char *dir = tl_data_dir();
+    static unsigned epoch;
+    if (!path[0] || epoch != g_state_epoch) {
+        epoch = g_state_epoch;
+        const char *dir = state_dir();
         if (!dir || !*dir) return NULL;
         snprintf(path, sizeof(path), "%s/nimble-persistence.tsv", dir);
     }
@@ -1722,7 +1784,7 @@ static void ps_load_locked(void)
     }
     free(line);
     fclose(f);
-    tl_log_line("pvz2: Nimble persistence restored %d typed value(s) from the game data folder", loaded);
+    tl_log_line("pvz2: Nimble persistence restored %d typed value(s) from %s", loaded, path);
 }
 
 static void ps_save_locked(void)
@@ -1751,7 +1813,7 @@ static void ps_save_locked(void)
     int fd = fileno(f);
     if (fflush(f) != 0 || fsync(fd) != 0 || ferror(f)) failed = true;
     if (fclose(f) != 0) failed = true;
-    if (!failed && rename(temporary, path) == 0) return;
+    if (!failed && host_rename_replace(temporary, path) == 0) return;
     unlink(temporary);
     tl_log_line("pvz2: Nimble persistence atomic commit failed (errno=%d)", errno);
 }
@@ -2502,7 +2564,7 @@ static tl_lib *load(const char *name)
 static int onload(tl_lib *L)
 {
     typedef int (*fn_t)(void *, void *);
-    fn_t fn = (fn_t)tl_ld_sym(L, "JNI_OnLoad");
+    fn_t fn = (fn_t)GUEST_FN(tl_ld_sym(L, "JNI_OnLoad"), "ill");
     if (!fn) return -1;
     int v = fn(tl_jni_vm(), NULL);
     tl_log_line("pvz2: %s JNI_OnLoad -> %d", tl_ld_lib_name(L), v);
@@ -2531,6 +2593,18 @@ static void *raise_on_a_host_thread(void *arg)
 
 static void *gl_main(void *arg);
 
+#if defined(__x86_64__)
+static tl_lib *load(const char *name);
+static void x64_preload(const char *name, uint64_t size, void *user)
+{
+    (void)size; (void)user;
+    const char *base = strrchr(name, '/');
+    base = base ? base + 1 : name;
+    if (!strcmp(base, "libRFLib.so") && getenv("TL_AOT_NO_MOD")) return;
+    if (!tl_ld_find_lib(base)) load(base);
+}
+#endif
+
 bool tl_pvz2_start(const tl_ga_config *cfg)
 {
     P.cfg = *cfg;
@@ -2558,12 +2632,18 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
 
     snprintf(P.files_guest, sizeof(P.files_guest), "/sdcard/Android/data/" PKG "/files");
     snprintf(P.obb_guest, sizeof(P.obb_guest), "/sdcard/Android/obb/" PKG "/" OBB_NAME);
-    snprintf(P.obb_host, sizeof(P.obb_host), "%s/sdcard/Android/obb/%s/%s", P.data, PKG, OBB_NAME);
-    { char d[900];
-      snprintf(d, sizeof(d), "%s/sdcard/Android/data/%s/files", P.data, PKG); mkdirs(d);
+    /* The host's own folders for those guest paths: on the Mac and iPad they
+     * are the data folder itself; the Windows host gives the app's files (the
+     * saves) a folder of their own, beside the player's settings. */
+    { char d[900], obb[900], cache_guest[600];
+      tl_path_resolve(P.obb_guest, obb, sizeof(obb));
+      snprintf(P.obb_host, sizeof(P.obb_host), "%s", obb);
+      tl_path_resolve(P.files_guest, d, sizeof(d)); mkdirs(d);
       tl_pvz2_file_picker_configure(d);
-      snprintf(d, sizeof(d), "%s/sdcard/Android/data/%s/cache", P.data, PKG); mkdirs(d);
-      snprintf(d, sizeof(d), "%s/sdcard/Android/obb/%s", P.data, PKG); mkdirs(d); }
+      snprintf(cache_guest, sizeof(cache_guest), "/sdcard/Android/data/%s/cache", PKG);
+      tl_path_resolve(cache_guest, d, sizeof(d)); mkdirs(d);
+      snprintf(cache_guest, sizeof(cache_guest), "/sdcard/Android/obb/%s", PKG);
+      tl_path_resolve(cache_guest, d, sizeof(d)); mkdirs(d); }
 
     tl_set_data_dir(P.data);
     tl_log_line("pvz2: Info_SysGetProductVersion()I -> %d", PVZ2_ANDROID_VERSION_CODE);
@@ -2667,6 +2747,19 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
     tl_lib *game = load("libPVZ2.so");
     if (!cxx || !nimble || !game) return false;
     GAME_LIB = game;
+#if defined(__x86_64__)
+    /* x86-64: all the code goes into one translation (calls between the libraries stay inside it), made before any of
+     * it runs and kept in the data folder, so only the first start waits for it. That includes the libraries the game
+     * opens later itself (libcrashlytics.so at the surface's creation): loaded now, its dlopen finds them here. */
+    if (!getenv("TL_AOT_NO_MOD")) load("libRFLib.so");
+    tl_ld_apk_libs(x64_preload, NULL);
+    {
+        char cache[1100], err[300];
+        snprintf(cache, sizeof(cache), "%s/translated", P.data);
+        tl_log_line("pvz2: translating the game's code for this computer (the first start takes minutes) into %s", cache);
+        if (!tl_x64_translate(cache, err, sizeof(err))) { tl_log_line("pvz2: the translation failed: %s", err); return false; }
+    }
+#endif
     if (getenv("TL_PVZ2_MONITOR")) {
         pthread_t mt; pthread_create(&mt, NULL, monitor_thread, game);
     }
@@ -2723,7 +2816,7 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
      * in will-finish is never created and the first surface call dereferences
      * a null singleton. */
     typedef void (*map_fn)(void *, void *, void *);
-    map_fn nlaunch = (map_fn)tl_ld_sym(game, "Java_com_ea_nimble_bridge_NimbleCppApplicationLifeCycle_onApplicationLaunch");
+    map_fn nlaunch = (map_fn)GUEST_FN(tl_ld_sym(game, "Java_com_ea_nimble_bridge_NimbleCppApplicationLifeCycle_onApplicationLaunch"), "vlll");
     if (nlaunch) { tl_log_line("pvz2: Nimble onApplicationLaunch"); nlaunch(tl_jni_env(), NULL, NULL); }
 
     /* Native_GameAppInitialize(view, http, cloud, connect, achievements,
@@ -2797,6 +2890,8 @@ bool tl_pvz2_start(const tl_ga_config *cfg)
 typedef void *EGLDisplay, *EGLSurface, *EGLContext, *EGLConfig;
 typedef int32_t EGLint;
 #define EGL_NONE 0x3038
+#define EGL_WIDTH 0x3057
+#define EGL_HEIGHT 0x3056
 
 /* The lifecycle requests, performed on the GL thread between frames. They are
  * defined below, next to the code that answers the host. */
@@ -2896,7 +2991,7 @@ static void guest_low_memory_warning(void)
         tl_log_line("pvz2: the guest's own memory warning is not reachable");
         return;
     }
-    void (*call)(void *) = (void (*)(void *))fn;
+    void (*call)(void *) = (void (*)(void *))GUEST_FN(fn, "vl");
     call((void *)app);
     tl_log_line("pvz2: the guest was told about the memory pressure");
 }
@@ -3009,6 +3104,41 @@ void tl_pvz2_request_seed_pick(int slot)
     atomic_store(&g_seed_pick_pending, 1);
 }
 
+#if defined(__x86_64__)
+/* x86-64: the same calls, run translated with the same registers (x8 for the out pointer) */
+static uint64_t x64_blr(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, void *x8)
+{
+    uint64_t gp[8] = { a0, a1, a2, a3, 0, 0, 0, 0 }, fp[8] = { 0 };
+    return tl_guest_call_regs8((uint64_t)(uintptr_t)fn, gp, fp, NULL, 0, (uint64_t)(uintptr_t)x8, NULL);
+}
+static uint64_t guarded(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, void *x8, bool *ok, const char *what)
+{
+    *ok = false;
+    if (!fn) return 0;
+    guest_guard_enter();
+    if (sigsetjmp(g_guest_jmp, 1) == 0) {
+        uint64_t r = x64_blr(fn, a0, a1, a2, a3, x8);
+        guest_guard_leave();
+        *ok = true;
+        return r;
+    }
+    guest_guard_leave();
+    tl_log_line("pvz2: %s faulted (signal %d); there is no answer", what, (int)g_guest_fault);
+    return 0;
+}
+static uint64_t guest_call_x8(void *fn, uint64_t a0, uint64_t a1, void *out, bool *ok) { return guarded(fn, a0, a1, 0, 0, out, ok, "the guest's own call"); }
+static uint64_t guest_call2(void *fn, uint64_t a0, uint64_t a1, bool *ok) { return guarded(fn, a0, a1, 0, 0, NULL, ok, "the guest's own call"); }
+static uint64_t guest_call3(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, bool *ok) { return guarded(fn, a0, a1, a2, 0, NULL, ok, "the guest's own call"); }
+static uint64_t guest_call4(void *fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, bool *ok) { return guarded(fn, a0, a1, a2, a3, NULL, ok, "cursor placement check: guest call"); }
+static uint64_t guest_call2_raw(void *fn, uint64_t a0, uint64_t a1, bool *ok)
+{
+    *ok = false;
+    if (!fn) return 0;
+    uint64_t r = x64_blr(fn, a0, a1, 0, 0, NULL);
+    *ok = true;
+    return r;
+}
+#else
 /* A guest call with two arguments, and the out pointer in x8 (the C++
  * convention for a constructor's return value). The fault is caught: the
  * guest's SIGSEGV handler is not installed, and a fault here would end the
@@ -3131,6 +3261,8 @@ static uint64_t guest_call2_raw(void *fn, uint64_t a0, uint64_t a1, bool *ok)
     *ok = true;
     return x0;
 }
+
+#endif
 
 /* The game's own pointer-event struct: 0x34 bytes, and the int at +0x30 is
  * the type (0 is a pointer down -- the same object the shovel's call takes). */
@@ -3810,7 +3942,7 @@ static void guest_seed_pick(int slot)
         return;
     }
     guest_read_bytes(board + 0x184, &sun, sizeof sun);
-    int (*call)(void *, void *) = (int (*)(void *, void *))(uintptr_t)fn;
+    int (*call)(void *, void *) = (int (*)(void *, void *))GUEST_FN(fn, "ill");
     int handled = call(packet, &event);
     tl_log_line("pvz2: the seed pick: slot %d, the guest's own press, handled=%d (sun %d)", slot, handled, sun);
     if (!handled) {
@@ -3945,7 +4077,7 @@ static void guest_native_shovel(void)
         }
         uint8_t event[0x34];
         memset(event, 0, sizeof event);
-        int (*call)(void *, void *) = (int (*)(void *, void *))fn;
+        int (*call)(void *, void *) = (int (*)(void *, void *))GUEST_FN(fn, "ill");
         int handled = call(widget, event);
         tl_log_line("pvz2: the shovel: the guest's own function, handled=%d", handled);
         if (handled) guest_release_new_cursor("the shovel", board, begin_before, end_before,
@@ -4173,6 +4305,116 @@ static bool guest_write_u64(uint64_t addr, uint64_t value)
                                      (vm_offset_t)&value, sizeof value);
     return kr == KERN_SUCCESS;
 }
+#elif defined(_WIN32)
+/* Windows has no mach_vm, but its own process memory can be read and mapped
+ * with the Win32 calls. The guest's heap is this process's heap, so the same
+ * signature the Mac's search uses finds the LawnApp here too. */
+static bool guest_read(uint64_t addr, void *out, size_t size)
+{
+    SIZE_T got = 0;
+    return addr && out && size &&
+           ReadProcessMemory(GetCurrentProcess(), (LPCVOID)(uintptr_t)addr,
+                             out, size, &got) && got == size;
+}
+
+static bool guest_app_looks_right(uint64_t app, uint64_t screen_pair)
+{
+    uint64_t pair = 0;
+    int32_t size[2] = { 0, 0 };
+    float design_h = 0.0f;
+    if (!guest_read(app + 0x86c, &pair, sizeof pair) || pair != screen_pair) return false;
+    if (!guest_read(app + 0xf4, size, sizeof size)) return false;
+    if (size[0] <= 0 || size[1] <= 0 || size[0] > 100000 || size[1] > 100000) return false;
+    if (!guest_read(app + 0x9c4, &design_h, sizeof design_h)) return false;
+    return design_h > 1.0f && design_h < 100000.0f && size[1] == (int)design_h;
+}
+
+static uint64_t guest_app_find(int start_w, int start_h, bool writable_only)
+{
+    LARGE_INTEGER began, ended, freq;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&began);
+    unsigned char *buf = malloc(4u << 20);
+    if (!buf) return 0;
+    uint64_t found = 0;
+    unsigned long long scanned = 0;
+    unsigned char *addr = NULL;
+    for (;;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (VirtualQuery(addr, &mbi, sizeof mbi) != sizeof mbi) break;
+        unsigned char *base = mbi.BaseAddress;
+        size_t size = mbi.RegionSize;
+        DWORD protect = mbi.Protect;
+        bool readable = mbi.State == MEM_COMMIT &&
+                        !(protect & (PAGE_NOACCESS | PAGE_GUARD)) &&
+                        (protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+                                    PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                                    PAGE_EXECUTE_WRITECOPY));
+        bool writable = protect & (PAGE_READWRITE | PAGE_WRITECOPY |
+                                   PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY);
+        if (readable && (!writable_only || writable)) {
+            for (size_t off = 0; off < size && !found; ) {
+                SIZE_T want = size - off;
+                if (want > (4u << 20)) want = 4u << 20;
+                SIZE_T got = 0;
+                if (ReadProcessMemory(GetCurrentProcess(), base + off, buf, want, &got) &&
+                    got >= 8) {
+                    for (SIZE_T i = 0; i + 8 <= got; i += 4) {
+                        if (i < 0x744) continue;
+                        int32_t pair[2];
+                        memcpy(pair, buf + i, sizeof pair);
+                        if (pair[0] != start_w || pair[1] != start_h) continue;   /* the size being looked for */
+                        uint64_t candidate = (uint64_t)(uintptr_t)(base + off + i - 0x744);
+                        /* Not this scan's own buffer: it holds a copy of whatever it read last,
+                         * the object included, and a copy passes every check until the buffer
+                         * is reused. A heap block is 8-byte aligned at least. */
+                        uintptr_t at = (uintptr_t)(base + off + i);
+                        if ((at >= (uintptr_t)buf && at < (uintptr_t)buf + (4u << 20)) || (candidate & 7)) continue;
+                        uint64_t packed = ((uint64_t)(uint32_t)pair[0]) |
+                                          ((uint64_t)(uint32_t)pair[1] << 32);
+                        if (!guest_app_looks_right(candidate, packed)) continue;
+                        found = candidate;
+                        break;
+                    }
+                }
+                scanned += want;
+                off += want > 8 ? want - 8 : want;
+            }
+        }
+        unsigned char *next = base + size;
+        if (next <= base) break;
+        addr = next;
+        if (found) break;
+    }
+    free(buf);
+    QueryPerformanceCounter(&ended);
+    double ms = (double)(ended.QuadPart - began.QuadPart) * 1000.0 /
+                (double)(freq.QuadPart ? freq.QuadPart : 1);
+    if (found)
+        tl_log_line("pvz2: the guest's app object is %p after %llu bytes in %.1f ms%s",
+                    (void *)(uintptr_t)found, scanned, ms,
+                    writable_only ? " (the writable regions)" : "");
+    else
+        tl_log_line("pvz2: the guest's app object was not found (%d x %d) after %llu bytes in %.1f ms%s",
+                    start_w, start_h, scanned, ms,
+                    writable_only ? " (the writable regions)" : "");
+    return found;
+}
+
+static bool guest_write_u32(uint64_t addr, int32_t value)
+{
+    SIZE_T wrote = 0;
+    return addr && WriteProcessMemory(GetCurrentProcess(), (LPVOID)(uintptr_t)addr,
+                                      &value, sizeof value, &wrote) &&
+           wrote == sizeof value;
+}
+static bool guest_write_u64(uint64_t addr, uint64_t value)
+{
+    SIZE_T wrote = 0;
+    return addr && WriteProcessMemory(GetCurrentProcess(), (LPVOID)(uintptr_t)addr,
+                                      &value, sizeof value, &wrote) &&
+           wrote == sizeof value;
+}
 #else /* not iOS: the guest's app object cannot be found there */
 /* The mach_vm calls do not exist on iOS (mach_vm.h says so), so the app
  * object's address cannot be found and the screen size cannot be written into
@@ -4245,9 +4487,15 @@ static void *guest_code(uint64_t guest_vaddr)
  * around the call, not the host. */
 static struct sigaction g_guest_prev_segv, g_guest_prev_bus;
 
+#if defined(__x86_64__)
+static uint8_t g_x64_mark[TL_X64_MARK_BYTES];
+#endif
 static void guest_fault_handler(int sig, siginfo_t *info, void *context)
 {
     (void)context;
+#if defined(__x86_64__)
+    tl_x64_recover(g_x64_mark);   /* the guest CPU as it was when the guard went up */
+#endif
     g_guest_fault = sig;
     g_guest_fault_addr = info ? (uintptr_t)info->si_addr : 0;
     siglongjmp(g_guest_jmp, 1);
@@ -4255,6 +4503,11 @@ static void guest_fault_handler(int sig, siginfo_t *info, void *context)
 
 static void guest_guard_enter(void)
 {
+    /* cleared here, not on leaving, so the log line after a caught fault can still name the signal */
+    g_guest_fault = 0;
+#if defined(__x86_64__)
+    tl_x64_mark(g_x64_mark);
+#endif
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_sigaction = guest_fault_handler;
@@ -4268,7 +4521,6 @@ static void guest_guard_leave(void)
 {
     sigaction(SIGSEGV, &g_guest_prev_segv, NULL);
     sigaction(SIGBUS, &g_guest_prev_bus, NULL);
-    g_guest_fault = 0;
 }
 
 /* A surface size that can be shown on: at least 100x100 (anything smaller is
@@ -4294,11 +4546,30 @@ static void *guest_find_widget(const char *name)
     if (n > 20) return NULL;             /* too long for the short form */
     obj[0] = (unsigned char)(n << 1);    /* the length, in bits 1..7 */
     memcpy(obj + 1, name, n + 1);
-    void *(*call)(void *) = (void *(*)(void *))fn;
+    /* GUEST_FN: on x86-64 the guest address is ARM64 code, so the call goes through a host function that runs the
+       translated function; calling it as a C function would execute ARM64 bytes as x86-64 */
+    void *(*call)(void *) = (void *(*)(void *))GUEST_FN(fn, "ll");
     return call(obj);
 }
 
 /* The element's anchored rect: the out pointer is in x8, the widget in x0. */
+#if defined(__x86_64__)
+static bool guest_anchored_rect(void *widget, int *out)
+{
+    void *fn = guest_code(GUEST_ANCHORED_RECT);
+    if (!fn || !widget) return false;
+    bool ok;
+    guarded(fn, (uint64_t)(uintptr_t)widget, 0, 0, 0, out, &ok, "the guest's own rect query");
+    return ok;
+}
+static bool guest_anchored_rect_raw(void *widget, int *out)
+{
+    void *fn = guest_code(GUEST_ANCHORED_RECT);
+    if (!fn || !widget) return false;
+    x64_blr(fn, (uint64_t)(uintptr_t)widget, 0, 0, 0, out);
+    return true;
+}
+#else
 static bool guest_anchored_rect(void *widget, int *out)
 {
     void *fn = guest_code(GUEST_ANCHORED_RECT);
@@ -4341,6 +4612,7 @@ static bool guest_anchored_rect_raw(void *widget, int *out)
                        "x13","x14","x15","x17","memory","cc");
     return true;
 }
+#endif
 
 /* The scale from the app's own space to the surface's.
  *
@@ -5994,7 +6266,9 @@ static void guest_cursor_placement(tl_pvz2_cursor_snapshot *geometry, uint64_t b
                                           (uint64_t)(uintptr_t)tile, pending + 0x40, mode, &ok);
             if (ok) { known = 1; allowed = (result & 1) != 0; }
         }
-        if (getenv("TL_PVZ2_CURSOR_VALIDITY"))
+        static int validity_enabled = -1;
+        if (validity_enabled < 0) validity_enabled = getenv("TL_PVZ2_CURSOR_VALIDITY") != NULL;
+        if (validity_enabled)
             tl_log_line("pvz2: cursor validity: %s tile %d,%d known %d allowed %d", g_cursor_plant, col, row, known, known && allowed);
     }
     geometry->placement_known = known;
@@ -6040,6 +6314,23 @@ static bool guest_cursor_geometry_read(uint64_t app, uint64_t board, uint64_t pa
     if (plant) guest_read_bytes_raw(parent + 0xd4, row_offset, sizeof *row_offset);
     guest_guard_leave();
     return true;
+}
+
+/* The app's own size (+0xf4/+0xf8) and design height (+0x9c4) are the
+ * signature the Mac's search uses; the same pair tells a candidate from a
+ * random pointer on the hosts without mach_vm. */
+static uint64_t cursor_app_candidate(uint64_t candidate)
+{
+    int32_t size[2] = { 0, 0 };
+    float design_h = 0.0f;
+    if (!candidate || !guest_read_bytes(candidate + 0xf4, size, sizeof size) ||
+        !guest_read_bytes(candidate + 0x9c4, &design_h, sizeof design_h))
+        return 0;
+    if (size[0] <= 0 || size[1] <= 0 || size[0] > 100000 || size[1] > 100000)
+        return 0;
+    if (!(design_h > 1.0f && design_h < 100000.0f) || size[1] != (int)design_h)
+        return 0;
+    return candidate;
 }
 
 static void guest_cursor_update(void)
@@ -6112,6 +6403,16 @@ static void guest_cursor_update(void)
     if (board && pending && (g_cursor_kind == TL_PVZ2_CURSOR_PLANT || g_cursor_kind == TL_PVZ2_CURSOR_SHOVEL ||
                              g_cursor_kind == TL_PVZ2_CURSOR_PLANT_FOOD)) {
         uint64_t app = atomic_load(&g_app_object);
+        /* The mach_vm search that fills g_app_object runs on the Mac; Windows
+         * and iPad have none, and a Mac search may still be going. Their
+         * driver's global is the LawnApp itself on some builds and the driver
+         * that holds it at +0x98 on others, so both candidates are accepted
+         * only when they have the app's own size and design height. */
+        if (!app) app = cursor_app_candidate((uint64_t)(uintptr_t)guest_app_object());
+        if (!app) {
+            void *slot = tl_aot_guest_data_ptr_any(0x25a4e50);
+            if (slot) app = cursor_app_candidate(*(uint64_t *)slot);
+        }
         int app_size[2] = {0}, board_xy[2] = {0}, dimensions[2] = {0};
         float camera[3] = {0}, app_scale = 0, row_offset = 0;
         if (guest_cursor_geometry_read(app, board, g_cursor_parent, g_cursor_kind == TL_PVZ2_CURSOR_PLANT,
@@ -6128,6 +6429,19 @@ static void guest_cursor_update(void)
             geometry.app_scale = app_scale;
             geometry.camera_scale = camera[0]; geometry.camera_x = camera[1]; geometry.camera_y = camera[2];
             geometry.row_offset = row_offset;
+        }
+        if (stats_enabled) {
+            static double last_geometry_log;
+            double now = now_s();
+            if (now - last_geometry_log >= 1.0) {
+                last_geometry_log = now;
+                tl_log_line("pvz2: cursor geometry: app %p board %p parent %p app %d,%d board %d,%d dims %d,%d camera %.3f,%.3f,%.3f scale %.4f row_offset %.2f valid %d",
+                            (void *)(uintptr_t)app, (void *)(uintptr_t)board,
+                            (void *)(uintptr_t)g_cursor_parent, app_size[0], app_size[1],
+                            board_xy[0], board_xy[1], dimensions[0], dimensions[1],
+                            camera[0], camera[1], camera[2], app_scale, row_offset,
+                            geometry.grid_valid);
+            }
         }
     }
     geometry.surface_w = P.w; geometry.surface_h = P.h;
@@ -6339,15 +6653,24 @@ static void start_app_finder(void)
 static bool guest_app_is_ours(uint64_t app)
 {
     uint64_t expect = atomic_load(&g_app_packed);
-    if (!expect) return false;
+    static int why_budget = 3;     /* which check failed, for the first few */
+    if (!expect) { if (why_budget-- > 0) tl_log_line("pvz2: app check: no size is known yet"); return false; }
     uint64_t packed = 0;
     if (!guest_read(app + 0x86c, &packed, sizeof packed)) return false;
-    if (packed != expect) return false;
+    if (packed != expect) {
+        if (why_budget-- > 0)
+            tl_log_line("pvz2: app check: the object holds %dx%d, expected %dx%d",
+                        (int)(uint32_t)packed, (int)(uint32_t)(packed >> 32),
+                        (int)(uint32_t)expect, (int)(uint32_t)(expect >> 32));
+        return false;
+    }
     float design_h = 0.0f;
     if (!guest_read(app + 0x9c4, &design_h, sizeof design_h)) return false;
     if (!(design_h > 1.0f && design_h < 100000.0f)) return false;
     int32_t size_fields[2] = { 0, 0 };
     if (!guest_read(app + 0xf4, size_fields, sizeof size_fields)) return false;
+    if (size_fields[1] != (int)design_h && why_budget-- > 0)
+        tl_log_line("pvz2: app check: height %d, design height %.1f", size_fields[1], design_h);
     return size_fields[1] == (int)design_h;
 }
 
@@ -6371,7 +6694,8 @@ static bool guest_tell_screen_size(int w, int h)
         tl_log_line("pvz2: the guest's app object at %p is not the object any more -- nothing is written",
                     (void *)app);
         atomic_store(&g_app_object, 0);
-        start_app_finder();
+        static int refinds;
+        if (refinds++ < 6) start_app_finder();   /* a block that will not hold still is given up */
         return false;
     }
     bool ok = true;
@@ -6460,6 +6784,9 @@ static void *gl_main(void *arg)
     unsigned (*makeCurrent)(EGLDisplay, EGLSurface, EGLSurface, EGLContext) = tl_egl_resolve("eglMakeCurrent");
     unsigned (*swapBuffers)(EGLDisplay, EGLSurface) = tl_egl_resolve("eglSwapBuffers");
     unsigned (*swapInterval)(EGLDisplay, EGLint) = tl_egl_resolve("eglSwapInterval");
+#ifdef _WIN32
+    unsigned (*surfaceAttrib)(EGLDisplay, EGLSurface, EGLint, EGLint) = tl_egl_resolve("eglSurfaceAttrib");
+#endif
     EGLint (*getError)(void) = tl_egl_resolve("eglGetError");
 
     /* Let lifecycle setup create the application object before the first
@@ -6476,13 +6803,6 @@ static void *gl_main(void *arg)
     if (!chooseConfig(dpy, want, &ec, 1, &n) || n < 1) { tl_log_line("pvz2: eglChooseConfig failed (%#x)", getError()); return NULL; }
     const EGLint ca[] = { 0x3098, 2, EGL_NONE };
     EGLContext ctx = createContext(dpy, ec, NULL, ca);
-    EGLSurface surf = createWindowSurface(dpy, ec, tl_nwindow_get(), NULL);
-    if (!ctx || !surf || !makeCurrent(dpy, surf, surf, ctx)) { tl_log_line("pvz2: could not make GL current (%#x)", getError()); return NULL; }
-    if (swapInterval) swapInterval(dpy, 1);
-    tl_log_line("pvz2: EGL %d.%d ready", maj, min);
-
-    typedef void (*v_fn)(void *, void *);
-    typedef void (*ii_fn)(void *, void *, int, int);
 
     /* The surface's size, before the guest is told about it.
      *
@@ -6512,6 +6832,17 @@ static void *gl_main(void *arg)
                     P.w, P.h);
         return NULL;
     }
+    /* The window knows the size before the surface is made: on Windows the
+     * window surface may keep a fixed size (the host's launch boost), and the
+     * guest's ANativeWindow has to report the same size. */
+    tl_nwindow_resize(P.w, P.h);
+    EGLSurface surf = createWindowSurface(dpy, ec, tl_nwindow_get(), NULL);
+    if (!ctx || !surf || !makeCurrent(dpy, surf, surf, ctx)) { tl_log_line("pvz2: could not make GL current (%#x)", getError()); return NULL; }
+    if (swapInterval) swapInterval(dpy, 1);
+    tl_log_line("pvz2: EGL %d.%d ready", maj, min);
+
+    typedef void (*v_fn)(void *, void *);
+    typedef void (*ii_fn)(void *, void *, int, int);
 
     v_fn created = (v_fn)tl_jni_native(VIEW, "Native_onSurfaceCreated", "()V");
     ii_fn changed = (ii_fn)tl_jni_native(VIEW, "Native_onSurfaceChanged", "(II)V");
@@ -6519,7 +6850,11 @@ static void *gl_main(void *arg)
     v_fn pump = (v_fn)tl_jni_native(VIEW, "PumpMessageQueue", "()V");
     if (!draw) { tl_log_line("pvz2: Native_onDrawFrame is not registered"); return NULL; }
     if (!pump) tl_log_line("pvz2: PumpMessageQueue is not registered");
-    g_pump = pump;
+    /* On x86-64 tl_jni_native already answers with a host-callable thunk, and GUEST_FN would wrap
+     * that thunk again: the pump would be entered at a host address with no guest code, which the
+     * translator reports as an undefined instruction and abandons. The guest address is what needs
+     * GUEST_FN, and that is not what this call returns. */
+    g_pump = (pump_fn)pump;
 
     if (created) { tl_log_line("pvz2: Native_onSurfaceCreated"); created(tl_jni_env(), P.view); }
     if (changed) {
@@ -6557,6 +6892,18 @@ static void *gl_main(void *arg)
         if (want_w > 0 && want_h > 0 && (want_w != P.w || want_h != P.h)) {
             tl_log_line("pvz2: the surface is now %dx%d (it was %dx%d)", want_w, want_h, P.w, P.h);
             P.w = want_w; P.h = want_h;
+            /* A Windows window surface may be fixed-size (the launch boost):
+             * resize it to the size the guest is about to be told, so the
+             * picture is no longer stretched after the boost ends and later
+             * window resizes keep 1:1. A surface that follows the window
+             * ignores this and already has the new size. */
+#ifdef _WIN32
+            if (surfaceAttrib) {
+                surfaceAttrib(dpy, surf, EGL_WIDTH, want_w);
+                surfaceAttrib(dpy, surf, EGL_HEIGHT, want_h);
+            }
+#endif
+            tl_nwindow_resize(want_w, want_h);
             /* The guest must be told the new size *and* made to use it: the
              * size it read at start-up is still in its app object, and nothing
              * on the surface-change path re-reads it (the RE lane's write-up:
@@ -6747,6 +7094,22 @@ static void *gl_main(void *arg)
         swapBuffers(dpy, surf);
         if (!atomic_load(&g_started)) {
             static double last, smooth_since;
+#ifdef _WIN32
+            /* Windows starts can reach MainMenu without querying the optional
+             * prevent_load_game preference. LawnApp::ShowMainMenu (0x940210)
+             * installs MainMenu at app +0xb00 after its constructor (0x6a3f84).
+             * Its vtable identifies the object rather than treating any nonzero
+             * pointer as readiness. Still require two smooth seconds afterwards. */
+            if (!atomic_load(&g_save_gate_read)) {
+                uint64_t app = atomic_load(&g_app_object), menu = 0, vtable = 0;
+                uint64_t expected = (uint64_t)(uintptr_t)tl_aot_guest_data_ptr_any(0x2388368);
+                if (app && expected && guest_read(app + 0xb00, &menu, sizeof menu) && menu &&
+                    guest_read(menu, &vtable, sizeof vtable) && vtable == expected) {
+                    atomic_store(&g_save_gate_read, true);
+                    tl_log_line("pvz2: startup gate: the guest has installed MainMenu (Windows)");
+                }
+            }
+#endif
             double t = now_s();
             if (last == 0 || t - last > 0.15 || !atomic_load(&g_save_gate_read)) smooth_since = t;
             last = t;
@@ -6900,8 +7263,10 @@ void tl_pvz2_touch(int phase, int id, float x, float y)
     t->y = (int)(y + 0.5f);
     t->time_s = now_s();
     t->id = touch_id_for(phase, id);
-    if (phase == 0) { t->px = t->x; t->py = t->y; TQ.last_x = t->x; TQ.last_y = t->y; }
-    else { t->px = TQ.last_x; t->py = TQ.last_y; TQ.last_x = t->x; TQ.last_y = t->y; }
+    int slot = (id >= 0 && id < 8) ? id : 0;
+    if (phase == 0) { t->px = t->x; t->py = t->y; }
+    else { t->px = TQ.last_x[slot]; t->py = TQ.last_y[slot]; }
+    TQ.last_x[slot] = t->x; TQ.last_y[slot] = t->y;
     tl_log_line("pvz2: touch phase %d id %u at (%d,%d), queued %d", t->phase, t->id, t->x, t->y, TQ.n);
     pthread_mutex_unlock(&TQ.mu);
 }

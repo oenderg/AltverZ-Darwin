@@ -207,6 +207,29 @@ static bool open_platform(size_t host_bytes, char *err, size_t errlen)
     }
     return grant_self(host_bytes, err, errlen);
 }
+#elif defined(_WIN32)
+#include <windows.h>
+/* Windows lets a process run memory it wrote, so there is one view, readable, writable and
+ * executable at once: rx and rw are the same address. The region is reserved here and
+ * committed as tl_xmem_alloc hands it out, so its size costs nothing until used. */
+static bool open_platform(size_t host_bytes, char *err, size_t errlen)
+{
+    if (getenv("TL_XMEM_MIB")) host_bytes = (size_t)atoi(getenv("TL_XMEM_MIB")) << 20;
+    size_t size = (host_bytes + TL_XMEM_PAGE - 1) & ~(size_t)(TL_XMEM_PAGE - 1);
+    uint8_t *base = NULL;
+#if defined(__x86_64__)
+    /* x86-64 translates the libraries, and the translation is kept by their addresses: the same place every run */
+    base = VirtualAlloc((void *)(uintptr_t)0x5A0000000000ull, size, MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+#endif
+    if (!base) base = VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!base) {
+        snprintf(err, errlen, "VirtualAlloc reserving %zu MiB failed (%lu)", size >> 20, GetLastError());
+        return false;
+    }
+    g_x.rx = g_x.rw = base;
+    g_x.size = size;
+    return true;
+}
 #else
 /* A Mac (or a plain host): two views of ordinary memory. */
 static bool open_platform(size_t host_bytes, char *err, size_t errlen)
@@ -297,6 +320,12 @@ bool tl_xmem_alloc(size_t bytes, uint8_t **rx, uint8_t **rw)
     pthread_mutex_lock(&g_x.lock);
     /* StikDebug's region is QEMU's too: Android, when it runs, holds the top of it (husk-ios-jit.c) */
     if (g_x.open && n <= g_x.size - g_x.used && (!g_x.shared || tl_jit_reserve_bottom(g_x.used + n))) {
+#if defined(_WIN32)
+        if (!VirtualAlloc(g_x.rx + g_x.used, n, MEM_COMMIT, PAGE_EXECUTE_READWRITE)) {
+            pthread_mutex_unlock(&g_x.lock);
+            return false;
+        }
+#endif
         if (rx) *rx = g_x.rx + g_x.used;
         if (rw) *rw = g_x.rw + g_x.used;
         if (getenv("TL_XMEM_TRACE")) tl_log_line("xmem: alloc %zu KiB at rx %p (rw %p)", n >> 10, (void *)(g_x.rx + g_x.used), (void *)(g_x.rw + g_x.used));
@@ -354,6 +383,9 @@ size_t tl_xmem_size(void)  { return g_x.size; }
 bool tl_xmem_writable_view_executable(void)
 {
     if (!g_x.open || !g_x.rw) return false;
+#if defined(_WIN32)
+    return true;   /* the one view is executable already */
+#endif
     int r = mprotect(g_x.rw, g_x.size, PROT_READ | PROT_WRITE | PROT_EXEC);
     if (r != 0) tl_log_line("xmem: mprotect(rw, %zu MiB, RWX) failed: %s", g_x.size >> 20, strerror(errno));
     return r == 0;

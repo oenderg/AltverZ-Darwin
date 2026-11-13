@@ -45,11 +45,14 @@ PROFILE_CDN_PATH="$(_profile cdn_path)"
 PROFILE_SPARKLE="$(_profile sparkle)"
 PROFILE_SPARKLE_FEED_URL="$(_profile sparkle_feed_url)"
 PROFILE_DMG_ART="$(_profile dmg_art)"
+# The GitHub repository (owner/name) the update feed lives in, and the Windows taskbar identity.
+PROFILE_REPO="$(printf '%s' "$PROFILE_SPARKLE_FEED_URL" | cut -d/ -f4-5)"
+PROFILE_AUMID="$(printf '%s' "$PROFILE_BUNDLE_ID" | sed 's/-darwin$//')"
 export PROFILE PROFILE_ID PROFILE_GAME_DATA PROFILE_HOOKS PROFILE_APP_NAME PROFILE_ARTIFACT
 export PROFILE_BUNDLE_ID PROFILE_DATA_FOLDER PROFILE_PACKAGE PROFILE_VERSION_CODE
 export PROFILE_VERSION_NAME PROFILE_APP_VERSION PROFILE_MOD_LIBRARY PROFILE_MOD_JNI_ONLOAD
 export PROFILE_ICON PROFILE_CDN_HOSTS PROFILE_CDN_ARCHIVE PROFILE_CDN_PATH PROFILE_SPARKLE
-export PROFILE_SPARKLE_FEED_URL PROFILE_DMG_ART
+export PROFILE_SPARKLE_FEED_URL PROFILE_DMG_ART PROFILE_REPO PROFILE_AUMID
 
 # The C header and the Swift constants for this profile, written into a build folder.
 profile_generate() {

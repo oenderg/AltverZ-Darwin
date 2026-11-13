@@ -169,13 +169,40 @@ static uint32_t o_SetPriority(const void *self, int32_t p, uint32_t pre) { (void
 static uint32_t o_GetPriority(const void *self, int32_t *p, uint32_t *pre) { (void)self; if (p) *p = 0; if (pre) *pre = 0; return SL_OK; }
 static uint32_t o_SetLoss(const void *self, uint32_t n, const void *ids, uint32_t en) { (void)self; (void)n; (void)ids; (void)en; return SL_OK; }
 
+#if defined(__x86_64__)
+/* x86-64: the guest calls through these tables, so it gets copies holding stubs (husk-tl-x64.c), one per table */
+#include "../../win/x64/husk-tl-x64.h"
+static const void *const *guest_vt(const void *const *k, size_t n, const char *prefix)
+{
+    static struct { const void *const *k; const void **g; } made[16];
+    static int nmade;
+    static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_lock(&mu);
+    const void **g = NULL;
+    for (int i = 0; i < nmade; i++) if (made[i].k == k) g = made[i].g;
+    if (!g) {
+        g = calloc(n, sizeof(*g));
+        for (size_t i = 0; i < n; i++) {
+            char name[32]; snprintf(name, sizeof(name), "%s#%zu", prefix, i);
+            g[i] = tl_x64_import(strdup(name), (void *)k[i]);
+        }
+        if (nmade < 16) { made[nmade].k = k; made[nmade].g = g; nmade++; }
+    }
+    pthread_mutex_unlock(&mu);
+    return g;
+}
+#define VT(k, prefix) guest_vt((k), sizeof(k) / sizeof((k)[0]), (prefix))
+#else
+#define VT(k, prefix) (k)
+#endif
+
 static const void *const k_vt_object[] = { o_Realize, o_Resume, o_GetState, o_GetInterface, o_RegisterCallback, o_AbortAsyncOperation, o_Destroy, o_SetPriority, o_GetPriority, o_SetLoss };
 
 static sl_object *new_object(int kind)
 {
     sl_object *o = calloc(1, sizeof(*o));
     if (!o) return NULL;
-    o->vt_object = k_vt_object;
+    o->vt_object = VT(k_vt_object, "slobject");
     o->kind = kind; o->state = SL_OBJECT_UNREALIZED;
     pthread_mutex_init(&o->mu, NULL);
     return o;
@@ -280,7 +307,7 @@ static uint32_t e_CreateMix(const void *self, const void **out, uint32_t n, cons
     (void)self; (void)n; (void)ids; (void)req;
     sl_object *o = new_object(K_MIX);
     if (!o) return 3;
-    o->vt_volume = k_vt_volume;
+    o->vt_volume = VT(k_vt_volume, "slvolume");
     *out = o;
     return SL_OK;
 }
@@ -291,7 +318,7 @@ static uint32_t e_CreateAudioPlayer(const void *self, const void **out, const sl
     (void)self; (void)snk; (void)n; (void)ids; (void)req;
     sl_object *o = new_object(K_PLAYER);
     if (!o) return 3;
-    o->vt_play = k_vt_play; o->vt_volume = k_vt_volume; o->vt_bq = k_vt_bq; o->vt_config = k_vt_config;
+    o->vt_play = VT(k_vt_play, "slplay"); o->vt_volume = VT(k_vt_volume, "slvolume"); o->vt_bq = VT(k_vt_bq, "slbq"); o->vt_config = VT(k_vt_config, "slconfig");
     o->channels = 2; o->rate = 48000;
     if (src && src->format) {
         const sl_pcm *f = src->format;
@@ -313,7 +340,7 @@ static uint32_t b_slCreateEngine(const void **engine, uint32_t n, const void *op
     (void)n; (void)opts; (void)nif; (void)ifs; (void)req;
     sl_object *o = new_object(K_ENGINE);
     if (!o) return 3;
-    o->vt_engine = k_vt_engine;
+    o->vt_engine = VT(k_vt_engine, "slengine");
     *engine = o;
     return SL_OK;
 }

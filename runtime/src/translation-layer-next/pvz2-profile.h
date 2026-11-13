@@ -25,6 +25,15 @@
 #define PVZ2_PROFILE_CDN_ARCHIVE "1.4.2.main.tar"
 #define PVZ2_PROFILE_CDN_PATH "/cdn/1.4.2.main.tar"
 #define PVZ2_PROFILE_CDN_HOSTS "reflourished.ducnguyen.org"
+#define PVZ2_PROFILE_WIN_STEM "PvZ2Reflourished"
+#define PVZ2_PROFILE_AUMID "io.github.oenderg.reflourished"
+#define PVZ2_PROFILE_REPO "oenderg/Reflourished-Darwin"
+#define PVZ2_PROFILE_POWERUPS 1
+#define PVZ2_PROFILE_GAME_VERSION "1.4.2"
+#define PVZ2_PROFILE_OBB_NAME "main.675.com.ea.game.pvz2_rfl.obb"
+#define PVZ2_PROFILE_OBB_SIZE 1341358080LL
+#define PVZ2_PROFILE_OBB_SHA256 "aa747ac0c55f8645cffdc2c93b1469a26ed9ada22a718da8eeb833fffa4c7148"
+#define PVZ2_PROFILE_OBB_URL "https://github.com/lantern-fans/obbybackup/releases/download/1.4.2-R1/main.675.com.ea.game.pvz2_rfl.obb"
 #endif
 
 #endif /* PVZ2_PROFILE_H */

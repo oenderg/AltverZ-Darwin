@@ -318,8 +318,8 @@ private struct GeneralPane: View {
                 Text("Window")
             } footer: {
                 Text(mode.wrappedValue == "Adapt"
-                     ? "The window takes any shape from 4:3 to 2.4:1, and the game starts in the window's shape. The game lays a screen out once, so after you change the shape the picture keeps its old one, with bars: ↻ restarts the game in the new shape (it saves first), ✕ puts the window back. Experimental."
-                     : "The window keeps one shape and the game fills it, at any size. A new shape takes effect when the game restarts: ↻ in the corner does that now (it saves first), ✕ keeps the current shape until the next start. “Current display” is the shape of the display the game is on, so full screen has no bars.")
+                     ? "The window takes any shape from 4:3 to 2.4:1, and the game starts in the window's shape. The game lays a screen out once, so after you change the shape the picture keeps its old one, with bars: ↻ restarts the game in the new shape (it saves first), ✕ trims the black bars. Experimental."
+                     : "The window keeps one shape and the game fills it, at any size. A new shape takes effect when the game restarts: ↻ in the corner does that now (it saves first), ✕ trims the black bars and keeps the window in the current shape until the next start. “Current display” is the shape of the display the game is on, so full screen has no bars.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -1,0 +1,5 @@
+/* The common controls v6 manifest and the per-monitor DPI declaration. */
+1 24 "win-manifest.xml"
+/* The game's icon, the mod's own (from docs/icon.png): Explorer, the Start
+ * menu entry and the Apps & Features entry show it. */
+1 ICON "pvz2.ico"

@@ -1,0 +1,70 @@
+diff --git a/src/DmlibHook.cpp b/src/DmlibHook.cpp
+index 4b1c218..cbd811f 100644
+--- a/src/DmlibHook.cpp
++++ b/src/DmlibHook.cpp
+@@ -99,6 +99,7 @@ struct HookData
+ 	FindThunkInModule_t m_findFn = nullptr;
+ 
+ 	std::uint16_t m_ord = 0;
++	bool m_delayLoad = false;
+ 
+ 	void init(const char* fromDll, const char* funcName, const FindThunkInModule_t& findFn) noexcept
+ 	{
+@@ -109,6 +110,7 @@ struct HookData
+ 			m_findFn = findFn;
+ 
+ 			m_ord = 0;
++			m_delayLoad = (findFn == static_cast<FindThunkInModule_t>(&iat_hook::FindDelayLoadThunkInModule));
+ 		}
+ 	}
+ 
+@@ -121,6 +123,7 @@ struct HookData
+ 
+ 			m_fnName = nullptr;
+ 			m_findFn = nullptr;
++			m_delayLoad = true;
+ 		}
+ 	}
+ 
+@@ -142,6 +145,21 @@ struct HookData
+ 	}
+ };
+ 
++/* A delay-loaded import's slot holds the loader's thunk until the import is first called, and the
++ * loader hands its caller whatever the slot holds. Saving that thunk as the true function would make
++ * the hook call itself; the target DLL's export is the real function, before or after resolution.
++ * The module stays loaded for the life of the process, which is how long the saved pointer is used. */
++template <typename T>
++static auto GetDelayLoadTarget(const char* dllName, const char* fnName, std::uint16_t ord) noexcept -> T
++{
++	const HMODULE trueMod = ::LoadLibraryA(dllName);
++	if (trueMod == nullptr)
++	{
++		return nullptr;
++	}
++	return reinterpret_cast<T>(::GetProcAddress(trueMod, (ord != 0) ? MAKEINTRESOURCEA(ord) : fnName));
++}
++
+ template <typename T, typename... InitArgs>
+ static auto HookFunction(HookData<T>& hookData, const wchar_t* hookedDll, T newFn, const char* fromDll, InitArgs&&... args) noexcept -> bool
+ {
+@@ -159,7 +177,18 @@ static auto HookFunction(HookData<T>& hookData, const wchar_t* hookedDll, T newF
+ 		auto* addr = hookData.findAddr(hookedMod.get());
+ 		if (addr != nullptr)
+ 		{
+-			hookData.m_trueFn = ReplaceFunction<T>(addr, newFn);
++			if (hookData.m_delayLoad)
++			{
++				hookData.m_trueFn = GetDelayLoadTarget<T>(hookData.m_fromDll, hookData.m_fnName, hookData.m_ord);
++				if (hookData.m_trueFn != nullptr && ReplaceFunction<T>(addr, newFn) == nullptr)
++				{
++					hookData.m_trueFn = nullptr;
++				}
++			}
++			else
++			{
++				hookData.m_trueFn = ReplaceFunction<T>(addr, newFn);
++			}
+ 		}
+ 	}
+ 

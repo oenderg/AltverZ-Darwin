@@ -1,0 +1,304 @@
+diff --git a/src/common/cpu/recompiler/library.c b/src/common/cpu/recompiler/library.c
+index a05b69fb..519bacb9 100644
+--- a/src/common/cpu/recompiler/library.c
++++ b/src/common/cpu/recompiler/library.c
+@@ -649,6 +649,8 @@ static int compare_unit_weight(const void* a, const void* b) {
+     return x->first < y->first ? -1 : x->first > y->first;
+ }
+ 
++static void profile_log(const char* fmt, ...);
++
+ static void worker(void* arg) {
+     Queue* q = (Queue*)arg;
+     char error[1024];
+@@ -679,6 +681,9 @@ static void worker(void* arg) {
+                    (unsigned long)q->count, (unsigned long)q->units[i].first, (unsigned long)q->units[i].last,
+                    snx_seconds() - start);
+         }
++        profile_log("unit %lu/%lu: functions %lu-%lu, %lu weight, %.1f s", (unsigned long)q->done,
++                    (unsigned long)q->count, (unsigned long)q->units[i].first, (unsigned long)q->units[i].last,
++                    (unsigned long)q->units[i].weight, snx_seconds() - start);
+         snx_work_unlock(&q->lock);
+     }
+ }
+@@ -960,6 +965,8 @@ done:
+ }
+ #endif
+ 
++static void profile_mark(const char* name, double* last);
++
+ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, SnxCodegen* codegen) {
+     Queue q;
+     SnxIr* ir = NULL;
+@@ -972,10 +979,12 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+     char* cached = NULL;
+     memset(&q, 0, sizeof(q));
+     error[0] = 0;
++    double t0 = snx_seconds(), t = t0;
+     if (llvm_init(error, sizeof(error))) {
+         fail(r, "%s", error);
+         return -1;
+     }
++    profile_mark("llvm init", &t);
+     if (r->cache) {
+         cached = cache_path(r, codegen);
+ #if defined(__powerpc64__)
+@@ -987,6 +996,7 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+             return 0;
+         }
+     }
++    profile_mark("cache load", &t);
+     units = chunks(codegen, r->jobs, &count);
+     if (!units) {
+         fail(r, "out of memory");
+@@ -1011,8 +1021,11 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+     q.codegen = codegen;
+     q.functions_total = units[count];
+     if (r->progress) r->progress(r->progress_user, 0, q.weight_total, 0, q.functions_total);
++    profile_mark("chunks", &t);
++    profile_log("chunks: %lu units, %u jobs", (unsigned long)count, r->jobs ? r->jobs : (unsigned)snx_cpu_count());
+     report(r, "LLVM: %lu code unit%s and the descriptor\n", (unsigned long)count, count == 1 ? "" : "s");
+     if (count) run_queue(&q, r->jobs);
++    profile_mark("units", &t);
+     if (q.failed) {
+         fail(r, "LLVM backend: %s", q.error);
+         goto done;
+@@ -1024,12 +1037,14 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+         fail(r, "LLVM backend: %s", error[0] ? error : "cannot save the descriptor's IR");
+         goto done;
+     }
++    profile_mark("descriptor", &t);
+     const unsigned char* rtlib = NULL;
+     size_t rtlib_size = 0;
+     if (rtlib_object(r->cache, r->opt, &rtlib, &rtlib_size, error, sizeof(error))) {
+         fail(r, "LLVM backend: %s", error);
+         goto done;
+     }
++    profile_mark("rtlib", &t);
+     /* link: runtime library, descriptor, units */
+     inputs = (SnxLinkInput*)calloc(count + 2, sizeof(*inputs));
+     if (!inputs) {
+@@ -1070,9 +1085,12 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+         fail(r, "linking the recompiled module failed: %s", error);
+         goto done;
+     }
++    profile_mark("link", &t);
+     report(r, "LLVM module: %.1f MB\n", (double)linked.size / 1000000.0);
+     if (load_image(r, m, linked.data, linked.size)) goto done;
++    profile_mark("load image", &t);
+     if (cached) save_cached(cached, linked.data, linked.size);
++    profile_mark("save cache", &t);
+     {
+         DescriptorFn describe = (DescriptorFn)(uintptr_t)image_symbol(m, DESCRIPTOR_SYMBOL);
+         if (!describe) {
+@@ -1081,6 +1099,7 @@ static int recompile_llvm(struct snx_recompiler* r, struct snx_recompiled* m, Sn
+         }
+         if (load_descriptor(r, m, describe())) goto done;
+     }
++    profile_mark("descriptor table", &t);
+     rc = 0;
+ done:
+     for (i = 0; i < count; ++i) free(q.units[i].object);
+@@ -1091,6 +1110,7 @@ done:
+     free(linked.data);
+     free(cached);
+     snx_ir_free(ir);
++    profile_log("llvm total: %.1f ms", (snx_seconds() - t0) * 1000.0);
+     return rc;
+ }
+ 
+@@ -1234,8 +1254,11 @@ static struct snx_recompiled* recompile(struct snx_recompiler* r, struct snx_rec
+        processes using the folder share. Without the memory for the path there is no file, and the JIT still works */
+     if (r->cache && m->view_count) m->jit_cache_path = snx_path_join(r->cache, "library-jit.cache");
+     m->hook_direct_calls = codegen->hook_direct_calls;
++    double t = snx_seconds();
+     int rc = recompile_llvm(r, m, codegen);
++    profile_mark("llvm module", &t);
+     if (!rc) rc = keep_invalidation_map(r, m, codegen);
++    profile_mark("invalidation map", &t);
+     snx_codegen_free(codegen);
+     if (rc) {
+         snx_recompiled_free(m);
+@@ -1256,8 +1279,10 @@ struct snx_recompiled* snx_recompile_ranges(struct snx_recompiler* r, const stru
+                                             size_t range_count, const uint64_t* hints, size_t hint_count) {
+     uint64_t lo, hi;
+     r->error[0] = 0;
++    double t0 = snx_seconds(), t = t0;
+     SnxCodeImage* views = images(r, ranges, range_count, 1, &lo, &hi);
+     if (!views) return NULL;
++    profile_mark("images", &t);
+     struct snx_recompiled* m = (struct snx_recompiled*)calloc(1, sizeof(*m));
+     if (!m) {
+         fail(r, "out of memory");
+@@ -1274,6 +1299,7 @@ struct snx_recompiled* snx_recompile_ranges(struct snx_recompiler* r, const stru
+         free(m);
+         return NULL;
+     }
++    profile_mark("keep code", &t);
+     SnxCodegen codegen = {0};
+     if (snx_codegen_analyze(&codegen, views, range_count, hints, hint_count, !r->verbose, r->features)) {
+         fail(r, "function discovery failed in 0x%llx-0x%llx", (unsigned long long)ranges[0].address,
+@@ -1283,11 +1309,15 @@ struct snx_recompiled* snx_recompile_ranges(struct snx_recompiler* r, const stru
+         free(m);
+         return NULL;
+     }
++    profile_mark("codegen", &t);
+     codegen.hook_direct_calls = r->hook_direct_calls;
+     free(views);
+     report(r, "%lu functions, %lu instructions\n", (unsigned long)codegen.function_count,
+            (unsigned long)codegen.instruction_count);
+-    return recompile(r, m, &codegen);
++    struct snx_recompiled* result = recompile(r, m, &codegen);
++    profile_mark("compile", &t);
++    profile_log("ranges total: %.1f ms", (snx_seconds() - t0) * 1000.0);
++    return result;
+ }
+ 
+ struct snx_recompiled* snx_recompile_from(struct snx_recompiler* r, const struct snx_code_range* ranges,
+@@ -1375,6 +1405,90 @@ GuestFn snx_recompiled_function(const struct snx_recompiled* m, uint64_t pc) {
+     return o < m->code_hi - m->code_lo && !(pc & 3) ? __atomic_load_n(&m->dispatch[o >> 2], __ATOMIC_ACQUIRE) : NULL;
+ }
+ 
++/* The guest function whose translated code is at host pc, for a sampler that sees where a thread runs: 1 with the
++   function's guest range and the offset into its host code; 0 for code that is no function's (the JIT's, a wrapper's,
++   or outside the module). The function a host pc belongs to is the last one whose code starts at or below it; translated
++   code is larger than the guest's, but a pc past a generous span of it is not that function's (a gap or other code) */
++int snx_recompiled_host_function(const struct snx_recompiled* m, uint64_t host, uint64_t* guest_start, uint64_t* guest_end,
++                                 uint64_t* offset)
++{
++    if (!m || !m->compiled_function_count) return 0;
++    const SnxCompiledFunction* best = NULL;
++    uint64_t best_code = 0;
++    for (size_t i = 0; i < m->compiled_function_count; ++i) {
++        const SnxCompiledFunction* f = &m->compiled_functions[i];
++        uint64_t code = (uint64_t)(uintptr_t)f->code;
++        if (!code || code > host) continue;
++        if (!best || code >= best_code) { best_code = code; best = f; }
++    }
++    if (!best || best->end <= best->start) return 0;
++    uint64_t span = (best->end - best->start) * 64 + 65536;
++    if (host - best_code >= span) return 0;
++    if (guest_start) *guest_start = best->start;
++    if (guest_end) *guest_end = best->end;
++    if (offset) *offset = host - best_code;
++    return 1;
++}
++
++/* What the dispatch table holds for guest pc, and whether that function was retired by a code change: 1 with its host
++   address and 1 in *stale; 0 when the slot is empty (the next call compiles the code there) */
++int snx_recompiled_function_state(const struct snx_recompiled* m, uint64_t pc, uint64_t* code, int* stale)
++{
++    if (code) *code = 0;
++    if (stale) *stale = 0;
++    if (!m || (pc & 3)) return 0;
++    uint64_t o = pc - m->code_lo;
++    if (o >= m->code_hi - m->code_lo) return 0;
++    GuestFn f = __atomic_load_n(&m->dispatch[o >> 2], __ATOMIC_ACQUIRE);
++    if (!f) return 0;
++    if (code) *code = (uint64_t)(uintptr_t)f;
++    if (stale) {
++        for (size_t i = 0; i < m->compiled_function_count; ++i) {
++            const SnxCompiledFunction* g = &m->compiled_functions[i];
++            if (g->entry < m->entry_count && m->entry_addresses[g->entry] == pc) {
++                *stale = m->stale[g->stale_index] != 0;
++                break;
++            }
++        }
++    }
++    return 1;
++}
++
++/* The invalidator's lines, when a caller asks for them (the driver's log): which functions it retired and which
++   dispatch slots it cleared, to tell a hook that went in and left a stale function reachable from one that did not */
++static void (*library_log_fn)(const char*);
++void snx_recompiler_set_log(void (*fn)(const char*)) { library_log_fn = fn; }
++static void library_log(const char* fmt, ...)
++{
++    if (!library_log_fn) return;
++    char text[512];
++    va_list ap;
++    va_start(ap, fmt);
++    vsnprintf(text, sizeof(text), fmt, ap);
++    va_end(ap);
++    library_log_fn(text);
++}
++
++/* Timing lines for a cold translation, when TL_X64_PROFILE is set: the driver's log gets them through its callback. */
++static void profile_log(const char* fmt, ...)
++{
++    if (!getenv("TL_X64_PROFILE")) return;
++    char text[512];
++    va_list ap;
++    va_start(ap, fmt);
++    vsnprintf(text, sizeof(text), fmt, ap);
++    va_end(ap);
++    library_log("profile: %s", text);
++}
++
++/* The time since the previous mark, for the phase named. */
++static void profile_mark(const char* name, double* last)
++{
++    double now = snx_seconds();
++    profile_log("%s: %.1f ms", name, (now - *last) * 1000.0);
++    *last = now;
++}
++
+ void snx_recompiled_set_fallback(struct snx_recompiled* m, GuestFn fallback) {
+     __atomic_store_n(&m->fallback, fallback, __ATOMIC_RELEASE);
+ }
+@@ -1405,22 +1519,31 @@ size_t snx_recompiled_invalidate(struct snx_recompiled* m, uint64_t addr, uint64
+             else
+                 alias_hi = mid;
+         }
++        size_t cleared = 0;
+         for (; alias_lo < m->entry_alias_count && m->entry_aliases[alias_lo].code == code; ++alias_lo) {
+             size_t entry = m->entry_aliases[alias_lo].entry;
+             uint64_t address = m->entry_addresses[entry];
+-            if (address >= m->code_lo && address < m->code_hi)
++            if (address >= m->code_lo && address < m->code_hi) {
+                 __atomic_store_n(&m->dispatch[(address - m->code_lo) >> 2], NULL, __ATOMIC_RELEASE);
++                ++cleared;
++            }
+         }
+         /* The aliases above share the first leader's wrapper; every other leader's slot goes too, so a call through
+            one of them cannot re-enter the retired function */
+         for (size_t k = 0; k < function->leader_count; ++k) {
+             size_t entry = function->leaders[k];
+             uint64_t address = m->entry_addresses[entry];
+-            if (address >= m->code_lo && address < m->code_hi)
++            if (address >= m->code_lo && address < m->code_hi) {
+                 __atomic_store_n(&m->dispatch[(address - m->code_lo) >> 2], NULL, __ATOMIC_RELEASE);
++                ++cleared;
++            }
+         }
+         /* Clear dispatch before marking stale so diversions miss rather than re-enter */
+         __atomic_store_n(&m->stale[function->stale_index], 1, __ATOMIC_RELEASE);
++        library_log("invalidate: %#llx..%#llx (entry %#llx, code %#llx): %zu dispatch slot(s) cleared, stale byte %zu set",
++                    (unsigned long long)function->start, (unsigned long long)function->end,
++                    (unsigned long long)(function->entry < m->entry_count ? m->entry_addresses[function->entry] : 0),
++                    (unsigned long long)code, cleared, function->stale_index);
+         if (callback) callback(context, function->start, function->end);
+         ++count;
+     }
+diff --git a/src/common/cpu/recompiler/snx_recompiler.h b/src/common/cpu/recompiler/snx_recompiler.h
+index 30f5563b..554db91d 100644
+--- a/src/common/cpu/recompiler/snx_recompiler.h
++++ b/src/common/cpu/recompiler/snx_recompiler.h
+@@ -172,6 +172,17 @@ SNX_RECOMPILER_API int snx_recompiled_bind(struct snx_recompiled* m, CPU* cpu);
+ SNX_RECOMPILER_API GuestFn snx_recompiled_lookup(struct snx_recompiled* m, uint64_t pc);
+ /* The recompiled function entered at pc (a leader), NULL for any other pc */
+ SNX_RECOMPILER_API GuestFn snx_recompiled_function(const struct snx_recompiled* m, uint64_t pc);
++/* The guest function whose translated code is at host pc, for a sampler that sees where a thread runs: 1 with the
++   function's guest range and the offset into its host code; 0 for code that is no function's (the JIT's, a wrapper's,
++   or outside the module) */
++SNX_RECOMPILER_API int snx_recompiled_host_function(const struct snx_recompiled* m, uint64_t host, uint64_t* guest_start,
++                                                    uint64_t* guest_end, uint64_t* offset);
++/* What the dispatch table holds for guest pc, and whether that function was retired by a code change: 1 with its host
++   address and 1 in *stale; 0 when the slot is empty (the next call compiles the code there) */
++SNX_RECOMPILER_API int snx_recompiled_function_state(const struct snx_recompiled* m, uint64_t pc, uint64_t* code,
++                                                     int* stale);
++/* Receives the invalidator's lines, when set */
++SNX_RECOMPILER_API void snx_recompiler_set_log(void (*fn)(const char*));
+ /* What a miss in the module runs (snx_runtime_defaults' RtAPI.miss, snx_recompiled_lookup and _call) instead of the
+    module's JIT: a caller's own just-in-time compiler, called as the guest function at the pc, which compiles the code
+    there and runs it. NULL restores the module's JIT. A caller with its own RtAPI.miss and dispatch table (gnuabi)

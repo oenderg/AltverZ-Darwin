@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: "Link to the PvZ2 AltVerZ 1.8.3f APK (direct, Google Drive or MEGA); empty: this repository's build-inputs draft release"
+        description: "Link to the PvZ2 AltVerZ 1.8.3f APK (direct, Google Drive or MEGA; Windows takes direct links only); empty: this repository's build-inputs draft release"
         required: false
         default: ""
       obb_url:
@@ -14,27 +14,44 @@ on:
       platforms:
         description: "What to build"
         type: choice
-        options: [iPhone/iPad and Mac, iPhone/iPad, Mac]
-        default: iPhone/iPad and Mac
+        options: [All, iPhone/iPad and Mac, iPhone/iPad, Mac, Windows]
+        default: All
       variants:
         description: "Which downloads to build"
         type: choice
         options: [Slim and full, Slim, Full]
         default: Slim and full
       publish:
-        description: "Publish the prerelease, the AltStore source and the Mac update feed (off: build only)"
+        description: "Publish the release, the AltStore source and the update feeds (off: build only)"
         type: boolean
         default: true
       release_tag:
         description: "Release tag (leave empty: v<VERSION>)"
         required: false
         default: ""
+      skip_smoke:
+        description: "Skip the Windows smoke test, so publishing does not wait for it (only after checking a failure yourself)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+  actions: read  # the publish job downloads this run's files through the API
 
 jobs:
+  # scripts/check-repo.sh first: it takes seconds, so a mismatch stops the run before any build.
+  check:
+    name: Check the repo
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/check-repo.sh
+
   build:
+    name: iPhone, iPad and Mac
+    needs: check
+    if: github.event.inputs.platforms != 'Windows'
     # The Xcode 27 image, so the release is built with the same SDK as a local build
     # (Xcode 27). An app built with an older SDK is treated differently by iPadOS 27:
     # the 26.5 SDK builds were held to full-screen sizes on the iPad while the local
@@ -78,13 +95,12 @@ jobs:
           echo "game=$GAME_VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=${RELEASE_TAG:-v$APP_VERSION}" >> "$GITHUB_OUTPUT"
           echo "prefix=$PROFILE_ARTIFACT-$GAME_VERSION-Darwin-$APP_VERSION" >> "$GITHUB_OUTPUT"
-          echo "apk_name=$PROFILE_ARTIFACT-$GAME_VERSION.apk" >> "$GITHUB_OUTPUT"
 
       - name: The APK
         id: apk
         env:
           APK_URL: ${{ github.event.inputs.apk_url }}
-          APK_NAME: ${{ steps.metadata.outputs.apk_name }}
+          GAME: ${{ steps.metadata.outputs.game }}
           REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -92,18 +108,38 @@ jobs:
           if [ -n "$APK_URL" ]; then echo "apk=$APK_URL" >> "$GITHUB_OUTPUT"; exit 0; fi
           # The repository's own copy: an asset of the draft release "build-inputs", which only
           # people with write access can see (docs/RELEASING.md). A fork has none: give a link.
+          . scripts/profile.sh
+          name="$PROFILE_ARTIFACT-$GAME.apk"
           id="$(gh api "repos/$REPOSITORY/releases" --paginate \
-            --jq ".[] | select(.draft and .tag_name == \"build-inputs\") | .assets[] | select(.name == \"$APK_NAME\") | .id" | head -1)"
-          [ -n "$id" ] || { echo "no APK link given and no $APK_NAME in a build-inputs draft release" >&2; exit 1; }
+            --jq ".[] | select(.draft and .tag_name == \"build-inputs\") | .assets[] | select(.name == \"$name\") | .id" | head -1)"
+          [ -n "$id" ] || { echo "no APK link given and no $name in a build-inputs draft release" >&2; exit 1; }
           mkdir -p inputs
-          gh api -H "Accept: application/octet-stream" "repos/$REPOSITORY/releases/assets/$id" > "inputs/$APK_NAME"
-          ls -l "inputs/$APK_NAME"
-          echo "apk=$PWD/inputs/$APK_NAME" >> "$GITHUB_OUTPUT"
+          gh api -H "Accept: application/octet-stream" "repos/$REPOSITORY/releases/assets/$id" > "inputs/$name"
+          ls -l "inputs/$name"
+          echo "apk=$PWD/inputs/$name" >> "$GITHUB_OUTPUT"
+
+      - name: The CDN archive
+        # The mod's live-content host no longer serves it (HTTP 404), so the repository keeps its own
+        # copy beside the APK, in the draft release "build-inputs" (docs/RELEASING.md).
+        id: cdn
+        env:
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          . scripts/profile.sh
+          id="$(gh api "repos/$REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.draft and .tag_name == \"build-inputs\") | .assets[] | select(.name == \"$PROFILE_CDN_ARCHIVE\") | .id" | head -1)"
+          [ -n "$id" ] || { echo "no $PROFILE_CDN_ARCHIVE in a build-inputs draft release" >&2; exit 1; }
+          mkdir -p inputs
+          gh api -H "Accept: application/octet-stream" "repos/$REPOSITORY/releases/assets/$id" > "inputs/$PROFILE_CDN_ARCHIVE"
+          ls -l "inputs/$PROFILE_CDN_ARCHIVE"
+          echo "cdn=$PWD/inputs/$PROFILE_CDN_ARCHIVE" >> "$GITHUB_OUTPUT"
 
       - name: dmgbuild
         # Lays out the Mac disk image's window (scripts/make-dmg.sh, scripts/dmg/). In a venv put
         # first on PATH: the runner's Python refuses pip installs; the other scripts need only the
-        # standard library. The AltVerZ profile has no window art yet, so its DMG is plain until it does.
+        # standard library.
         run: |
           set -euo pipefail
           python3 -m venv "$RUNNER_TEMP/dmg-venv"
@@ -114,6 +150,7 @@ jobs:
       - name: Build and package
         env:
           APK_URL: ${{ steps.apk.outputs.apk }}
+          CDN: ${{ steps.cdn.outputs.cdn }}
           OBB_URL: ${{ github.event.inputs.obb_url }}
           PLATFORMS: ${{ github.event.inputs.platforms }}
           VARIANTS: ${{ github.event.inputs.variants }}
@@ -135,8 +172,7 @@ jobs:
             extra=()
             [ "$variant" = slim ] && extra+=(--slim)
             [ -n "$OBB_URL" ] && extra+=(--obb "$OBB_URL")
-            ./build.sh --profile "$PROFILE" "${platforms[@]}" ${extra[@]+"${extra[@]}"} \
-              ${reuse[@]+"${reuse[@]}"} --apk "$APK_URL" --out out
+            ./build.sh --profile "$PROFILE" "${platforms[@]}" ${extra[@]+"${extra[@]}"} ${reuse[@]+"${reuse[@]}"} --apk "$APK_URL" --cdn "$CDN" --out out
             scripts/package-release.sh out release "$variant"
             # Keep downloaded inputs and converted dylibs, not bundles or converter scratch files.
             rm -rf out/.work/ios out/.work/macos "out/$PROFILE_APP_NAME.app" out/.work/libs \
@@ -146,88 +182,412 @@ jobs:
           done
           ls -lh release
 
-      - name: Keep the iOS download (build only)
-        # A run that doesn't publish keeps its files as run artifacts for 14 days, e.g. a test build
-        # for someone to check a fix. Anyone signed in to GitHub can download them from the run page.
-        if: github.event.inputs.publish != 'true'
+      # The files go to the publish job as run files. A run that doesn't publish keeps them for
+      # 14 days, e.g. a test build for someone to check a fix; anyone signed in to GitHub can
+      # download them from the run page.
+      - name: Keep the iOS download
         uses: actions/upload-artifact@v7
         with:
           path: release/${{ steps.metadata.outputs.prefix }}-iOS.ipa
           archive: false
-          retention-days: 14
+          retention-days: ${{ github.event.inputs.publish == 'true' && 1 || 14 }}
           if-no-files-found: ignore
 
-      - name: Keep the iOS full download (build only)
-        if: github.event.inputs.publish != 'true'
+      - name: Keep the iOS full download
         uses: actions/upload-artifact@v7
         with:
           path: release/${{ steps.metadata.outputs.prefix }}-iOS-Full.ipa
           archive: false
-          retention-days: 14
+          retention-days: ${{ github.event.inputs.publish == 'true' && 1 || 14 }}
           if-no-files-found: ignore
 
-      - name: Keep the Mac download (build only)
-        if: github.event.inputs.publish != 'true'
+      - name: Keep the Mac download
         uses: actions/upload-artifact@v7
         with:
           path: release/${{ steps.metadata.outputs.prefix }}-Mac.dmg
           archive: false
-          retention-days: 14
+          retention-days: ${{ github.event.inputs.publish == 'true' && 1 || 14 }}
           if-no-files-found: ignore
 
-      - name: Keep the Mac full download (build only)
-        if: github.event.inputs.publish != 'true'
+      - name: Keep the Mac full download
         uses: actions/upload-artifact@v7
         with:
           path: release/${{ steps.metadata.outputs.prefix }}-Mac-Full.dmg
           archive: false
+          retention-days: ${{ github.event.inputs.publish == 'true' && 1 || 14 }}
+          if-no-files-found: ignore
+
+  # Windows: the ARM64 programs cross-build on a Mac with llvm-mingw, the way they are built
+  # locally; the x86-64 programs, the setup and the zips are made on Windows in MSYS2's CLANG64
+  # with the package versions runtime/win/x64/msys2-clang64.txt pins (docs/windows-shipping.md).
+  windows-arm64:
+    name: Windows ARM64 programs
+    needs: check
+    if: github.event.inputs.platforms == 'All' || github.event.inputs.platforms == 'Windows'
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      PROFILE: altverz
+      TL_WIN_TOOLCHAIN: ${{ github.workspace }}/out/win-toolchain
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain cache
+        uses: actions/cache@v6
+        with:
+          path: out/win-toolchain
+          key: win-arm64-toolchain-${{ hashFiles('runtime/win/setup-toolchain.sh', 'runtime/win/fetch-zlib.sh') }}
+
+      - name: Toolchain
+        run: runtime/win/setup-toolchain.sh
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          runtime/win/fetch-winsparkle.sh
+          runtime/win/build-win.sh game
+          runtime/win/build-win.sh game-portable
+          ls -l "out/win-altverz/PvZ2 AltVerZ.exe" "out/win-altverz-portable/PvZ2 AltVerZ.exe"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-arm64-programs
+          path: |
+            out/win-altverz/PvZ2 AltVerZ.exe
+            out/win-altverz-portable/PvZ2 AltVerZ.exe
+          retention-days: 1
+          if-no-files-found: error
+
+  windows:
+    name: Windows setup and zips
+    needs: windows-arm64
+    runs-on: windows-2025
+    timeout-minutes: 120
+    env:
+      PROFILE: altverz
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Keep line endings
+        # The scripts and patches must stay LF: Git for Windows checks text out as CRLF by default.
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-arm64-programs
+          path: out
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: false
+          install: git make patch perl zip unzip
+
+      - name: Toolchain (pinned CLANG64 packages)
+        run: runtime/win/x64/setup-msys2.sh
+
+      - name: Inno Setup 7.1.1
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe'
+          $file = "$env:RUNNER_TEMP\innosetup-7.1.1-x64.exe"
+          Invoke-WebRequest $url -OutFile $file
+          $sum = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          if ($sum -ne '8a5a6711c3766a6e5fb74f280ba0e3551e719ce94538d901fdbd1f8f9920b3f0') { throw "innosetup-7.1.1-x64.exe has sha256 $sum" }
+          Start-Process $file -Wait -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/ALLUSERS', '/DIR="C:\Program Files\Inno Setup 7"'
+          (Get-Item 'C:\Program Files\Inno Setup 7\ISCC.exe').FullName
+
+      - name: Release metadata
+        id: metadata
+        run: |
+          set -euo pipefail
+          . scripts/profile.sh
+          . scripts/app-version.sh
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "prefix=$PROFILE_ARTIFACT-$GAME_VERSION-Darwin-$APP_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: The APK and the CDN archive
+        env:
+          APK_URL: ${{ github.event.inputs.apk_url }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export PATH="$PATH:/c/Program Files/GitHub CLI"
+          . scripts/profile.sh
+          json() { python3 -c "import json,sys; print(json.load(open('$PROFILE_GAME_DATA'))$1)"; }
+          # An asset of the draft release "build-inputs" (docs/RELEASING.md)
+          asset() {
+            id="$(gh api "repos/$REPOSITORY/releases" --paginate \
+              --jq ".[] | select(.draft and .tag_name == \"build-inputs\") | .assets[] | select(.name == \"$1\") | .id" | head -1)"
+            [ -n "$id" ] || { echo "no $1 in a build-inputs draft release" >&2; exit 1; }
+            gh api -H "Accept: application/octet-stream" "repos/$REPOSITORY/releases/assets/$id" > "$2"
+          }
+          mkdir -p inputs
+          if [ -n "$APK_URL" ]; then
+            case "$APK_URL" in *drive.google.*|*mega.*)
+              echo "the Windows build takes a direct APK link or the repository's own copy" >&2; exit 1 ;;
+            esac
+            curl -fL --retry 3 -o inputs/pvz2.apk "$APK_URL"
+          else
+            asset "$PROFILE_ARTIFACT-$(json '["version"]').apk" inputs/pvz2.apk
+          fi
+          got="$(sha256sum inputs/pvz2.apk | cut -d' ' -f1)"
+          [ "$got" = "$(json '["apk_sha256"]')" ] || { echo "the APK has sha256 $got, not the game's" >&2; exit 1; }
+          asset "$PROFILE_CDN_ARCHIVE" "inputs/$PROFILE_CDN_ARCHIVE"
+          ls -l inputs
+
+      - name: ScarletNX cache
+        uses: actions/cache@v6
+        with:
+          path: out/scarletnx
+          key: scarletnx-${{ hashFiles('runtime/win/x64/scarletnx/scarletnx.patch', 'runtime/win/x64/scarletnx/build-scarletnx.sh', 'runtime/win/x64/msys2-clang64.txt') }}
+
+      - name: ScarletNX
+        run: runtime/win/x64/scarletnx/build-scarletnx.sh out/scarletnx
+
+      - name: x86-64 programs
+        run: |
+          set -euo pipefail
+          . scripts/profile.sh
+          # The generated names header the x64 build compiles against (MSYS2 has no use for the rest)
+          profile_generate "$PWD/out/win-profile-$PROFILE"
+          runtime/win/fetch-winsparkle.sh
+          runtime/win/fetch-zlib.sh out/win-zlib
+          sh runtime/win/x64/build-x64.sh runtime out/scarletnx out/win-zlib out/win-altverz-x64 game
+          sh runtime/win/x64/build-x64.sh runtime out/scarletnx out/win-zlib out/win-altverz-x64 game-portable
+          runtime/win/x64/collect-dlls.sh "out/win-altverz-x64-portable/PvZ2 AltVerZ x64.exe" out/win-altverz/x64-runtime
+          ls -l out/win-altverz-x64/*.exe out/win-altverz-x64-portable/*.exe out/win-altverz/x64-runtime
+          sha256sum out/win-altverz/x64-runtime/*.dll
+
+      - name: ANGLE
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export PATH="$PATH:/c/Program Files/GitHub CLI"
+          runtime/win/fetch-angle.sh all
+
+      - name: Stage the setup
+        run: runtime/win/installer/build-installer.sh --apk inputs/pvz2.apk --tar "inputs/$(. scripts/profile.sh; echo "$PROFILE_CDN_ARCHIVE")"
+
+      - name: The setup (Inno Setup)
+        shell: cmd
+        run: call runtime\win\installer\build-installer.cmd "%GITHUB_WORKSPACE%\out\win-installer" ${{ steps.metadata.outputs.version }} "%GITHUB_WORKSPACE%\out\win-release"
+
+      - name: The portable zips
+        run: |
+          set -euo pipefail
+          . scripts/profile.sh
+          runtime/win/package-zip.sh --arch all --apk inputs/pvz2.apk --tar "inputs/$PROFILE_CDN_ARCHIVE" \
+            --x64-runtime out/win-altverz/x64-runtime --out out/win-release
+          ls -l out/win-release
+          sha256sum out/win-release/*
+
+      - name: Keep the setup
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/win-release/${{ steps.metadata.outputs.prefix }}-Windows-Setup.exe
+          archive: false
+          retention-days: ${{ github.event.inputs.publish == 'true' && 1 || 14 }}
+          if-no-files-found: error
+
+      - name: Keep the x64 zip
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/win-release/${{ steps.metadata.outputs.prefix }}-Windows-x64.zip
+          archive: false
+          retention-days: ${{ github.event.inputs.publish == 'true' && 1 || 14 }}
+          if-no-files-found: error
+
+      - name: Keep the ARM64 zip
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/win-release/${{ steps.metadata.outputs.prefix }}-Windows-ARM64.zip
+          archive: false
+          retention-days: ${{ github.event.inputs.publish == 'true' && 1 || 14 }}
+          if-no-files-found: error
+
+  # Each portable zip started twice on a runner of its own CPU, as a new player would
+  # (runtime/win/smoke-test.ps1): the first start must translate (x64) and draw, the second
+  # must find the translation and draw again, and both must draw the Welcome screen of
+  # runtime/win/smoke/first-<game>.png. The runners have no GPU, so ANGLE draws through
+  # Windows' software renderer: the frames count, the frame rate does not. The logs and
+  # pictures are kept as the smoke-<arch> artifact.
+  smoke:
+    name: Windows smoke test (${{ matrix.arch }})
+    needs: windows
+    if: github.event.inputs.skip_smoke != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+            zip: Windows-x64.zip
+          - arch: ARM64
+            runner: windows-11-arm
+            zip: Windows-ARM64.zip
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      # A single-file artifact that is a .zip arrives unpacked: the portable copy itself
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "*-${{ matrix.zip }}"
+          path: game
+          merge-multiple: true
+
+      - name: The OBB's name
+        id: obb
+        run: |
+          $p = Get-Content data/profiles/altverz.json | ConvertFrom-Json
+          $j = Get-Content $p.game_data | ConvertFrom-Json
+          "package=$($p.package_name)" >> $env:GITHUB_OUTPUT
+          "exe=$($p.app_name)*.exe" >> $env:GITHUB_OUTPUT
+          "game=$($j.version)" >> $env:GITHUB_OUTPUT
+          "name=$($j.obb_name)" >> $env:GITHUB_OUTPUT
+          "sha=$($j.obb_sha256)" >> $env:GITHUB_OUTPUT
+          "url=$($j.obb_urls[0])" >> $env:GITHUB_OUTPUT
+
+      - name: OBB cache
+        id: obb-cache
+        uses: actions/cache@v6
+        with:
+          path: obb
+          key: obb-${{ steps.obb.outputs.sha }}
+
+      - name: The OBB
+        if: steps.obb-cache.outputs.cache-hit != 'true'
+        env:
+          NAME: ${{ steps.obb.outputs.name }}
+          SHA: ${{ steps.obb.outputs.sha }}
+          URL: ${{ steps.obb.outputs.url }}
+        run: |
+          New-Item -ItemType Directory -Force -Path obb | Out-Null
+          curl.exe -fL --retry 3 -o "obb/$env:NAME" $env:URL
+          if ($LASTEXITCODE) { throw "the OBB download failed" }
+          $sum = (Get-FileHash "obb/$env:NAME" -Algorithm SHA256).Hash.ToLower()
+          if ($sum -ne $env:SHA) { throw "the OBB has sha256 $sum, not $env:SHA" }
+
+      - name: Start the game twice
+        env:
+          NAME: ${{ steps.obb.outputs.name }}
+          GAME: ${{ steps.obb.outputs.game }}
+          PACKAGE: ${{ steps.obb.outputs.package }}
+          EXE: ${{ steps.obb.outputs.exe }}
+        run: ./runtime/win/smoke-test.ps1 -Game game -Obb "obb/$env:NAME" -Out smoke -Baseline "runtime/win/smoke/first-$env:GAME.png" -ExeFilter $env:EXE -Package $env:PACKAGE
+
+      - name: Keep the logs and screenshots
+        if: always()
+        # A failed upload (GitHub's storage) must not fail a test that passed
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-${{ matrix.arch }}
+          path: smoke
           retention-days: 14
           if-no-files-found: ignore
 
-      - name: Release notes
-        if: github.event.inputs.publish == 'true'
+  # One job publishes everything, once every build the run asked for has passed: the release
+  # (made as a draft, filled, then made public), its text, the AltStore source and both update
+  # feeds. A failed or cancelled build publishes nothing, and nor does a Windows build whose
+  # smoke test failed (the installed copies update themselves to it), unless the run skipped
+  # the smoke test. On a Mac, for Sparkle's sign_update.
+  publish:
+    name: Publish
+    needs: [build, windows, smoke]
+    if: >-
+      always() && github.event.inputs.publish == 'true' &&
+      (needs.build.result == 'success' ||
+        (github.event.inputs.platforms == 'Windows' && needs.build.result == 'skipped')) &&
+      (needs.windows.result == 'success' ||
+        (github.event.inputs.platforms != 'All' && github.event.inputs.platforms != 'Windows' &&
+          needs.windows.result == 'skipped')) &&
+      (needs.smoke.result == 'success' ||
+        (needs.smoke.result == 'skipped' &&
+          (github.event.inputs.skip_smoke == 'true' || needs.windows.result == 'skipped')))
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # the tags: the release notes list the changes since the previous one
+
+      - name: Release metadata
+        id: metadata
         env:
-          VERSION: ${{ steps.metadata.outputs.version }}
-          TAG: ${{ steps.metadata.outputs.tag }}
-          REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
         run: |
           set -euo pipefail
-          python3 scripts/release-notes.py release --version "$VERSION" --tag "$TAG" --repo "$REPOSITORY" > release-notes.md
-          cat release-notes.md
+          . scripts/profile.sh
+          . scripts/app-version.sh
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "game=$GAME_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=${RELEASE_TAG:-v$APP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "prefix=$PROFILE_ARTIFACT-$GAME_VERSION-Darwin-$APP_VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Publish the prerelease
-        if: github.event.inputs.publish == 'true'
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.metadata.outputs.tag }}
-          name: "AltVerZ-Darwin ${{ steps.metadata.outputs.version }} · PvZ2 AltVerZ ${{ steps.metadata.outputs.game }} (early build)"
-          body_path: release-notes.md
-          prerelease: true
-          files: release/*
-          fail_on_unmatched_files: true
-
-      - name: Update the AltStore source
-        if: github.event.inputs.publish == 'true' && github.event.inputs.platforms != 'Mac' && github.event.inputs.variants != 'Full'
+      # The files are single-file run files (archive: false). download-artifact unpacks a .zip
+      # one, so the Windows zips would arrive as their contents; the API hands each back as it is.
+      - name: Download the release files
         env:
-          TAG: ${{ steps.metadata.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          PREFIX: ${{ steps.metadata.outputs.prefix }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name | test("^PvZ2-AltVerZ-.*-(iOS(-Full)?[.]ipa|Mac(-Full)?[.]dmg|Windows-(Setup[.]exe|x64[.]zip|ARM64[.]zip))$")) | "\(.id) \(.name)"' |
+          while read -r id name; do
+            case "$name" in "$PREFIX"-*) ;; *) echo "$name is not this release's ($PREFIX)" >&2; exit 1 ;; esac
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "release/$name"
+          done
+          ls -l release
+          [ -n "$(ls release)" ] || { echo "no release files in this run" >&2; exit 1; }
+
+      - name: The release
+        env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.metadata.outputs.version }}
           GAME: ${{ steps.metadata.outputs.game }}
+          TAG: ${{ steps.metadata.outputs.tag }}
           PREFIX: ${{ steps.metadata.outputs.prefix }}
-          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          python3 scripts/update-altstore-source.py "release/$PREFIX-iOS.ipa" --tag "$TAG" \
-            --changelog "$(python3 scripts/release-notes.py --whats-new --version "$VERSION" --format text)"
-          python3 scripts/update-altstore-source.py --check
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add altstore/source.json
-          git diff --cached --quiet && exit 0
-          git commit -m "chore(altstore): update the source for $TAG"
-          git push origin "HEAD:${{ github.event.repository.default_branch }}"
+          # The release page lists the files in the order they were uploaded: one at a time, this order.
+          files=()
+          for end in iOS.ipa Mac.dmg Windows-Setup.exe iOS-Full.ipa Mac-Full.dmg Windows-x64.zip Windows-ARM64.zip; do
+            if [ -f "release/$PREFIX-$end" ]; then files+=("release/$PREFIX-$end"); fi
+          done
+          [ "${#files[@]}" -eq "$(ls release | wc -l)" ] || { echo "release/ has files outside the list" >&2; ls release >&2; exit 1; }
+          python3 scripts/release-notes.py release --version "$VERSION" --tag "$TAG" --repo "$GITHUB_REPOSITORY" > release-notes.md
+          cat release-notes.md
+          # A 0.x release is a prerelease
+          pre=""; case "$VERSION" in 0.*) pre=1 ;; esac
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # A run that adds files to a release that is out already (another platform, a rebuild).
+            for f in "${files[@]}"; do gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY" --clobber; done
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/assets.json"
+            python3 scripts/release-notes.py --assets "$RUNNER_TEMP/assets.json" --version "$VERSION" \
+              --tag "$TAG" --repo "$GITHUB_REPOSITORY" > release-notes.md
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
+          else
+            # A draft until every file is attached, so nobody sees a release with some of them.
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft \
+              --title "AltVerZ-Darwin $VERSION · PvZ2 AltVerZ $GAME" ${pre:+--prerelease} --notes-file release-notes.md
+            for f in "${files[@]}"; do gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY"; done
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          fi
 
-      - name: Update the Mac update feed
-        if: github.event.inputs.publish == 'true' && github.event.inputs.platforms != 'iPhone/iPad' && github.event.inputs.variants != 'Full'
+      - name: The AltStore source and the update feeds
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           VERSION: ${{ steps.metadata.outputs.version }}
@@ -235,20 +595,33 @@ jobs:
           PREFIX: ${{ steps.metadata.outputs.prefix }}
         run: |
           set -euo pipefail
-          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
-            echo "no SPARKLE_PRIVATE_KEY secret: the Mac update feed is left as it is"
-            exit 0
-          fi
-          # Every update is the slim app, signed with the key whose public half the app carries.
-          dmg="release/$PREFIX-Mac.dmg"
-          sig="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | out/.work/sparkle/bin/sign_update --ed-key-file - -p "$dmg")"
-          python3 scripts/update-appcast.py "$dmg" --tag "$TAG" --ed-signature "$sig" \
-            --notes-html "$(python3 scripts/release-notes.py --whats-new --version "$VERSION" --format html)"
-          python3 scripts/update-appcast.py --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add sparkle/appcast.xml
-          git diff --cached --quiet && exit 0
-          git commit -m "chore(sparkle): update the Mac update feed for $TAG"
+          if [ -f "release/$PREFIX-iOS.ipa" ]; then
+            python3 scripts/update-altstore-source.py "release/$PREFIX-iOS.ipa" --tag "$TAG" \
+              --changelog "$(python3 scripts/release-notes.py --whats-new --version "$VERSION" --format text)"
+            python3 scripts/update-altstore-source.py --check
+            git add altstore/source.json
+            git diff --cached --quiet || git commit -m "chore(altstore): update the source for $TAG"
+          fi
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "no SPARKLE_PRIVATE_KEY secret: the update feeds are left as they are"
+          else
+            # Every update is the slim app or the setup, signed with the key whose public half the
+            # apps carry. The key goes to sign_update on stdin, never to a file or the log.
+            if [ -f "release/$PREFIX-Mac.dmg" ]; then
+              scripts/fetch-sparkle.sh out/.work/sparkle
+              sig="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | out/.work/sparkle/bin/sign_update --ed-key-file - -p "release/$PREFIX-Mac.dmg")"
+              python3 scripts/update-appcast.py "release/$PREFIX-Mac.dmg" --tag "$TAG" --ed-signature "$sig" \
+                --notes-html "$(python3 scripts/release-notes.py --whats-new --version "$VERSION" --format html)"
+              python3 scripts/update-appcast.py --check
+              git add sparkle/appcast.xml
+              git diff --cached --quiet || git commit -m "chore(sparkle): update the Mac update feed for $TAG"
+            fi
+            if [ -f "release/$PREFIX-Windows-Setup.exe" ]; then
+              printf '%s' "$SPARKLE_PRIVATE_KEY" | scripts/publish-windows-setup.sh \
+                "release/$PREFIX-Windows-Setup.exe" --tag "$TAG" --key-file - --commit
+            fi
+          fi
           git pull --rebase origin "${{ github.event.repository.default_branch }}"
           git push origin "HEAD:${{ github.event.repository.default_branch }}"

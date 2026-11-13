@@ -2,13 +2,17 @@
 """Put a release's notes together (release-notes/README.md says what goes in them).
 
   scripts/release-notes.py <release-dir> --version <v> --tag <tag> [--since <ref>] [--repo <owner/name>]
+  scripts/release-notes.py --assets <json> --version <v> --tag <tag> [...]
   scripts/release-notes.py --whats-new --version <v> [--format md|text|html]
 
 The first form prints the release page's Markdown: release-notes/<version>.md as
 What's new, the feat/fix/perf commits since the previous tag (or --since) folded
 under All changes, and release-notes/footer.md with a table of the files in the
-release directory. The second form prints only What's new: as plain text for the
-AltStore / SideStore changelog, or as HTML for the Mac update window.
+release directory. With --assets the table lists a published release's files
+instead, from `gh release view <tag> --json assets` saved to a file: the release
+workflow uses it once the Windows files join the Apple ones. The last form prints
+only What's new: as plain text for the AltStore / SideStore changelog, or as HTML
+for the Mac update window.
 Python 3 standard library only.
 """
 
@@ -25,7 +29,12 @@ GROUPS = [("feat", "Features"), ("fix", "Fixes"), ("perf", "Performance")]
 TITLE = re.compile(r"^(\w+)(?:\(([^)]+)\))?!?: (.+)$")
 # What each release file is, by the end of its name
 KINDS = [("-iOS.ipa", "iPhone / iPad"), ("-iOS-Full.ipa", "iPhone / iPad, game data included"),
-         ("-Mac.dmg", "Mac (Apple silicon)"), ("-Mac-Full.dmg", "Mac, game data included")]
+         ("-Mac.dmg", "Mac (Apple silicon)"), ("-Mac-Full.dmg", "Mac, game data included"),
+         ("-Windows-Setup.exe", "Windows (Intel/AMD and ARM)"),
+         ("-Windows-x64.zip", "Windows Intel/AMD, portable"),
+         ("-Windows-ARM64.zip", "Windows on ARM, portable")]
+# The one-click line at the top: the file most people want on each platform
+QUICK = [("-iOS.ipa", "iPhone / iPad"), ("-Mac.dmg", "Mac"), ("-Windows-Setup.exe", "Windows")]
 
 
 def whats_new(version):
@@ -62,21 +71,42 @@ def size(n):
     return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{round(n / 1e6)} MB"
 
 
-def downloads(release_dir):
+def release_files(args):
+    """The release's files as (name, bytes): a local folder's, or a published release's."""
+    if args.assets:
+        import json
+        return [(a["name"], a["size"]) for a in json.load(open(args.assets))["assets"]]
+    return [(n, os.path.getsize(os.path.join(args.release_dir, n))) for n in os.listdir(args.release_dir)]
+
+
+def downloads(files):
     rows = []
     for suffix, what in KINDS:
-        for name in sorted(os.listdir(release_dir)):
+        for name, n in sorted(files):
             if name.endswith(suffix):
-                rows.append(f"| {what} | `{name}` | {size(os.path.getsize(os.path.join(release_dir, name)))} |")
+                rows.append(f"| {what} | `{name}` | {size(n)} |")
     if not rows:
-        sys.exit(f"no IPA or DMG in {release_dir}")
+        sys.exit("no release files (IPA, DMG or Windows setup) to list")
     return "| Device | File | Size |\n|---|---|---|\n" + "\n".join(rows)
 
 
+def quick_links(files, tag, repo):
+    """One line of direct download links, one per platform the release has a file for."""
+    links = []
+    for suffix, what in QUICK:
+        for name, _ in sorted(files):
+            if name.endswith(suffix):
+                links.append(f"[{what}](https://github.com/{repo}/releases/download/{tag}/{name})")
+                break
+    return "**Download:** " + " · ".join(links) if links else None
+
+
 def page(args):
+    files = release_files(args)
     footer = open(os.path.join(NOTES, "footer.md")).read().strip()
-    footer = footer.replace("{downloads}", downloads(args.release_dir)).replace("{repo}", args.repo)
-    parts = ["## What's new", whats_new(args.version)]
+    footer = footer.replace("{downloads}", downloads(files)).replace("{repo}", args.repo)
+    quick = quick_links(files, args.tag, args.repo)
+    parts = ([quick] if quick else []) + ["## What's new", whats_new(args.version)]
     changes = all_changes(args.tag, args.since, args.repo)
     if changes:
         parts.append(changes)
@@ -114,6 +144,7 @@ def as_text(md):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("release_dir", nargs="?")
+    p.add_argument("--assets", help="gh release view --json assets output, in place of a release directory")
     p.add_argument("--version", required=True)
     p.add_argument("--tag")
     p.add_argument("--since", help="the previous release's tag or commit (default: the newest tag before --tag)")
@@ -125,8 +156,8 @@ def main():
         md = whats_new(args.version)
         print({"md": md, "text": as_text(md), "html": as_html(md)}[args.format])
         return
-    if not (args.release_dir and args.tag):
-        p.error("a release directory and --tag are needed")
+    if not ((args.release_dir or args.assets) and args.tag):
+        p.error("a release directory (or --assets) and --tag are needed")
     sys.stdout.write(page(args))
 
 

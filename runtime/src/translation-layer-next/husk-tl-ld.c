@@ -15,6 +15,11 @@
 #include "husk-tl-internal.h"
 #include "husk-tl-a64.h"
 #include "husk-tl-xmem.h"
+#if defined(__x86_64__)
+/* x86-64: the guest's code runs translated, so a host function it imports is reached through a stub
+ * (husk-tl-x64.c), and a guest function the loader calls goes through tl_guest_call. */
+#include "../../win/x64/husk-tl-x64.h"
+#endif
 
 /* The project's log sink, and the bionic shim's surface. */
 void  tl_log_line(const char *fmt, ...);
@@ -45,6 +50,13 @@ enum {
 };
 
 #define PAGE TL_XMEM_PAGE
+
+/* Assembler spelling of a C symbol: Mach-O prefixes an underscore, COFF does not. */
+#if defined(_WIN32)
+#define TL_LD_ASM_NAME(s) #s
+#else
+#define TL_LD_ASM_NAME(s) "_" #s
+#endif
 
 /* ----------------------------------------------------------------- libs */
 
@@ -493,7 +505,11 @@ static bool is_cxx_runtime_symbol(const char *name)
 static void *lookup_for(tl_lib *L, const char *name, bool *weak_hit)
 {
     (void)weak_hit;
+#if defined(__x86_64__)
+    for (int i = 0; i < g_ninterpose; i++) if (!strcmp(g_interpose[i].name, name)) return tl_x64_import(name, g_interpose[i].fn);
+#else
     for (int i = 0; i < g_ninterpose; i++) if (!strcmp(g_interpose[i].name, name)) return g_interpose[i].fn;
+#endif
     build_scope(L);
     const elf_sym *s = lib_find(L, name);
     if (s && (s->st_info & 0xf) != STT_GNU_IFUNC_) return sym_value(L, s);
@@ -508,7 +524,11 @@ static void *lookup_for(tl_lib *L, const char *name, bool *weak_hit)
         s = lib_find(L->deps[i], name);
         if (s && (s->st_info & 0xf) != STT_GNU_IFUNC_) return sym_value(L->deps[i], s);
     }
+#if defined(__x86_64__)
+    return tl_x64_import(name, tl_bionic_find(name));
+#else
     return tl_bionic_find(name);
+#endif
 }
 
 void *tl_ld_sym(tl_lib *lib, const char *name)
@@ -594,7 +614,7 @@ size_t tl_ld_maps(char *buf, size_t n, const char *libdir)
         tl_lib *L = G.libs[i];
         if (L->state < 2) continue;
         uintptr_t lo = (uintptr_t)L->rx, hi = lo + L->npages * PAGE;
-        k += (size_t)snprintf(buf + k, n - k, "%lx-%lx r-xp 00000000 fd:00 %d %s/%s\n", (unsigned long)lo, (unsigned long)hi, 4000 + i,
+        k += (size_t)snprintf(buf + k, n - k, "%llx-%llx r-xp 00000000 fd:00 %d %s/%s\n", (unsigned long long)lo, (unsigned long long)hi, 4000 + i,
                               libdir, L->soname[0] ? L->soname : base_name(L->name));
     }
     pthread_mutex_unlock(&G.lock);
@@ -645,7 +665,7 @@ __attribute__((naked, used)) static void tl_unresolved_entry(void)
         "mov x0, x17\n"
         "mov x1, x30\n"
         "stp x29, x30, [sp, #-16]!\n"
-        "bl _tl_unresolved_called_c\n"
+        "bl " TL_LD_ASM_NAME(tl_unresolved_called_c) "\n"
         "ldp x29, x30, [sp], #16\n"
         "mov x0, #0\n"
         "ret\n");
@@ -657,8 +677,14 @@ void tl_unresolved_called_c(const char *name, void *lr) { tl_unresolved_called(n
 static uint8_t *g_stub_rx, *g_stub_rw;
 static size_t g_stub_left;
 
+#if defined(__x86_64__)
+static void unresolved_raw(struct CPU *c, void *user) { (void)c; tl_unresolved_called((const char *)user, NULL); }
+#endif
 static void *make_stub(const char *name)
 {
+#if defined(__x86_64__)
+    return (void *)(uintptr_t)tl_x64_export_raw(name, unresolved_raw, (void *)name);
+#endif
     if (g_stub_left < 32) {
         if (!tl_xmem_alloc(PAGE, &g_stub_rx, &g_stub_rw)) return NULL;
         g_stub_left = PAGE;
@@ -691,7 +717,11 @@ static void *make_stub(const char *name)
  * raw `svc` relies on that, the condition flags and all of q8-q15 included (C keeps
  * only their low halves) -- and calls tl_linux_syscall with the arguments and number.
  */
+#if defined(_WIN32)
+long long tl_linux_syscall(long long a0, long long a1, long long a2, long long a3, long long a4, long long a5, long long nr);   /* Windows' long is 32 bits */
+#else
 long tl_linux_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long nr);
+#endif
 
 __attribute__((naked, used)) void tl_svc_common(void)
 {
@@ -727,7 +757,7 @@ __attribute__((naked, used)) void tl_svc_common(void)
         "stp q28, q29, [sp, #448]\n"
         "stp q30, q31, [sp, #480]\n"
         "mov x6, x8\n"
-        "bl _tl_linux_syscall\n"
+        "bl " TL_LD_ASM_NAME(tl_linux_syscall) "\n"
         "ldr x9, [sp, #120]\n"
         "msr nzcv, x9\n"
         "ldp q8, q9, [sp, #512]\n"
@@ -920,6 +950,43 @@ static uint8_t *svc_stub(tl_lib *L, const uint8_t *site_rx)
 
 static int64_t g_vx18_off = -1;     /* byte offset of the virtual-x18 slot from the TSD base */
 
+#if defined(_WIN32)
+/*
+ * Windows keeps a thread's TEB in x18 and its own code reads it from there, so the
+ * guest may not hold values in x18 either: the same rewrite applies. The stubs find
+ * the virtual x18 in one of the TEB's TLS slots, at a fixed offset from x18 itself,
+ * which the guest never touches once every instruction naming it is rewritten.
+ */
+#include <windows.h>
+static bool vx18_init(void)
+{
+    if (g_vx18_off >= 0) return true;
+    DWORD idx = TlsAlloc();
+    if (idx == TLS_OUT_OF_INDEXES) return false;
+    const uintptr_t sentinel = (uintptr_t)0x5a5a1234deadbeefull;
+    TlsSetValue(idx, (void *)sentinel);
+    const volatile uintptr_t *teb = (const volatile uintptr_t *)NtCurrentTeb();
+    int64_t off = -1;
+    for (int i = 0; i < 4095; i++) if (teb[i] == sentinel) { off = (int64_t)i * 8; break; }
+    TlsSetValue(idx, NULL);
+    if (off < 0 || off > 32760) { TlsFree(idx); return false; }
+    g_vx18_off = off;
+    return true;
+}
+uint64_t tl_vx18_get(void)
+{
+    if (g_vx18_off < 0) return 0;
+    return *(const volatile uint64_t *)((uintptr_t)NtCurrentTeb() + (uintptr_t)g_vx18_off);
+}
+void tl_vx18_set(uint64_t v)
+{
+    if (g_vx18_off < 0) return;
+    *(volatile uint64_t *)((uintptr_t)NtCurrentTeb() + (uintptr_t)g_vx18_off) = v;
+}
+/* "mov rt, x18" (the TEB) in place of Darwin's "mrs rt, tpidrro_el0", and no masking. */
+static inline uint32_t e_mrs_tsd(unsigned rt)        { return 0xAA1203E0u | rt; }
+static inline uint32_t e_and_tsd(unsigned r)         { (void)r; return 0xD503201Fu; }
+#else
 static bool vx18_init(void)
 {
     if (g_vx18_off >= 0) return true;
@@ -967,10 +1034,12 @@ void tl_vx18_set(uint64_t v)
 #endif
 }
 
-static inline uint32_t e_stur(unsigned rt, int imm)  { return 0xF8000000u | (((uint32_t)imm & 0x1FFu) << 12) | (31u << 5) | rt; }
-static inline uint32_t e_ldur(unsigned rt, int imm)  { return 0xF8400000u | (((uint32_t)imm & 0x1FFu) << 12) | (31u << 5) | rt; }
 static inline uint32_t e_mrs_tsd(unsigned rt)        { return 0xD53BD060u | rt; }
 static inline uint32_t e_and_tsd(unsigned r)         { return 0x927DF000u | (r << 5) | r; }          /* and r, r, #~7 */
+#endif
+
+static inline uint32_t e_stur(unsigned rt, int imm)  { return 0xF8000000u | (((uint32_t)imm & 0x1FFu) << 12) | (31u << 5) | rt; }
+static inline uint32_t e_ldur(unsigned rt, int imm)  { return 0xF8400000u | (((uint32_t)imm & 0x1FFu) << 12) | (31u << 5) | rt; }
 static inline uint32_t e_ldr_slot(unsigned rt, unsigned rn) { return 0xF9400000u | ((uint32_t)(g_vx18_off / 8) << 10) | (rn << 5) | rt; }
 static inline uint32_t e_str_slot(unsigned rt, unsigned rn) { return 0xF9000000u | ((uint32_t)(g_vx18_off / 8) << 10) | (rn << 5) | rt; }
 
@@ -1219,7 +1288,13 @@ static void patch_image(tl_lib *L, size_t *n_tpidr, size_t *n_adrp, size_t *n_ad
                 /* The cache type register: the smallest cache lines the program may assume. Code that flushes the
                  * instruction cache (V8) reads it to step by line; 64 bytes is right for Apple's and safe for any. */
                 uint32_t branch;
+#if defined(_WIN32)
+                /* Windows lets user code run neither `dc cvau` nor `ic ivau`: the value says both caches are coherent
+                 * (IDC, DIC), so a guest's cache flush skips them, and the host flushes with FlushInstructionCache. */
+                if (adr_stub(L, pc, insn & 0x1Fu, 0xB444c004ull, &branch)) { w[i] = branch; L->n_ctr++; }
+#else
                 if (adr_stub(L, pc, insn & 0x1Fu, 0x8444c004ull, &branch)) { w[i] = branch; L->n_ctr++; }
+#endif
                 else L->n_adr_failed++;
             } else if ((insn & 0xFFFFFFE0u) == 0xD53BD040u) {            /* mrs Xt, tpidr_el0 */
                 w[i] = encode_adrp(insn & 0x1Fu, pc, G.tcb_rw);
@@ -1335,7 +1410,7 @@ __attribute__((naked, used)) static void tl_tlsdesc_entry(void)
         "stp q16, q17, [sp, #256]\n" "stp q18, q19, [sp, #288]\n" "stp q20, q21, [sp, #320]\n" "stp q22, q23, [sp, #352]\n"
         "stp q24, q25, [sp, #384]\n" "stp q26, q27, [sp, #416]\n" "stp q28, q29, [sp, #448]\n" "stp q30, q31, [sp, #480]\n"
         "ldr x0, [x0, #8]\n"
-        "bl _tl_tls_offset\n"
+        "bl " TL_LD_ASM_NAME(tl_tls_offset) "\n"
         "ldp x2, x3,   [sp, #0]\n"   "ldp x4, x5,   [sp, #16]\n"  "ldp x6, x7,   [sp, #32]\n"  "ldp x8, x9,   [sp, #48]\n"
         "ldp x10, x11, [sp, #64]\n"  "ldp x12, x13, [sp, #80]\n"  "ldp x14, x15, [sp, #96]\n"  "ldp x16, x17, [sp, #112]\n"
         "ldp q0, q1,   [sp, #128]\n" "ldp q2, q3,   [sp, #160]\n" "ldp q4, q5,   [sp, #192]\n" "ldp q6, q7,   [sp, #224]\n"
@@ -1347,6 +1422,17 @@ __attribute__((naked, used)) static void tl_tlsdesc_entry(void)
 }
 #else
 static void tl_tlsdesc_entry(void) {}
+#endif
+#if defined(__x86_64__)
+/* The descriptor's resolver as the guest calls it: x0 = the descriptor, the answer in x0, every other register kept. */
+#include "common/cpu/aarch64/cpu.h"
+static void tlsdesc_raw(struct CPU *c, void *user) { (void)user; c->x[0] = tl_tls_offset(((const uint64_t *)(uintptr_t)c->x[0])[1]); }
+uint64_t tl_x64_tlsdesc_stub(void)
+{
+    static uint64_t a;
+    if (!a) a = tl_x64_export_raw("tlsdesc", tlsdesc_raw, NULL);
+    return a;
+}
 #endif
 
 /* -------------------------------------------------------------- relocation */
@@ -1442,7 +1528,11 @@ static bool reloc_one(tl_lib *L, uint64_t r_offset, uint32_t type, uint32_t symi
         if (!L->tls_id) { tl_log_line("ld: %s: a TLS relocation but no TLS segment", L->name); return false; }
         if (type == R_TLSDESC) {
             if (off + 16 > L->npages * PAGE) return false;
+#if defined(__x86_64__)
+            place[0] = tl_x64_tlsdesc_stub();
+#else
             place[0] = (uint64_t)(uintptr_t)&tl_tlsdesc_entry;
+#endif
             place[1] = ((uint64_t)L->tls_id << 32) | (uint32_t)(symoff + (uint64_t)addend);
         } else if (type == R_TLS_DTPMOD) {
             *place = (uint64_t)L->tls_id;
@@ -1590,6 +1680,9 @@ static bool ensure_tcb(void)
     t[0] = (uint64_t)(uintptr_t)G.tcb_rw;      /* self */
     t[1] = 1000; t[2] = 1000;
     t[5] = 0xdeadbeefcafebabeull;             /* [tpidr_el0 + 0x28]: the stack cookie */
+#if defined(__x86_64__)
+    tl_x64_set_tpidr((uint64_t)(uintptr_t)G.tcb_rw & ~(uint64_t)0xFFF);   /* what tl_tls_offset counts from */
+#endif
     return true;
 }
 
@@ -2177,7 +2270,12 @@ static bool init_locked(tl_lib *L)
             tl_log_line("ld: %s: skipped BORINGSSL_integrity_test", L->name);
         }
     }
-    if (L->init) ((init_fn)(L->rx + (L->init - L->base_vaddr)))(argc, argv, envp);
+#if defined(__x86_64__)
+#define CALL_INIT(f) tl_guest_call((uint64_t)(uintptr_t)(f), "vill", (uint64_t)argc, (uint64_t)(uintptr_t)argv, (uint64_t)(uintptr_t)envp)
+#else
+#define CALL_INIT(f) ((init_fn)(f))(argc, argv, envp)
+#endif
+    if (L->init) CALL_INIT(L->rx + (L->init - L->base_vaddr));
     if (L->init_array) {
         const uint64_t *fns = at(L, L->init_array);
         size_t n = L->init_arraysz / 8;
@@ -2189,9 +2287,11 @@ static bool init_locked(tl_lib *L)
             if (!f || f == ~0ull) continue;
             if (trace) tl_log_line("ld: %s: constructor %zu at +%#llx", L->name, i, (unsigned long long)(f - (uint64_t)(uintptr_t)L->rx + L->base_vaddr));
             /* TL_INIT_BREAK=<library>: a debugger stops here with the constructor's address in x0 and the image base in x1 */
+#if defined(__aarch64__)
             { const char *b = getenv("TL_INIT_BREAK");
               if (b && !strcmp(b, L->name)) __asm__ volatile("mov x0, %0\n mov x1, %1\n brk #0xf00d" :: "r"(f), "r"((uint64_t)(uintptr_t)L->rx) : "x0", "x1"); }
-            ((init_fn)(uintptr_t)f)(argc, argv, envp);
+#endif
+            CALL_INIT((uintptr_t)f);
             if (trace) tl_log_line("ld: %s: constructor %zu returned", L->name, i);
         }
     }
@@ -2199,6 +2299,39 @@ static bool init_locked(tl_lib *L)
     if (G.verbosity >= 1) tl_log_line("ld: %-36s initialised (%s%zu constructors)", L->name, L->init ? "DT_INIT + " : "", (size_t)(L->init_arraysz / 8));
     return true;
 }
+
+#if defined(__x86_64__)
+/* Where functions start, for the translator: every function the unwind tables describe, every function symbol, every
+ * constructor. Host addresses, sorted, without repeats; the caller frees the array. */
+static int cmp_u64(const void *a, const void *b) { uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b; return x < y ? -1 : x > y; }
+size_t tl_ld_function_starts(uint64_t **out)
+{
+    size_t n = 0, cap = 1024;
+    uint64_t *v = malloc(cap * 8);
+    #define PUSH(a) do { if (n == cap) v = realloc(v, (cap *= 2) * 8); v[n++] = (a); } while (0)
+    for (int li = 0; li < G.nlibs; li++) {
+        tl_lib *L = G.libs[li];
+        if (!L || !L->rx) continue;
+        uint64_t base = (uint64_t)(uintptr_t)L->rx - L->base_vaddr;
+        for (size_t i = 0; i < L->nfde; i++) PUSH(base + L->fde_start[i]);
+        for (uint32_t i = 0; i < L->nsyms; i++) {
+            const elf_sym *s = sym_at(L, i);
+            if (s && (s->st_info & 0xf) == 2 /* STT_FUNC */ && s->st_shndx && s->st_value) PUSH(base + s->st_value);
+        }
+        if (L->init) PUSH(base + L->init);
+        if (L->init_array) {
+            const uint64_t *fns = at(L, L->init_array);
+            for (size_t i = 0; i < L->init_arraysz / 8; i++) if (fns[i] && fns[i] != ~0ull) PUSH(fns[i]);
+        }
+    }
+    #undef PUSH
+    qsort(v, n, 8, cmp_u64);
+    size_t k = 0;
+    for (size_t i = 0; i < n; i++) if ((v[i] & 3) == 0 && (!k || v[k - 1] != v[i])) v[k++] = v[i];
+    *out = v;
+    return k;
+}
+#endif
 
 bool tl_ld_init(tl_lib *lib)
 {
