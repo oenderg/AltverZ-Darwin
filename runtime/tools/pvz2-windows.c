@@ -1636,6 +1636,7 @@ static atomic_int g_pointer_timer_active;
 static int g_pointer_fallback;
 static int g_pointer_timer_wanted;
 static int g_pointer_timer_armed;   /* the timer is armed; the UI thread owns this */
+static ULONGLONG g_pointer_key_until; /* keep ticking until then: the game picks a key's plant a frame or two later */
 static int g_pointer_timer_logged;
 static atomic_ullong g_pointer_wakes, g_pointer_coalesced, g_pointer_skipped;
 static atomic_ullong g_pointer_schedule_epoch;
@@ -1716,7 +1717,7 @@ static void pointer_hide(void)
     tl_pvz2_cursor_target(0, 0, 0);
     /* Nothing to follow until a mouse move brings the preview back; an idle
      * tick at 175 Hz is not free. */
-    if (g_pointer_timer_wanted) pointer_timer_suspend();
+    if (g_pointer_timer_wanted && GetTickCount64() >= g_pointer_key_until) pointer_timer_suspend();
 }
 
 static void make_pointer_window(HINSTANCE inst)
@@ -3124,7 +3125,10 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == VK_F11) { toggle_fullscreen(!g_fullscreen); return 0; }
         if (wp == VK_OEM_COMMA && GetKeyState(VK_CONTROL) < 0) { open_settings(); return 0; }
         /* A seed key picks a plant without a mouse move, so arm the timer
-         * here; WM_MOUSEMOVE would otherwise be the only way back. */
+         * here; WM_MOUSEMOVE would otherwise be the only way back. The game
+         * takes the key a frame or two later, so the first ticks may still see
+         * no plant in hand: they must not suspend the timer again. */
+        g_pointer_key_until = GetTickCount64() + 400;
         if (g_pointer_timer_wanted) pointer_timer_start();
         if (key_down(wp, lp)) return 0;
         break;
