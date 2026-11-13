@@ -63,7 +63,9 @@ and libunwind statically, so the process has one libc++ DLL, the one `libLLVM-23
 imports only `libLLVM-23.dll` and `libwinpthread-1.dll` besides Windows' own. `collect-dlls.sh` stops when a
 program imports a `lib*.dll` it cannot find, so a missing runtime DLL fails the build, not the player's start.
 A cross-built program starts, translates the game from scratch and plays under CrossOver on a Mac; the MSYS2
-build stays the one the release workflow publishes until the cross-built one has run on a Windows PC.
+build stays the one the release workflow publishes until the cross-built one has run on a Windows PC. The
+workflow cross-builds it on every Windows run (`windows-x64-cross`) and starts it twice in the MSYS2 zip's place
+(`smoke-x64-cross`); neither holds a release back.
 
 ## ANGLE
 
