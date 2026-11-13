@@ -18,7 +18,7 @@ and the mod's own content built in.
 </p>
 
 <p align="center">
-  <a href="https://github.com/oenderg/AltverZ-Darwin/releases"><b>Download</b></a> ·
+  <a href="https://pvz.oender.dev/#altverz"><b>Download</b></a> ·
   <a href="#features">Features</a> ·
   <a href="#install">Install guide</a> ·
   <a href="#build-it-yourself">Build it yourself</a> ·
