@@ -20,7 +20,14 @@ queue=("$EXE")
 while [ ${#queue[@]} -gt 0 ]; do
     file="${queue[0]}"; queue=("${queue[@]:1}")
     while read -r dll; do
-        [ -n "$dll" ] && [ -f "$BIN/$dll" ] || continue
+        [ -n "$dll" ] || continue
+        if [ ! -f "$BIN/$dll" ]; then
+            # Windows' own DLLs are not in $BIN; a lib* one that is missing would be a program that does not start
+            case "$dll" in
+                lib*|LIB*) echo "collect-dlls: $file imports $dll, which is not in $BIN" >&2; exit 1 ;;
+            esac
+            continue
+        fi
         case " ${found[*]-} " in *" $dll "*) continue ;; esac
         found+=("$dll")
         cp "$BIN/$dll" "$OUT/"
