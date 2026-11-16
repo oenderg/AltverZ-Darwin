@@ -60,6 +60,10 @@ The Windows files come from three jobs: the ARM64 programs cross-build on a Mac 
 programs, the setup and the zips are made on a Windows runner in MSYS2 with the pinned ScarletNX, and
 the smoke test starts each zip twice ([TESTING.md](TESTING.md)). One `publish` job then makes the
 release, the AltStore source and both update feeds once every build and the smoke test have passed.
+Last it tells the website (pvz.oender.dev) to rebuild (`scripts/notify-site.sh`, with the
+`SITE_DISPATCH_TOKEN` secret: a fine-grained token for `oenderg/pvz-ports-site` only, Contents read and
+write). The `site` workflow does the same for a change to the icon or the AltStore source pushed by hand, and
+for a release published from the releases page; without the message the site catches up at its daily rebuild.
 How the Windows files are made and updated: [windows-shipping.md](windows-shipping.md).
 
 For example: `PvZ2-AltVerZ-1.8.3f-Darwin-0.1.0-iOS.ipa`. Slim is a small download; the app

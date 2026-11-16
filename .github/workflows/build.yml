@@ -759,3 +759,12 @@ jobs:
           fi
           git pull --rebase origin "${{ github.event.repository.default_branch }}"
           git push origin "HEAD:${{ github.event.repository.default_branch }}"
+
+      # The website shows the releases and the AltStore source: GitHub starts no workflow for this run's own release
+      # and pushes, so it is told here (scripts/notify-site.sh). A lost message only delays it to its daily rebuild.
+      - name: Tell the website
+        continue-on-error: true
+        env:
+          SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: scripts/notify-site.sh "release $TAG"

@@ -1,0 +1,30 @@
+# Tells the website (pvz.oender.dev) to rebuild when something it shows changes here by hand: the app icon, the
+# AltStore source, or a release published from the releases page (scripts/notify-site.sh). A release the Build
+# workflow publishes tells it from its own publish job: GitHub starts no workflow for what a run does with its own
+# token. If a message is lost, the site still rebuilds once a day.
+name: Tell the website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/icon.png
+      - altstore/source.json
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Tell the website
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+          WHY: ${{ github.event_name }} ${{ github.event.release.tag_name || github.sha }}
+        run: scripts/notify-site.sh "$WHY"
