@@ -132,6 +132,8 @@ answers the few calls into those parts). The pieces that matter here:
   `pvz2.log` in it. iOS: `Documents/data/`, with `Documents/pvz2.log` and the OBB in `Documents/obb/`.
   Each launch starts a new `pvz2.log` and renames the old one to `pvz2.previous.log` (on the Mac and Windows, not
   for a restart to fit the window, nor for a test's `TL_PVZ2_LOG`).
+  Its first lines name the app version, slim or full, the system and the device (`pvz2-device-info.h` on the
+  Mac and iOS, `log_device` in `pvz2-windows.c`), with no paths or IDs, so a bug report carries them.
 - In the data folder: `config/pvz2-config` (the game's own settings),
   `sdcard/Android/obb/<package>/` (the Mac's OBB),
   `sdcard/Android/data/<package>/files/No_Backup/` (saves, CDN content).

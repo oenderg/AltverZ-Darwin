@@ -50,6 +50,7 @@
 #include "pvz2-notifications.h"
 #include "pvz2-file-picker.h"
 #include "pvz2-badge-style.h"
+#include "pvz2-device-info.h"
 
 static bool open_game_url(const char *url)
 {
@@ -1787,6 +1788,8 @@ static NSDictionary *obb_info(void)
         freopen(logPath.UTF8String, "a", stderr);
         setvbuf(stderr, NULL, _IOLBF, 0);
     }
+    pvz2_log_device("ios", [NSFileManager.defaultManager fileExistsAtPath:
+        [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"Game/obb"]]);
 
     pvz2_notifications_install();
     tl_pvz2_set_notification_hooks(&pvz2_notification_hooks);

@@ -54,6 +54,7 @@
 #include "pvz2-file-picker.h"
 #include "pvz2-badge-style.h"
 #include "pvz2-cursor-art.h"
+#include "pvz2-device-info.h"
 
 static bool open_game_url(const char *url)
 {
@@ -3801,6 +3802,12 @@ int main(int argc, char **argv)
                    [dataPath stringByAppendingPathComponent:@"pvz2.previous.log"].UTF8String);
         freopen(logPath.UTF8String, "a", stderr);
         setvbuf(stderr, NULL, _IOLBF, 0);
+        {
+            bool full = false;
+            for (NSString *f in [NSFileManager.defaultManager contentsOfDirectoryAtPath:bundle_dir(@"Game/obb") error:nil])
+                if ([f.pathExtension.lowercaseString isEqualToString:@"obb"]) full = true;
+            pvz2_log_device("macos", full);
+        }
 
         import_old_settings();
         adopt_bundled_obb();

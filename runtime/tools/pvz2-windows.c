@@ -3784,6 +3784,62 @@ static void migrate_old_state(const char *old_data, const char *new_state)
     }
 }
 
+/* The system and the PC, early in pvz2.log, so a bug report carries them even when its form
+ * is filled in by guesswork. No paths, names or IDs: the log is meant to be posted in public.
+ * The Mac and iPad have theirs in pvz2-device-info.h. */
+static void log_device(void)
+{
+    typedef LONG (WINAPI *rtl_get_version_fn)(OSVERSIONINFOW *);
+    typedef BOOL (WINAPI *is_wow64_process2_fn)(HANDLE, USHORT *, USHORT *);
+    OSVERSIONINFOW v = { .dwOSVersionInfoSize = sizeof v };
+    rtl_get_version_fn rtl = (rtl_get_version_fn)(void (*)(void))
+        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion");
+    if (!rtl || rtl(&v) != 0) GetVersionExW(&v);
+    const char *nt = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
+    DWORD ubr = 0, size = sizeof ubr;
+    RegGetValueA(HKEY_LOCAL_MACHINE, nt, "UBR", RRF_RT_REG_DWORD, NULL, &ubr, &size);
+    char display[32] = "";
+    size = sizeof display;
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, nt, "DisplayVersion", RRF_RT_REG_SZ, NULL, display, &size) != ERROR_SUCCESS)
+        display[0] = 0;
+    char cpu[128] = "?";
+    size = sizeof cpu;
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+                     "ProcessorNameString", RRF_RT_REG_SZ, NULL, cpu, &size) != ERROR_SUCCESS)
+        snprintf(cpu, sizeof cpu, "?");
+    for (char *e = cpu + strlen(cpu); e > cpu && e[-1] == ' '; ) *--e = 0;   // some CPUs pad the name
+    const char *trim = cpu;
+    while (*trim == ' ') trim++;
+
+    USHORT proc_m = 0, native_m = 0;
+    is_wow64_process2_fn w64 = (is_wow64_process2_fn)(void (*)(void))
+        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "IsWow64Process2");
+    const char *pc = "?";
+    if (w64 && w64(GetCurrentProcess(), &proc_m, &native_m))
+        pc = native_m == IMAGE_FILE_MACHINE_ARM64 ? "an ARM64 PC" : native_m == IMAGE_FILE_MACHINE_AMD64 ? "an x64 PC" : "?";
+#if defined(__aarch64__) || defined(_M_ARM64)
+    const char *build = "ARM64";
+    bool emulated = native_m != 0 && native_m != IMAGE_FILE_MACHINE_ARM64;
+#else
+    const char *build = "x64";
+    bool emulated = native_m == IMAGE_FILE_MACHINE_ARM64;
+#endif
+    MEMORYSTATUSEX mem = { .dwLength = sizeof mem };
+    GlobalMemoryStatusEx(&mem);
+    char gpu[128] = "?";
+    DISPLAY_DEVICEA dd = { .cb = sizeof dd };
+    for (DWORD i = 0; EnumDisplayDevicesA(NULL, i, &dd, 0); i++)
+        if (dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) { snprintf(gpu, sizeof gpu, "%s", dd.DeviceString); break; }
+    SYSTEM_POWER_STATUS power;
+    bool saver = GetSystemPowerStatus(&power) && power.SystemStatusFlag == 1;
+
+    tl_log_line("windows: Windows %s%s%s (build %lu.%lu) on %s, %s, %.0f GB of memory, %s%s",
+                v.dwBuildNumber >= 22000 ? "11" : "10", display[0] ? " " : "", display,
+                (unsigned long)v.dwBuildNumber, (unsigned long)ubr, pc, trim,
+                (double)mem.ullTotalPhys / (1024.0 * 1024.0 * 1024.0), gpu, saver ? ", battery saver on" : "");
+    tl_log_line("windows: the %s build%s", build, emulated ? ", emulated on this PC (Prism)" : "");
+}
+
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 {
     (void)prev; (void)cmd;
@@ -3890,6 +3946,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     tl_log_line("windows: %s mode", mode);
     tl_log_line("windows: " PVZ2_PROFILE_APP_NAME " %s, %s", PVZ2_APP_VERSION,
                 pvz2_updates_built_in() ? "the installed build (with WinSparkle)" : "the portable build (no updater)");
+    log_device();
     tl_log_line("windows: settings file %s", g_settings_path);
     tl_log_line("windows: the game's saves, config, reminders and Nimble data %s", g_saves);
     tl_log_line("windows: the game's data %s (the OBB, the CDN archive, the x64 cache and pvz2.log)", g_data);
