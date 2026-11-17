@@ -1,0 +1,47 @@
+name: Bug on Windows
+description: Something does not work, crashes, or looks wrong on a Windows PC
+labels: [bug, windows]
+body:
+  - type: dropdown
+    id: os
+    attributes:
+      label: Windows version
+      options:
+        - Windows 11
+        - Windows 10
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: In the game, Settings (Ctrl+,) > About.
+      placeholder: e.g. 1.4.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - Installer (the Windows-Setup.exe)
+        - Portable for Intel or AMD PCs (the Windows-x64.zip)
+        - Portable for ARM PCs (the Windows-ARM64.zip)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. You can drop screenshots or a screen recording here.
+    validations:
+      required: true
+  - type: upload
+    id: log
+    attributes:
+      label: The log
+      description: |
+        The most useful part of a report. In the game, Settings (Ctrl+,) > About > Log > Open folder, then upload pvz2.log.
+        If the game crashed or you opened it again since, upload pvz2.previous.log instead.
+        If the game does not open: paste %LOCALAPPDATA%\PvZ2 AltVerZ into File Explorer's address bar.

@@ -1,0 +1,62 @@
+name: Bug on iPhone or iPad
+description: Something does not work, crashes, or looks wrong on an iPhone or iPad
+labels: [bug, ios]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device and iOS version
+      description: Settings > General > About shows both.
+      placeholder: e.g. iPhone 13, iOS 18.2
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: The number in the file you installed (Darwin-1.4.0 means 1.4.0), or the version AltStore or SideStore shows.
+      placeholder: e.g. 1.4.0
+    validations:
+      required: true
+  - type: dropdown
+    id: download
+    attributes:
+      label: Which download
+      options:
+        - Slim (the iOS.ipa, downloads the game's data on first start)
+        - Full (the iOS-Full.ipa, with the game's data inside)
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - AltStore or SideStore
+        - TrollStore
+        - A signing app (Feather, ESign, ...)
+        - Sideloadly
+        - LiveContainer
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: install-other
+    attributes:
+      label: If you picked Other, how?
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. You can drop screenshots or a screen recording here.
+    validations:
+      required: true
+  - type: upload
+    id: log
+    attributes:
+      label: The log
+      description: |
+        The most useful part of a report. Open the Files app > On My iPhone (or iPad) > PvZ2 AltVerZ and upload pvz2.log.
+        If the game crashed or you opened it again since, upload pvz2.previous.log instead.
+        With LiveContainer, the folder is inside LiveContainer's folder in Files.

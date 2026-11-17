@@ -1,0 +1,45 @@
+name: Bug on Mac
+description: Something does not work, crashes, or looks wrong on a Mac
+labels: [bug, mac]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Mac and macOS version
+      description: Apple menu > About This Mac shows both.
+      placeholder: e.g. MacBook Air M2, macOS 26.1
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: In the game, Settings > About.
+      placeholder: e.g. 1.4.0
+    validations:
+      required: true
+  - type: dropdown
+    id: download
+    attributes:
+      label: Which download
+      options:
+        - Slim (the Mac.dmg, downloads the game's data on first start)
+        - Full (the Mac-Full.dmg, with the game's data inside)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. You can drop screenshots or a screen recording here.
+    validations:
+      required: true
+  - type: upload
+    id: log
+    attributes:
+      label: The log
+      description: |
+        The most useful part of a report. In the game, Settings > About > Log > Show in Finder, then upload pvz2.log.
+        If the game crashed or you opened it again since, upload pvz2.previous.log instead.
+        If the game does not open: Finder > Go > Go to Folder, then ~/Library/Application Support/PvZ2 AltVerZ
