@@ -614,6 +614,21 @@ static void *b_gzopen(const char *path, const char *mode) { MAPPED(path); return
 
 /* ------------------------------------------------------------------- table */
 
+#if defined(__x86_64__)
+/* zlib's init functions take the caller's allocator in the stream (zalloc, zfree). On x86-64 the guest's
+ * code runs translated, so a zalloc it sets (the game's PNG decoder does) is ARM64 code the host's zlib
+ * cannot call: it ran those bytes as x86 and the game ended (a privileged instruction, at the title
+ * screen's news pictures). The guest never calls them itself, so zlib's own allocator stands in. */
+static void zs_own_alloc(z_streamp s) { if (s) { s->zalloc = Z_NULL; s->zfree = Z_NULL; s->opaque = Z_NULL; } }
+static int x_inflateInit_(z_streamp s, const char *v, int n) { zs_own_alloc(s); return z_inflateInit_(s, v, n); }
+static int x_inflateInit2_(z_streamp s, int w, const char *v, int n) { zs_own_alloc(s); return z_inflateInit2_(s, w, v, n); }
+static int x_deflateInit_(z_streamp s, int l, const char *v, int n) { zs_own_alloc(s); return z_deflateInit_(s, l, v, n); }
+static int x_deflateInit2_(z_streamp s, int l, int m, int w, int ml, int st, const char *v, int n) { zs_own_alloc(s); return z_deflateInit2_(s, l, m, w, ml, st, v, n); }
+#define Z_INIT(f) x_##f
+#else
+#define Z_INIT(f) z_##f
+#endif
+
 const tl_bionic_entry tl_tab_win_io[] = {
     TL_DATA("__sF", g_sF),
     TL_WRAP("fopen", b_fopen), TL_WRAP("fdopen", b_fdopen), TL_WRAP("fclose", b_fclose), TL_WRAP("fread", b_fread),
@@ -641,9 +656,9 @@ const tl_bionic_entry tl_tab_win_io[] = {
     TL_WRAP("mmap", b_mmap), TL_WRAP("munmap", b_munmap), TL_WRAP("mprotect", b_mprotect), TL_WRAP("madvise", b_madvise), TL_WRAP("mlock", b_mlock),
     TL_WRAP("gzopen", b_gzopen), TL_WRAP("gzread", z_gzread), TL_WRAP("gzclose", z_gzclose),
     TL_WRAP("adler32", z_adler32), TL_WRAP("crc32", z_crc32), TL_WRAP("deflate", z_deflate), TL_WRAP("deflateEnd", z_deflateEnd),
-    TL_WRAP("deflateInit2_", z_deflateInit2_), TL_WRAP("deflateInit_", z_deflateInit_), TL_WRAP("deflateReset", z_deflateReset),
-    TL_WRAP("inflate", z_inflate), TL_WRAP("inflateEnd", z_inflateEnd), TL_WRAP("inflateInit2_", z_inflateInit2_),
-    TL_WRAP("inflateInit_", z_inflateInit_), TL_WRAP("inflateReset", z_inflateReset), TL_WRAP("zlibVersion", z_zlibVersion),
+    TL_WRAP("deflateInit2_", Z_INIT(deflateInit2_)), TL_WRAP("deflateInit_", Z_INIT(deflateInit_)), TL_WRAP("deflateReset", z_deflateReset),
+    TL_WRAP("inflate", z_inflate), TL_WRAP("inflateEnd", z_inflateEnd), TL_WRAP("inflateInit2_", Z_INIT(inflateInit2_)),
+    TL_WRAP("inflateInit_", Z_INIT(inflateInit_)), TL_WRAP("inflateReset", z_inflateReset), TL_WRAP("zlibVersion", z_zlibVersion),
     TL_WRAP("compress", z_compress), TL_WRAP("compressBound", z_compressBound), TL_WRAP("uncompress", z_uncompress),
     TL_END
 };
