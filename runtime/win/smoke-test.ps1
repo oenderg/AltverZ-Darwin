@@ -145,15 +145,19 @@ function Test-Picture([string]$name, $p) {
 # ("ld: <library>: unresolved import <name>") and each first call ("ld: CALLED an unresolved import: <name>").
 # A missing function returns 0 when called, so the game goes on wrongly instead of stopping (#40: the mod's
 # __read_chk). Crashlytics, the Android crash reporter, is never started and may lack some; any other
-# library may not, and nothing may call one. True when the log is clean.
+# library may not, and nothing may call one. The x64 build also needs each host function's argument types
+# (x64/sigs-tables.inc, made by x64/gen-all.sh): one the runtime has but the list lacks gets the same
+# answer-0 stub ("x64: <name> has no signature"). True when the log is clean.
 function Test-Imports([string]$name, [string]$text) {
     $missing = [regex]::Matches($text, 'ld: (\S+): unresolved import (\S+)') |
         Where-Object { $_.Groups[1].Value -notlike 'libcrashlytics*' } |
         ForEach-Object { "$($_.Groups[1].Value): $($_.Groups[2].Value)" }
     $called = [regex]::Matches($text, 'ld: CALLED an unresolved import: (\S+)') | ForEach-Object { $_.Groups[1].Value }
+    $unsigned = [regex]::Matches($text, 'x64: (\S+) (has no signature|needs a handler of its own)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
     foreach ($m in $missing) { Write-Host "smoke: $name start: this runtime lacks a function the game needs: $m" }
     foreach ($c in $called) { Write-Host "smoke: $name start: the game called a function this runtime lacks: $c" }
-    return -not ($missing -or $called)
+    foreach ($u in $unsigned) { Write-Host "smoke: $name start: x64 has no signature for $u (run runtime/win/x64/gen-all.sh)" }
+    return -not ($missing -or $called -or $unsigned)
 }
 
 # One start: true once a 5 s frame line shows frames drawn and the picture matches; false on an error, an
