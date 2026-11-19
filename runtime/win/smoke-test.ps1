@@ -8,7 +8,8 @@
 # build translates the game first. The second start must find the translation it saved (x64). Each start
 # passes once the game draws frames and, with -Baseline, once a picture of its window matches the baseline
 # (at least -Match percent alike, within 30 s). Each start's log and picture go to -Out.
-# Exits 1 when a start shows an error, ends on its own, draws nothing in time or draws the wrong picture.
+# Exits 1 when a start shows an error, ends on its own, draws nothing in time or draws the wrong picture,
+# or when its log shows a library function the game's libraries need that this runtime lacks.
 param(
     [string]$Game,
     [string]$Obb,
@@ -140,6 +141,21 @@ function Test-Picture([string]$name, $p) {
     return $false
 }
 
+# The functions the game's libraries need and this runtime lacks: the loader names each one at the start
+# ("ld: <library>: unresolved import <name>") and each first call ("ld: CALLED an unresolved import: <name>").
+# A missing function returns 0 when called, so the game goes on wrongly instead of stopping (#40: the mod's
+# __read_chk). Crashlytics, the Android crash reporter, is never started and may lack some; any other
+# library may not, and nothing may call one. True when the log is clean.
+function Test-Imports([string]$name, [string]$text) {
+    $missing = [regex]::Matches($text, 'ld: (\S+): unresolved import (\S+)') |
+        Where-Object { $_.Groups[1].Value -notlike 'libcrashlytics*' } |
+        ForEach-Object { "$($_.Groups[1].Value): $($_.Groups[2].Value)" }
+    $called = [regex]::Matches($text, 'ld: CALLED an unresolved import: (\S+)') | ForEach-Object { $_.Groups[1].Value }
+    foreach ($m in $missing) { Write-Host "smoke: $name start: this runtime lacks a function the game needs: $m" }
+    foreach ($c in $called) { Write-Host "smoke: $name start: the game called a function this runtime lacks: $c" }
+    return -not ($missing -or $called)
+}
+
 # One start: true once a 5 s frame line shows frames drawn and the picture matches; false on an error, an
 # exit, the time limit or another picture.
 function Start-Game([string]$name, [int]$minutes, [string[]]$must) {
@@ -171,6 +187,7 @@ function Start-Game([string]$name, [int]$minutes, [string[]]$must) {
     elseif (-not $p.HasExited) { Save-Screen (Join-Path $Out "$name.png") $p }
     $text = Read-Log
     Set-Content -LiteralPath (Join-Path $Out "$name.log") -Value $text
+    if (-not (Test-Imports $name $text)) { $ok = $false }
     foreach ($line in $must) {
         if ($text -notmatch [regex]::Escape($line)) { Write-Host "smoke: $name start: the log never says '$line'"; $ok = $false }
     }

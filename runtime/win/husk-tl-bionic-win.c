@@ -562,6 +562,27 @@ static int b_getentropy(void *buf, size_t n) { return BCryptGenRandom(NULL, buf,
 static uint64_t g_rand_state = 1;
 static int b_rand(void) { g_rand_state = g_rand_state * 6364136223846793005ull + 1442695040888963407ull; return (int)((g_rand_state >> 33) & 0x7fffffff); }
 static void b_srand(unsigned s) { g_rand_state = s; }
+/* The 48-bit generator POSIX defines for lrand48 and srand48: X = (0x5DEECE66D X + 11) mod 2^48. */
+static uint64_t g_rand48 = 0x1234ABCD330Eull;
+static int64_t b_lrand48(void) { g_rand48 = (g_rand48 * 0x5DEECE66Dull + 0xB) & 0xFFFFFFFFFFFFull; return (int64_t)(g_rand48 >> 17); }   // the guest's long is 64-bit
+static void b_srand48(int64_t seed) { g_rand48 = (((uint64_t)(uint32_t)seed) << 16) | 0x330E; }
+/* The page size, as sysconf and AT_PAGESZ give it here. */
+static int b_getpagesize(void) { return 4096; }
+/* mincore(2): one byte a page, 1 for a page in memory. Windows does not say what is paged out, so a
+ * committed page counts as in memory; a range that is not all mapped is ENOMEM, as on Linux. */
+static int b_mincore(void *addr, size_t len, unsigned char *vec)
+{
+    uintptr_t a = (uintptr_t)addr;
+    if (a & 4095) { t_guest_errno = G_EINVAL; return -1; }
+    size_t pages = (len + 4095) / 4096;
+    for (size_t i = 0; i < pages; ) {
+        MEMORY_BASIC_INFORMATION m;
+        if (!VirtualQuery((void *)(a + i * 4096), &m, sizeof m) || m.State == MEM_FREE) { t_guest_errno = G_ENOMEM; return -1; }
+        uintptr_t end = (uintptr_t)m.BaseAddress + m.RegionSize;
+        for (; i < pages && a + i * 4096 < end; i++) vec[i] = m.State == MEM_COMMIT ? 1 : 0;
+    }
+    return 0;
+}
 
 /* ------------------------------------------------------ system properties */
 
@@ -650,6 +671,7 @@ const tl_bionic_entry tl_tab_win_core[] = {
     TL_WRAP("sigdelset", b_sigdelset), TL_WRAP("sigprocmask", b_sigprocmask), TL_WRAP("raise", b_raise),
     TL_WRAP("syscall", tl_va_syscall), TL_WRAP("getauxval", b_getauxval), TL_WRAP("sysconf", b_sysconf),
     TL_WRAP("getentropy", b_getentropy), TL_WRAP("rand", b_rand), TL_WRAP("srand", b_srand),
+    TL_WRAP("lrand48", b_lrand48), TL_WRAP("srand48", b_srand48), TL_WRAP("getpagesize", b_getpagesize), TL_WRAP("mincore", b_mincore),
     TL_END
 };
 
