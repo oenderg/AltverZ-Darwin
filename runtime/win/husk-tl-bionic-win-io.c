@@ -288,6 +288,13 @@ static int b___open_2(const char *path, int flags)
 static int b_close(int fd) { forget_fd(fd); int r = _close(fd); if (r) SET_ERRNO(); return r; }
 static int64_t b_read(int fd, void *buf, size_t n) {
     if (is_random_fd(fd)) { BCryptGenRandom(NULL, buf, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG); return (int64_t)n; } int r = _read(fd, buf, n > 0x7fffffff ? 0x7fffffff : (unsigned)n); if (r < 0) SET_ERRNO(); return r; }
+/* The fortified read(): the mod's library reads through it (its random numbers, from
+ * /dev/urandom). Missing, it read nothing forever and the game froze (#40). */
+static int64_t b___read_chk(int fd, void *buf, size_t n, size_t bufsz)
+{
+    if (n > bufsz) { tl_log_line("bionic: __read_chk overflow (%zu bytes into %zu)", n, bufsz); abort(); }
+    return b_read(fd, buf, n);
+}
 static int64_t b_write(int fd, const void *buf, size_t n)
 {
     if (fd == 1 || fd == 2) { fwrite(buf, 1, n, fd == 1 ? stdout : stderr); return (int64_t)n; }
@@ -619,7 +626,7 @@ const tl_bionic_entry tl_tab_win_io[] = {
     TL_WRAP("printf", tl_va_printf), TL_WRAP("fprintf", tl_va_fprintf), TL_WRAP("vfprintf", b_vfprintf), TL_WRAP("vprintf", b_vprintf),
     TL_WRAP("fscanf", tl_va_fscanf),
     TL_WRAP("open", tl_va_open), TL_WRAP("__open_2", b___open_2), TL_WRAP("close", b_close), TL_WRAP("read", b_read),
-    TL_WRAP("write", b_write), TL_WRAP("lseek", b_lseek), TL_WRAP("dup2", b_dup2), TL_WRAP("fsync", b_fsync),
+    TL_WRAP("__read_chk", b___read_chk), TL_WRAP("write", b_write), TL_WRAP("lseek", b_lseek), TL_WRAP("dup2", b_dup2), TL_WRAP("fsync", b_fsync),
     TL_WRAP("ftruncate", b_ftruncate), TL_WRAP("truncate", b_truncate), TL_WRAP("fcntl", tl_va_fcntl), TL_WRAP("ioctl", tl_va_ioctl),
     TL_WRAP("pipe", b_pipe), TL_WRAP("tcgetattr", b_tcgetattr), TL_WRAP("tcsetattr", b_tcgetattr), TL_WRAP("poll", b_poll),
     TL_WRAP("select", b_select), TL_WRAP("sendfile", b_sendfile),

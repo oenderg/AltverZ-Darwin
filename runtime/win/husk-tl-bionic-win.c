@@ -372,6 +372,26 @@ static void b__exit(int st) { tl_log_line("bionic: the game called _exit(%d)", s
 static void b___stack_chk_fail(void) { tl_log_line("bionic: stack protector tripped (return address %p)", __builtin_return_address(0)); b_abort(); }
 
 static int b_getpid(void) { return (int)GetCurrentProcessId(); }
+static int b_gettid(void) { return (int)GetCurrentThreadId(); }
+/* sysinfo(2), with the guest's 64-bit longs: what engines ask for to size their caches. */
+typedef struct {
+    int64_t uptime; uint64_t loads[3], totalram, freeram, sharedram, bufferram, totalswap, freeswap;
+    uint16_t procs, pad; uint64_t totalhigh, freehigh; uint32_t mem_unit; char pad2[4];
+} guest_sysinfo;
+static int b_sysinfo(guest_sysinfo *si)
+{
+    memset(si, 0, sizeof(*si));
+    MEMORYSTATUSEX m = { .dwLength = sizeof m };
+    GlobalMemoryStatusEx(&m);
+    si->uptime = (int64_t)(GetTickCount64() / 1000);
+    si->totalram = m.ullTotalPhys;
+    si->freeram = m.ullAvailPhys;
+    si->totalswap = m.ullTotalPageFile > m.ullTotalPhys ? m.ullTotalPageFile - m.ullTotalPhys : 0;
+    si->freeswap = m.ullAvailPageFile > m.ullAvailPhys ? m.ullAvailPageFile - m.ullAvailPhys : 0;
+    si->mem_unit = 1;
+    si->procs = 1;
+    return 0;
+}
 static int b_getppid(void) { return 1; }
 static uint32_t b_geteuid(void) { return 10001; }
 static int b_kill(int pid, int sig) { (void)pid; if (sig == 0) return 0; tl_log_line("bionic: kill(%d, %d) ignored", pid, sig); return 0; }
@@ -616,7 +636,7 @@ const tl_bionic_entry tl_tab_win_core[] = {
     TL_WRAP("android_set_abort_message", b_android_set_abort_message),
     TL_WRAP("openlog", b_openlog), TL_WRAP("closelog", b_closelog), TL_WRAP("syslog", tl_va_syslog),
     TL_WRAP("abort", b_abort), TL_WRAP("exit", b_exit), TL_WRAP("_exit", b__exit), TL_WRAP("__stack_chk_fail", b___stack_chk_fail),
-    TL_WRAP("getpid", b_getpid), TL_WRAP("getppid", b_getppid), TL_WRAP("geteuid", b_geteuid), TL_WRAP("kill", b_kill),
+    TL_WRAP("getpid", b_getpid), TL_WRAP("gettid", b_gettid), TL_WRAP("sysinfo", b_sysinfo), TL_WRAP("getppid", b_getppid), TL_WRAP("geteuid", b_geteuid), TL_WRAP("kill", b_kill),
     TL_WRAP("fork", b_fork), TL_WRAP("execl", b_fail_enosys), TL_WRAP("execv", b_fail_enosys), TL_WRAP("waitpid", b_waitpid),
     TL_WRAP("system", b_system), TL_WRAP("ptrace", b_ptrace), TL_WRAP("prctl", b_prctl),
     TL_WRAP("getenv", getenv), TL_WRAP("setenv", b_setenv), TL_WRAP("unsetenv", b_unsetenv),

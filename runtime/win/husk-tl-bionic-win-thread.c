@@ -220,6 +220,18 @@ static int b_join(uint64_t t, void **ret) { return pthread_join((pthread_t)t, re
 static int b_detach(uint64_t t) { return pthread_detach((pthread_t)t); }
 static uint64_t b_self(void) { return (uint64_t)pthread_self(); }
 static int b_equal(uint64_t a, uint64_t b) { return a == b; }
+/* A thread's name shows in crash dumps and debuggers; only the caller's own can be set here. */
+static int b_setname_np(uint64_t t, const char *name)
+{
+    typedef HRESULT (WINAPI *set_desc_fn)(HANDLE, PCWSTR);
+    static set_desc_fn set_desc;
+    if (!set_desc) set_desc = (set_desc_fn)(void (*)(void))GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription");
+    if (set_desc && name && t == (uint64_t)pthread_self()) {
+        wchar_t w[64];
+        if (MultiByteToWideChar(CP_UTF8, 0, name, -1, w, 64) > 0) set_desc(GetCurrentThread(), w);
+    }
+    return 0;
+}
 static void b_exit(void *r) { pthread_exit(r); }
 static int b_getschedparam(uint64_t t, int *policy, g_sched_param *p) { (void)t; *policy = 0; p->sched_priority = 0; return 0; }
 static int b_setschedparam(uint64_t t, int policy, const g_sched_param *p) { (void)t; (void)policy; (void)p; return 0; }
@@ -280,7 +292,7 @@ const tl_bionic_entry tl_tab_win_thread[] = {
     TL_WRAP("pthread_attr_setschedparam", b_attr_setschedparam), TL_WRAP("pthread_attr_getschedparam", b_attr_getschedparam),
     TL_WRAP("pthread_attr_setschedpolicy", b_attr_setschedpolicy), TL_WRAP("pthread_getattr_np", b_getattr_np),
     TL_WRAP("pthread_create", b_create), TL_WRAP("pthread_join", b_join), TL_WRAP("pthread_detach", b_detach),
-    TL_WRAP("pthread_self", b_self), TL_WRAP("pthread_equal", b_equal), TL_WRAP("pthread_exit", b_exit),
+    TL_WRAP("pthread_self", b_self), TL_WRAP("pthread_setname_np", b_setname_np), TL_WRAP("pthread_equal", b_equal), TL_WRAP("pthread_exit", b_exit),
     TL_WRAP("pthread_getschedparam", b_getschedparam), TL_WRAP("pthread_setschedparam", b_setschedparam),
     TL_WRAP("sched_get_priority_max", b_sched_prio_max), TL_WRAP("sched_get_priority_min", b_sched_prio_min),
     TL_WRAP("sched_yield", b_sched_yield),
