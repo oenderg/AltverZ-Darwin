@@ -43,7 +43,24 @@ static void *carve(void *raw, size_t align, size_t n)
 static tl_hdr *hdr_of(const void *p) { return p ? (tl_hdr *)p - 1 : NULL; }
 static int ours(const void *p) { return p && hdr_of(p)->magic == TL_MAGIC; }
 
-void *tl_malloc(size_t n) { return carve(malloc(n + sizeof(tl_hdr)), 16, n); }
+/* A block is as big as Android's allocator would make it: its size classes, four per doubling
+ * (664 bytes is a 768-byte block there), and whole pages past 64 KiB. The game writes past the
+ * end of some objects -- a 664-byte object, an animated one, takes a byte at +664 as Holiday
+ * Mashup's levels start -- which Android's slack (and the Mac's 16-byte rounding) absorb, but
+ * an exact-size block on Windows' heap gets its neighbour's header damaged, and a later free
+ * closes the game without a word (issue #45, heap corruption 0xc0000374). */
+static size_t size_class(size_t n)
+{
+    if (n <= 16) return 16;
+    if (n <= 128) return (n + 15) & ~(size_t)15;
+    if (n > 65536) return n > SIZE_MAX - 4096 ? n : (n + 4095) & ~(size_t)4095;
+    size_t p = 128;
+    while (p * 2 < n) p *= 2;
+    size_t step = p / 4;
+    return (n + step - 1) / step * step;
+}
+
+void *tl_malloc(size_t n) { size_t c = size_class(n); return carve(malloc(c + sizeof(tl_hdr)), 16, c); }
 void *tl_calloc(size_t n, size_t m)
 {
     if (m && n > SIZE_MAX / m) return NULL;
@@ -83,6 +100,7 @@ int tl_posix_memalign(void **out, size_t align, size_t n)
 {
     if (align < 16) align = 16;
     if (align & (align - 1)) return 22; /* EINVAL */
+    n = size_class(n);
     void *p = carve(malloc(n + sizeof(tl_hdr) + align), align, n);
     if (!p) return 12; /* ENOMEM */
     *out = p;
