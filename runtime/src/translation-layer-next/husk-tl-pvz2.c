@@ -702,6 +702,8 @@ static struct {
     uint32_t active_id;
     /* The ids that are down, one bit each (bit n = id n). */
     uint32_t down;
+    /* Moves merged into a queued one since the last log line (Reflourished issue #36). */
+    uint32_t merged;
     /* The guest's finger for each of the host's fingers. The Mac and Windows
      * have one finger (the mouse), but it can press again before a release has
      * gone out -- the shovel's tap is released 120 ms later, and the plant's
@@ -7266,6 +7268,23 @@ void tl_pvz2_touch(int phase, int id, float x, float y)
 {
     (void)id;
     pthread_mutex_lock(&TQ.mu);
+    /* Moves the game has not taken yet merge into one, the way Android hands the game
+     * one move per finger per frame. A 1000 Hz mouse otherwise queues dozens of moves
+     * a frame, and the seed picker's scroll does its work for each (Reflourished issue #36). The
+     * merged move keeps the first one's previous point and takes the newest point. */
+    if (phase == 1 && TQ.n > 0) {
+        int slot = (id >= 0 && id < 8) ? id : 0;
+        pvz_touch *last = &TQ.v[TQ.n - 1];
+        if (last->phase == 1 && last->id == touch_id_for(1, id)) {
+            last->x = (int)(x + 0.5f);
+            last->y = (int)(y + 0.5f);
+            last->time_s = now_s();
+            TQ.last_x[slot] = last->x; TQ.last_y[slot] = last->y;
+            TQ.merged++;
+            pthread_mutex_unlock(&TQ.mu);
+            return;
+        }
+    }
     if (TQ.n == (int)(sizeof(TQ.v) / sizeof(TQ.v[0]))) {
         memmove(&TQ.v[0], &TQ.v[1], (sizeof(TQ.v) / sizeof(TQ.v[0]) - 1) * sizeof(TQ.v[0]));
         TQ.n--;
@@ -7280,6 +7299,10 @@ void tl_pvz2_touch(int phase, int id, float x, float y)
     if (phase == 0) { t->px = t->x; t->py = t->y; }
     else { t->px = TQ.last_x[slot]; t->py = TQ.last_y[slot]; }
     TQ.last_x[slot] = t->x; TQ.last_y[slot] = t->y;
+    if (TQ.merged && phase != 1) {
+        tl_log_line("pvz2: touch id %u: %u move(s) merged while the game had not taken the last one", t->id, TQ.merged);
+        TQ.merged = 0;
+    }
     tl_log_line("pvz2: touch phase %d id %u at (%d,%d), queued %d", t->phase, t->id, t->x, t->y, TQ.n);
     pthread_mutex_unlock(&TQ.mu);
 }

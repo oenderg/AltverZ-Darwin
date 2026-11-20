@@ -358,6 +358,11 @@ finger held at the same time is 2. The driver gives each press the lowest id no 
 (`touch_id_for`). The mod's own code can depend on it: in Reflourished, the carnival minigame's
 hats (its issue #44) took no tap while the ids counted up with every press.
 
+Moves are merged the way Android batches them: a move that arrives while the game has not yet
+taken the finger's last queued move replaces that move's point (the first one's previous point
+stays). A 1000 Hz mouse otherwise put 14 to 60 moves into each frame, and the seed picker's scroll
+works per move, which on a translated x64 PC dropped Reflourished's to about 40 fps (its issue #36).
+
 ## Generated IDs
 
 `Util_GetUUIDString` returns a fresh lowercase version-4 UUID per call, like
