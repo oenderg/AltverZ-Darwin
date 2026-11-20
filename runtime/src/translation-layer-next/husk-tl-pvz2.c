@@ -699,7 +699,9 @@ typedef struct { int keycode, down; double time_s; } pvz_key;
 static struct {
     pvz_touch v[256];
     int n;
-    uint32_t next_id, active_id;
+    uint32_t active_id;
+    /* The ids that are down, one bit each (bit n = id n). */
+    uint32_t down;
     /* The guest's finger for each of the host's fingers. The Mac and Windows
      * have one finger (the mouse), but it can press again before a release has
      * gone out -- the shovel's tap is released 120 ms later, and the plant's
@@ -713,7 +715,7 @@ static struct {
      * not the other finger's. */
     int last_x[8], last_y[8];
     pthread_mutex_t mu;
-} TQ = { .next_id = 1, .active_id = 1, .mu = PTHREAD_MUTEX_INITIALIZER };
+} TQ = { .active_id = 1, .mu = PTHREAD_MUTEX_INITIALIZER };
 static struct {
     pvz_text v[32];
     int n;
@@ -734,16 +736,27 @@ static double now_s(void)
     return (double)t.tv_sec + (double)t.tv_nsec / 1000000000.0;
 }
 
+/* A touch's id is Android's: the finger's pointer index + 1, which is the lowest
+ * index no other finger holds (AndroidUIEventManager: ident = getPointerId() + 1). One
+ * finger, the mouse among them, is always 1. The mod's own code depends on it: the
+ * carnival hats (Reflourished issue #44) took no tap while ids counted up with every press. */
 static uint32_t touch_id_for(int phase, int host_id)
 {
     int slot = (host_id >= 0 && host_id < 8) ? host_id : 0;
     if (phase != 0) {
         /* The move and the release belong to the finger that was pressed. */
-        if (TQ.finger[slot]) return TQ.finger[slot];
-        return TQ.active_id;
+        uint32_t id = TQ.finger[slot] ? TQ.finger[slot] : TQ.active_id;
+        if (phase == 3 || phase == 4) {
+            if (id < 32) TQ.down &= ~(1u << id);
+            TQ.finger[slot] = 0;
+        }
+        return id;
     }
-    uint32_t id = TQ.next_id++;
-    if (id == 0) id = TQ.next_id++;
+    /* A press on a finger that is still down (its release never came) frees that one first. */
+    if (TQ.finger[slot] && TQ.finger[slot] < 32) TQ.down &= ~(1u << TQ.finger[slot]);
+    uint32_t id = 1;
+    while (id < 31 && (TQ.down & (1u << id))) id++;
+    TQ.down |= 1u << id;
     TQ.finger[slot] = id;
     TQ.active_id = id;
     return id;

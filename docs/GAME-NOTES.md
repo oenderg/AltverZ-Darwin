@@ -350,6 +350,14 @@ returns.
   app object cannot be read (iOS has no `guest_read`). The first hardware key press in a launch
   enables snapshot work and the overlay; a keyboard disconnect disables both until another press.
 
+## Touch IDs
+
+A touch record's id is Android's: the finger's pointer index + 1 (`AndroidUIEventManager`:
+`ident = getPointerId() + 1`), so one finger, the mouse among them, is always 1, and a second
+finger held at the same time is 2. The driver gives each press the lowest id no finger holds
+(`touch_id_for`). The mod's own code can depend on it: in Reflourished, the carnival minigame's
+hats (its issue #44) took no tap while the ids counted up with every press.
+
 ## Generated IDs
 
 `Util_GetUUIDString` returns a fresh lowercase version-4 UUID per call, like
