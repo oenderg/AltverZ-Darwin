@@ -36,6 +36,7 @@ through a guard that turns a fault into a log line instead of a crash.
 | packet vtable +0x90 | the packet's own pointer-down handler (normal packet vtable 0x24b2940) | the pick itself |
 | 0x761074 | the game's release decision for a new cursor (PlantCursor vtable 0x2491a60) | a second press cancels, like a second tap |
 | board +0x408 | pending cursor; null when no item is held | read-only selection state |
+| board +0x3f0..+0x3f8, cursor +0x30 | the active cursor vector, and the touch id a cursor is bound to (0: none) | a press waits while an unbound cursor is in the vector and nothing is pending (below) |
 | cursor vtables 0x2491a60, 0x24d8b60 | plant and shovel cursors, respectively | distinguish held plants from the shovel |
 | plant cursor +0x38, packet +0x1a8 | managed reference to the packet, and its libc++ TypeName string | identify the held plant |
 | 0x13ab0a0, vtable 0x24d8b60 | the shovel's pointer-down, and the shovel cursor | S |
@@ -48,6 +49,12 @@ through a guard that turns a fault into a log line instead of a crash.
 | 0x249dfa0, +0x90 = 0x1162138 | PowerupTimeUI's vtable and its pointer-down (selects the power-up) | Z, X, C (`UIPowerupHolder`, buttons named `UIPowerup`; 73 px wide, 98 apart, holder 308 wide for three). Reflourished's adventure levels offer them; AltVerZ removed power-ups, so none of its levels do (Vasebreaker included) |
 | 0x24bcf00 | the pause menu (`PauseDialog`); its rect is at +0x44 | Escape on the pause menu taps RESUME (82% across, 90% down) |
 
+- **A cancelled key pick keeps listening for a frame.** The second press of the same key
+  cancels, but the cancelled cursor stays in the active vector, unbound, until the board's next
+  update. A press that reaches it first runs its pointer-down (0x760a98), which binds itself and
+  calls 0xabc738 to promote the pending cursor; that is null, so the game dies at 0xabc764
+  (Reflourished issue #48: a key and a click in the same frame, on the same game base). The host
+  holds that press back until the cursor is gone.
 - **Android's Back does nothing in a level** in this game, so Escape presses the pause button
   instead (and RESUME on the pause menu). Elsewhere it is Back.
 - **Space's exact vtables are what keep rewards out.** Gems, plant food and sprouts share the

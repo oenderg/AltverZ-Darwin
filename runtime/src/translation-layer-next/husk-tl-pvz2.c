@@ -694,6 +694,11 @@ static void J_config_write_bool(tl_jcall *c)
 typedef struct { uint32_t id; int phase, x, y, px, py; double time_s; } pvz_touch;
 static pvz_touch g_cursor_check_down;
 static bool g_cursor_check_queued;
+/* The board where a key's pick or shovel was just cancelled (Reflourished issue #48),
+ * and how many event calls a lawn press has been held back since. */
+static uint64_t g_cancel_board;
+static int g_cancel_held;
+static bool guest_cancelled_cursor_listening(void);
 typedef struct { char text[64]; int action; double time_s; } pvz_text;
 typedef struct { int keycode, down; double time_s; } pvz_key;
 static struct {
@@ -780,6 +785,22 @@ static void J_process_events(tl_jcall *c)
     pthread_mutex_lock(&TQ.mu);
     while (TQ.n > 0 && used + 48 <= limit - 16) {
         pvz_touch t = TQ.v[0];
+        if (t.phase == 0 && g_cancel_board) {
+            /* A cancelled key pick leaves its cursor listening for a frame or two.
+             * A press that reaches it first makes the game promote a pending cursor
+             * that is no longer there, and it dies (Reflourished issue #48). The press
+             * waits until the game has let that cursor go. */
+            if (guest_cancelled_cursor_listening() && g_cancel_held < 60) {
+                if (g_cancel_held++ == 0)
+                    tl_log_line("pvz2: a press waits: the cancelled cursor is still listening");
+                break;
+            }
+            if (g_cancel_held)
+                tl_log_line("pvz2: the press goes on after %d call(s)%s", g_cancel_held,
+                            g_cancel_held >= 60 ? " (the cursor never went)" : "");
+            g_cancel_board = 0;
+            g_cancel_held = 0;
+        }
         if (t.phase == 0 && getenv("TL_PVZ2_CURSOR_CHECK")) {
             g_cursor_check_down = t;
             g_cursor_check_queued = true;
@@ -3901,6 +3922,8 @@ static int guest_release_new_cursor(const char *what, uint64_t board,
     }
     if (!pending) {
         tl_log_line("pvz2: %s: the guest cancelled it (no pending cursor)", what);
+        g_cancel_board = board;
+        g_cancel_held = 0;
         return 0;
     }
     if (pending != cursor) {
@@ -3911,6 +3934,31 @@ static int guest_release_new_cursor(const char *what, uint64_t board,
     tl_log_line("pvz2: %s: the cursor %p is pending, waiting for the player's click",
                 what, (void *)cursor);
     return 1;
+}
+
+/* True while a press would reach a cursor the game has not bound to a finger
+ * (+0x30, the touch id, is 0) with no pending cursor on the board: that cursor's
+ * pointer-down (guest 0x760a98) binds itself and calls abc738, which promotes the
+ * pending cursor at board+0x408 -- null -- and the game dies at abc764. A key's
+ * cancelled pick leaves its cursor in the board's active vector like that until
+ * the board's next update removes it. */
+static bool guest_cancelled_cursor_listening(void)
+{
+    bool ok = false;
+    uint64_t board = guest_call2(guest_code(GUEST_BOARD_GETTER), 0, 0, &ok);
+    if (!ok || !board || board != g_cancel_board) return false;
+    uint64_t pending = 0, begin = 0, end = 0;
+    if (!guest_read_bytes(board + 0x408, &pending, sizeof pending) || pending) return false;
+    if (!guest_read_bytes(board + 0x3f0, &begin, sizeof begin) ||
+        !guest_read_bytes(board + 0x3f8, &end, sizeof end) ||
+        !begin || end < begin || (end - begin) % 8 || end - begin > 64 * 8) return false;
+    for (uint64_t p = begin; p < end; p += 8) {
+        uint64_t cursor = 0, token = 1;
+        if (guest_read_bytes(p, &cursor, sizeof cursor) && cursor &&
+            guest_read_bytes(cursor + 0x30, &token, sizeof token) && !token)
+            return true;
+    }
+    return false;
 }
 
 static void guest_seed_pick(int slot)
