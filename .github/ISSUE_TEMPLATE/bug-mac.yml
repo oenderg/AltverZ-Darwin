@@ -43,3 +43,20 @@ body:
         The most useful part of a report. In the game, Settings > About > Log > Show in Finder, then upload pvz2.log.
         If the game crashed or you opened it again since, upload pvz2.previous.log instead.
         If the game does not open: Finder > Go > Go to Folder, then ~/Library/Application Support/PvZ2 AltVerZ
+  - type: upload
+    id: save
+    attributes:
+      label: Your save (optional)
+      description: |
+        Helps when the bug only happens in one level, in a quest, or with your profile.
+        It is in the folder of the log: sdcard > Android > data > com.ea.game.pvz2_auz > files > No_Backup > pp.dat
+        Upload the save as a .zip: right-click it in Finder > Compress.
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before you send
+      options:
+        - label: I uploaded the log above, or this report does not need one (for example a typo or a wrong picture).
+          required: true
+        - label: If the bug only happens with my progress (one level, a quest, my profile), I uploaded my save, or I'm happy to send it when asked.
+          required: true

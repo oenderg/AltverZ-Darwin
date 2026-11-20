@@ -1,0 +1,28 @@
+name: Idea or request
+description: Something the port could do better or does not do yet
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like
+      description: What the port should do, and where in the game. You can drop screenshots or a screen recording here.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it helps
+      description: What it makes easier, or what bothers you today.
+  - type: checkboxes
+    id: platforms
+    attributes:
+      label: Where you play
+      options:
+        - label: iPhone or iPad
+        - label: Mac
+        - label: Windows
+  - type: markdown
+    attributes:
+      value: |
+        This port runs the AltVerZ mod as it is. Ideas for the game itself (new plants, levels, balance) belong to the mod's own team, not here.

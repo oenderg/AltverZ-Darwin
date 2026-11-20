@@ -45,3 +45,20 @@ body:
         The most useful part of a report. In the game, Settings (Ctrl+,) > About > Log > Open folder, then upload pvz2.log.
         If the game crashed or you opened it again since, upload pvz2.previous.log instead.
         If the game does not open: paste %LOCALAPPDATA%\PvZ2 AltVerZ into File Explorer's address bar.
+  - type: upload
+    id: save
+    attributes:
+      label: Your save (optional)
+      description: |
+        Helps when the bug only happens in one level, in a quest, or with your profile.
+        Paste %APPDATA%\PvZ2 AltVerZ\sdcard\Android\data\com.ea.game.pvz2_auz\files\No_Backup into File Explorer's address bar and take pp.dat (portable: the data folder beside the .exe, same path).
+        Upload the save as a .zip: right-click it > Compress to ZIP file (Windows 10: Send to > Compressed (zipped) folder).
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before you send
+      options:
+        - label: I uploaded the log above, or this report does not need one (for example a typo or a wrong picture).
+          required: true
+        - label: If the bug only happens with my progress (one level, a quest, my profile), I uploaded my save, or I'm happy to send it when asked.
+          required: true
